@@ -1,15 +1,11 @@
-/* GREEN SIDE — إعدادات الربط مع Firebase
-   الصق هنا القيم التي تظهر لك في Firebase Console > Project settings > Your apps > Web app.
-   هذه القيم ليست سرية؛ الحماية الحقيقية في قواعد Firestore (ملف firestore.rules). */
 window.GS_CONFIG = {
   firebase: {
-    apiKey: "",
-    authDomain: "",
-    projectId: "",
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: ""
+    apiKey: "AIzaSyBUXhiS-INo5pcOuJ8JsLdh3CEvnoE4G7Y",
+    authDomain: "green-side-2d792.firebaseapp.com",
+    projectId: "green-side-2d792",
+    storageBucket: "green-side-2d792.firebasestorage.app",
+    messagingSenderId: "860539428678",
+    appId: "1:860539428678:web:f1ae962de33eb746a9cf47"
   },
-  /* اسم المستخدم بدون @ يتحول تلقائياً إلى بريد داخلي بهذا النطاق */
   usernameDomain: "greenside.local"
 };
