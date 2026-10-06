@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>GREEN SIDE</title>
+<meta name="description" content="GREEN SIDE — سجل متابعة المشتل والبيت المحمي">
+<meta name="theme-color" content="#1F5A3F">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="GREEN SIDE">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<header class="top" id="top" hidden>
+  <div class="top-in">
+    <div class="brand"><h1><span class="wm">GREEN SIDE</span></h1><small id="dateLabel"></small></div>
+    <button class="who" id="who" type="button" data-act="account"></button>
+    <div class="datebar" id="datebar">
+      <button class="iconbtn" id="prevDay" type="button" aria-label="اليوم السابق"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
+      <input type="date" class="in num" id="datePick" aria-label="التاريخ">
+      <button class="iconbtn" id="nextDay" type="button" aria-label="اليوم التالي"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 6l-6 6 6 6"/></svg></button>
+      <button class="btn sm" id="goToday" type="button">اليوم</button>
+    </div>
+  </div>
+  <div class="netbar" id="netbar" hidden>لا يوجد اتصال بالإنترنت · التسجيلات تُحفظ في الجوال وتُرسل تلقائياً عند رجوع الاتصال</div>
+</header>
+
+<main class="wrap" id="view"><div class="splash"><span class="wm big">GREEN SIDE</span><span class="muted">جارٍ التحميل…</span></div></main>
+
+<nav class="tabs" id="tabsNav" aria-label="الأقسام" hidden><div class="tabs-in" id="tabs"></div></nav>
+<div id="sheetRoot"></div>
+
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
