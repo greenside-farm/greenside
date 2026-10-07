@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.0.1";
+var APP_VERSION = "2.0.2";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -443,13 +443,28 @@ function onRole() {
     unsubAll.push(db.collection("users").onSnapshot(function (q) { var m = {}; q.forEach(function (d) { m[d.id] = d.data(); }); S.users = m; render(); }, logErr));
     unsubAll.push(db.collection("recipes").orderBy("ts", "desc").limit(300).onSnapshot(function (q) { S.recipes = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); render(); }, logErr));
     unsubAll.push(db.collection("entries").where("type", "==", "note").where("open", "==", true).onSnapshot(function (q) { S.openNotes = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); render(); }, logErr));
-    unsubAll.push(db.collection("entries").where("type", "in", ["mix", "refill"]).onSnapshot(function (q) { S.hist = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); }, logErr));
-    unsubAll.push(db.collection("entries").where("type", "in", ["sow", "xplant", "batt", "cal", "harvest"]).onSnapshot(function (q) { S.meta = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); }, logErr));
+    subWindowed(["mix", "refill"], function (q) { S.hist = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
+    subWindowed(["sow", "xplant", "batt", "cal", "harvest"], function (q) { S.meta = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
     subDay();
   }
   render();
 }
 function logErr(e) { console.warn(e); }
+/* reads are limited to the last WINDOW_DAYS for history used by the calculator, stock, sowing and equipment.
+   Needs one composite index on entries (type ↑, date ↑). Until it exists the app falls back to full reads. */
+var WINDOW_DAYS = 120;
+function windowStart() { return addDays(todayStr(), -WINDOW_DAYS); }
+function onIndexErr(e) { if (e && e.code === "failed-precondition") { S.indexOk = false; var m = String(e.message || "").match(/https:\/\/console\.firebase\.google\.com\S+/); if (m) S.indexUrl = m[0].replace(/[).,]+$/, ""); return true; } return false; }
+function subWindowed(types, assign) {
+  var col = S.db.collection("entries");
+  unsubAll.push(col.where("type", "in", types).where("date", ">=", windowStart()).onSnapshot(function (q) { if (S.indexOk !== false) S.indexOk = true; assign(q); }, function (e) {
+    if (onIndexErr(e)) { unsubAll.push(col.where("type", "in", types).onSnapshot(assign, logErr)); render(); } else logErr(e);
+  }));
+}
+function photoQuery() {
+  var col = S.db.collection("entries");
+  return col.where("type", "==", "photo").where("date", ">=", windowStart()).get().catch(function (e) { if (onIndexErr(e)) return col.where("type", "==", "photo").get(); throw e; });
+}
 function subDay() {
   unsubDay.forEach(function (u) { u(); }); unsubDay = [];
   S.entries = []; S.signoff = {};
@@ -982,7 +997,7 @@ function calcRun() {
 function openGallery() {
   var sec = S.sec;
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("صور النمو", sec, "gallery") + '<div id="galBody"><div class="empty">جارٍ التحميل…</div></div></div></div>');
-  S.db.collection("entries").where("type", "==", "photo").get().then(function (q) {
+  photoQuery().then(function (q) {
     var list = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).filter(function (e) { return secOf(e) === sec; }).sort(function (a, b) { return (a.date + a.time).localeCompare(b.date + b.time); });
     var groups = {}, order = [];
     list.forEach(function (e) {
@@ -1199,6 +1214,7 @@ function exportXlsx(btn) {
 function supView() {
   var sec = S.sec, isOwner = S.ownerUid === S.uid, st = computeStock(), F = formula(), ki = kUse(), L = kLearned(), kf = kFormula();
   var h = '<section class="sec"><div class="sec-h"><h2>عبوات المحلول المركز</h2><button class="btn sm pri" data-act="newRecipe">+ وصفة جديدة</button></div><div class="grid2">';
+  if (S.indexOk === false) h = '<section class="sec"><div class="card" style="border-color:var(--warn)"><h2>خطوة واحدة لتخفيف القراءات</h2><p class="help" style="margin:6px 0 10px">التطبيق يعمل بشكل طبيعي، لكنه يقرأ كامل السجلات القديمة في كل فتح. لإنشاء فهرس البحث: اضغط الزر، وسجّل الدخول بحساب Firebase إن طُلب، ثم اضغط <b>Save</b> وانتظر حتى تصبح الحالة <b>Enabled</b> (2–5 دقائق).</p>' + (S.indexUrl ? '<a class="btn pri block" href="' + esc(S.indexUrl) + '" target="_blank" rel="noopener">إنشاء فهرس البحث في Firebase</a>' : '<p class="help">Firebase Console ← Firestore Database ← Indexes ← Composite ← Create index: المجموعة <b class="num">entries</b>، الحقل <b class="num">type</b> Ascending ثم <b class="num">date</b> Ascending.</p>') + "</div></section>" + h;
   ["A", "B"].forEach(function (tk) {
     var o = st[tk];
     if (!o) h += '<div class="stat"><span class="lab">عبوة ' + tk + '</span><span class="val">—</span><span class="sub">لا توجد وصفة مسجلة</span></div>';
@@ -1207,7 +1223,7 @@ function supView() {
   h += "</div></section>";
   var stagesTxt = STAGES.map(function (s) { return "<tr><td>" + s[1] + '</td><td class="num">' + fml(num(F.fullA) * s[0]) + " + " + fml(num(F.fullB) * s[0]) + '</td><td class="num">' + f(num(F.ecRaw) + kf * num(F.fullA) * s[0]) + "</td></tr>"; }).join("");
   h += '<section class="sec"><div class="card"><div class="sec-h"><h2>الخلطة والحاسبة</h2><button class="btn sm" data-act="editFormula">تعديل الخلطة</button></div>' +
-    '<p style="margin:8px 0 4px"><b>' + esc(F.name) + '</b> <span class="muted">· معتمدة من <span class="num">' + esc(F.date) + "</span></span></p>" +
+    '<p style="margin:8px 0 4px"><b>' + esc(F.name) + '</b> <span class="muted">· معتمدة من <bdi dir="ltr" class="num" style="white-space:nowrap">' + esc(F.date) + "</bdi></span></p>" +
     '<div class="tbl-wrap"><table class="minitable"><thead><tr><th>الجرعة</th><th>A + B مل/لتر</th><th>EC المتوقع</th></tr></thead><tbody>' + stagesTxt + "</tbody></table></div>" +
     '<dl class="kv" style="margin-top:10px"><dt>معامل الخلطة</dt><dd class="num">' + f(kf, 1) + " µS/cm لكل 1 مل/لتر</dd><dt>المعامل من سجلاتكم</dt><dd>" + (L.n ? '<span class="num">' + f(L.k, 1) + "</span> (من " + L.n + " خلطات)" + (Math.abs(L.k - kf) / kf > .15 ? ' <span class="pill warn">يختلف أكثر من 15% عن الخلطة</span>' : "") : "لا توجد خلطات مسجلة بعد اعتماد هذه الخلطة") + "</dd><dt>المستخدم في الحاسبة</dt><dd><b>" + (ki.src === "learned" ? "من السجلات" : "من الخلطة") + "</b> (" + f(ki.k, 1) + ")</dd></dl>" +
     (S.recipes[0] && S.recipes[0].date > F.date ? '<div class="banner warn" style="margin-top:10px">سُجّلت وصفة عبوة بعد تاريخ اعتماد الخلطة. إذا تغيّرت التركيبة، حدّث الخلطة ليبقى الحساب دقيقاً.</div>' : "") + "</div></section>";
@@ -1354,6 +1370,10 @@ async function runSelfTest() {
     if (wApp && wApp.auth().currentUser) { try { await wApp.auth().currentUser.delete(); } catch (e) { await wApp.auth().signOut(); } }
     if (wApp) await wApp.delete(); if (anon) await anon.delete();
     return "حُذفت بيانات وحساب الاختبار";
+  });
+  await step("فهرس البحث (تخفيف القراءات)", async function () {
+    try { await db.collection("entries").where("type", "in", ["mix", "refill"]).where("date", ">=", windowStart()).limit(1).get({ source: "server" }); return "موجود · يقرأ آخر " + WINDOW_DAYS + " يوماً فقط"; }
+    catch (e) { if (onIndexErr(e)) { var er = new Error("الفهرس غير موجود بعد. أنشئه من الزر في قسم المشرف"); er.code = "index"; throw er; } throw e; }
   });
   await step("صحة الحسابات", async function () {
     var k = (1330 - 400) / 10, errs = [];
