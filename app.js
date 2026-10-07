@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.0.0";
+var APP_VERSION = "2.0.1";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -281,8 +281,8 @@ function isBad(st) { return st === "lo" || st === "hi"; }
 function lvlToL(x) { if (x == null) return null; return cfg("levelUnit") === "cm" ? x * num(cfg("lPerCm")) : x; }
 
 /* temperature compensation (reference 25 °C) */
-function ec25(ec, t) { if (ec == null) return null; if (cfg("atc") || t == null) return ec; return ec / (1 + num(cfg("ecCoef")) * (t - 25)); }
-function ph25(ph, t) { if (ph == null) return null; if (cfg("atc") || t == null) return ph; return 7 + (ph - 7) * 298.15 / (t + 273.15); }
+function ec25(ec, t) { if (ec == null) return null; if (cfg("atc") || t == null) return ec; return ecTo25(ec, t, num(cfg("ecCoef"))); }
+function ph25(ph, t) { if (ph == null) return null; if (cfg("atc") || t == null) return ph; return phTo25(ph, t); }
 function phAt(p25, t) { if (p25 == null) return null; if (cfg("atc") || t == null) return p25; return 7 + (p25 - 7) * (t + 273.15) / 298.15; }
 function compVal(fd, raw, v) { var n = num(raw); if (n == null) return null; var t = num(v.wt); if (fd.comp === "ec") return ec25(n, t); if (fd.comp === "ph") return ph25(n, t); return n; }
 function unitOf(fd) { return typeof fd.u === "function" ? fd.u() : (fd.u || ""); }
@@ -295,8 +295,8 @@ function levelAvg(v, m, li) { return avg(ZK.map(function (z) { return num(v[m + 
 
 /* ================= types ================= */
 function typeDef(type, sec) { if (TYPES_G[type]) return TYPES_G[type]; return (sec === "t" ? TYPES_T : TYPES_N)[type] || TYPES_N[type] || TYPES_T[type]; }
-function secEntries(list, sec) { return list.filter(function (e) { return secOf(e) === sec; }); }
-function viewEntries() { return S.entries.filter(function (e) { return secOf(e) === S.sec || e.sec === "g"; }); }
+function secEntries(list, sec) { return list.filter(function (e) { return secOf(e) === sec && e.type !== "selftest"; }); }
+function viewEntries() { return S.entries.filter(function (e) { return e.type !== "selftest" && (secOf(e) === S.sec || e.sec === "g"); }); }
 function tasksFor(sec, entries) {
   var E = secEntries(entries, sec), need = 0, done = 0;
   TASKS[sec].forEach(function (x) { var n = num(cfg(x[1], sec)) || 0; need += n; done += Math.min(n, E.filter(function (e) { return e.type === x[0]; }).length); });
@@ -879,6 +879,22 @@ function phRate(sec, dir) {
   });
   arr = arr.slice(-10); return { r: median(arr), n: arr.length };
 }
+/* pure math (also verified by the system check) */
+function ecTo25(ec, t, coef) { return ec / (1 + coef * (t - 25)); }
+function phTo25(ph, t) { return 7 + (ph - 7) * 298.15 / (t + 273.15); }
+function freshMath(raw25, t25, V, k, ratio) { var perL = (t25 - raw25) / k; return { perL: perL, mlA: perL * V, mlB: perL * V * ratio }; }
+function refillMath(o) {
+  var Vc = o.Vc, Vf = Math.max(o.Vf, o.Vc), cap = o.cap, cur = o.cur, raw = o.raw, tgt = o.tgt;
+  var Vadd = Vf - Vc, base = (cur * Vc + raw * Vadd) / Vf, r = { water: Vadd, drain: 0, mA: 0, mB: 0, finalV: Vf, mode: 1 };
+  if (base > tgt + 25) {
+    var Vw = Vc * (cur - tgt) / (tgt - raw);
+    if (Vc + Vw <= cap) { r.water = Vw; r.finalV = Vc + Vw; }
+    else { r.drain = Math.max(0, (cur * Vc + raw * (cap - Vc) - tgt * cap) / (cur - raw)); r.water = cap - Vc + r.drain; r.finalV = cap; }
+    r.mode = 0;
+  } else if (base < tgt - 25) { r.mA = (tgt - base) * Vf / o.k; r.mode = cur < o.ecMin ? 2 : 1; }
+  else r.mode = Vadd > 0 ? 0 : 1;
+  r.mB = r.mA * o.ratio; return r;
+}
 function lastRaw() { var e = lastOf(S.hist, function (r) { return r.v && num(r.v.ecRaw) != null; }); return e ? num(e.v.ecRaw) : ""; }
 function lastWt() { var e = lastOf(S.entries, function (r) { return r.type !== "temp" && r.v && num(r.v.wt) != null; }); return e ? num(e.v.wt) : ""; }
 function openCalc() {
@@ -925,7 +941,7 @@ function calcRun() {
     if (!V || perL == null) h = '<div class="empty">اكتب كمية الماء والهدف.</div>';
     else if (perL <= 0) h = '<div class="banner warn">أملاح ماء المصدر (' + f(raw) + ") أعلى من أو تساوي الهدف. لا تضف سماداً قبل مراجعة المشرف.</div>";
     else {
-      var mlA = perL * V, mlB = mlA * ratio, st = chk("ec", t25, sec); Vph = V;
+      var FM = freshMath(raw, t25, V, k, ratio), mlA = FM.mlA, mlB = FM.mlB, st = chk("ec", t25, sec); Vph = V;
       res = { kind: "fresh", water: V, ecRaw: rawR, wt: wt, mlA: Math.round(mlA * 10) / 10, mlB: Math.round(mlB * 10) / 10 };
       h = '<div class="res-big"><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول A</span><span class="val num">' + fml(mlA) + ' <small>مل</small></span><span class="sub num">' + f(perL, 2) + ' مل لكل لتر</span></div><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول B</span><span class="val num">' + fml(mlB) + ' <small>مل</small></span><span class="sub num">' + f(perL * ratio, 2) + " مل لكل لتر</span></div></div>" +
         '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الجرعة</dt><dd>' + Math.round(perL / num(F.fullA) * 100) + "% من الجرعة الكاملة</dd><dt>الأملاح المتوقعة (عند 25°)</dt><dd><b class=\"num\">" + f(t25) + "</b> µS/cm " + (st === "ok" ? '<span class="pill ok">ضمن الحد</span>' : '<span class="pill bad">خارج الحد ' + rangeTxt("ec", sec) + "</span>") + "</dd>" +
@@ -938,16 +954,9 @@ function calcRun() {
     if (Vc == null || cur == null || tgt == null) h = '<div class="empty">اكتب مستوى الماء الآن وأملاح الخزان والهدف.</div>';
     else if (tgt <= raw) h = '<div class="banner warn">الهدف أقل من أملاح ماء المصدر، لا يمكن الوصول إليه بالتخفيف.</div>';
     else {
-      if (Vf < Vc) Vf = Vc;
-      var Vadd = Vf - Vc, base = (cur * Vc + raw * Vadd) / Vf, water = Vadd, drain = 0, mA = 0, finalV = Vf, mode, note = "";
-      if (base > tgt + 25) {
-        var Vw = Vc * (cur - tgt) / (tgt - raw);
-        if (Vc + Vw <= cap) { water = Vw; finalV = Vc + Vw; }
-        else { drain = Math.max(0, (cur * Vc + raw * (cap - Vc) - tgt * cap) / (cur - raw)); water = cap - Vc + drain; finalV = cap; note = "الخزان لا يتسع لكمية التخفيف المطلوبة، لذلك يلزم تصريف جزء أولاً."; }
-        mode = 0;
-      } else if (base < tgt - 25) { mA = (tgt - base) * Vf / k; mode = cur < num(cfg("ecMin", "t")) ? 2 : 1; }
-      else mode = Vadd > 0 ? 0 : 1;
-      var mB = mA * ratio, perAddL = water > 0 ? mA / water : 0; Vph = finalV;
+      var RM = refillMath({ Vc: Vc, cur: cur, raw: raw, tgt: tgt, Vf: Vf, cap: cap, k: k, ratio: ratio, ecMin: num(cfg("ecMin", "t")) });
+      var water = RM.water, drain = RM.drain, mA = RM.mA, mB = RM.mB, finalV = RM.finalV, mode = RM.mode, note = RM.drain > 0 ? "الخزان لا يتسع لكمية التخفيف المطلوبة، لذلك يلزم تصريف جزء أولاً." : "";
+      var perAddL = water > 0 ? mA / water : 0; Vph = finalV;
       res = { kind: "refill", wt: wt, level0: num($("c_level").value), ec0: curR, mode: REFILL_MODES[mode], waterAdd: Math.round(water), drained: Math.round(drain), mlA: Math.round(mA * 10) / 10, mlB: Math.round(mB * 10) / 10 };
       var expl = ["الأملاح أعلى من الهدف: النبات استهلك الماء أكثر من العناصر، فيُضاف ماء فقط لخفض التركيز.", "الأملاح ضمن المدى: يُعوَّض النقص بمحلول بتركيز الهدف للحفاظ على التركيز.", "الأملاح أقل من الحد: النبات استهلك العناصر أكثر من الماء، فيُضاف محلول مُعزَّز لرفع التركيز."][mode];
       h = '<div class="res-case c' + mode + '">' + REFILL_MODES[mode] + "<small>" + expl + "</small></div>" + (note ? '<div class="banner warn" style="margin-bottom:10px">' + note + "</div>" : "") +
@@ -1209,7 +1218,8 @@ function supView() {
       (r.notes ? '<div class="e-text">' + esc(r.notes) + "</div>" : "") + "</article>";
   }).join("") + "</div>" : '<div class="empty">سجّل وصفة عبوة A وعبوة B (المواد وكمياتها وحجم العبوة) لحساب استهلاك الأسمدة والمتبقي في كل عبوة.<button class="btn pri" data-act="newRecipe">إضافة أول وصفة</button></div>';
   h += "</section>";
-  var ids = Object.keys(S.users).sort(function (a, b) { return (S.users[a].createdAt || 0) - (S.users[b].createdAt || 0); });
+  if (isOwner) h += '<section class="sec"><div class="card"><div class="sec-h"><h2>فحص النظام</h2><button class="btn sm pri" data-act="selfTest">تشغيل الفحص</button></div><p class="help" style="margin:6px 0 0">اختبار حقيقي للحفظ والقراءة والصلاحيات والحسابات على قاعدة بياناتك. يستغرق أقل من دقيقة ويحذف بيانات الاختبار بعد انتهائه.</p></div></section>';
+  var ids = Object.keys(S.users).filter(function (id) { return !S.users[id].selftest; }).sort(function (a, b) { return (S.users[a].createdAt || 0) - (S.users[b].createdAt || 0); });
   h += '<section class="sec"><div class="sec-h"><h2>المستخدمون والصلاحيات</h2>' + (isOwner ? '<button class="btn sm pri" data-act="newUser">+ مستخدم جديد</button>' : "") + '</div><div class="card">';
   ids.forEach(function (id) {
     var u = S.users[id], r = id === S.ownerUid ? "owner" : u.role;
@@ -1291,6 +1301,79 @@ function openAccount() {
     '<div class="sheet-actions"><button class="btn danger" type="button" data-act="logout">تسجيل الخروج</button></div><p class="muted" style="font-size:12px;text-align:center">GREEN SIDE · الإصدار ' + APP_VERSION + "</p></div></div>");
 }
 
+/* ================= system check (owner) ================= */
+function expectDenied(p) { return p.then(function () { var e = new Error("سُمح بالعملية ولم تُمنع"); e.code = "allowed"; throw e; }, function (e) { if (e && e.code === "permission-denied") return "مُنع كما يجب"; throw e; }); }
+function near(a, b, tol) { return Math.abs(a - b) <= (tol || 0.6); }
+async function runSelfTest() {
+  var res = [], db = S.db, uid = S.uid, today = todayStr(), cfgF = window.GS_CONFIG.firebase;
+  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("فحص النظام", null, "sup") + '<p class="help" style="margin-top:0">يُجري اختبارات حقيقية على قاعدة بياناتك ثم يحذف كل بيانات الاختبار. لا تغلق النافذة حتى ينتهي.</p><div id="stBody"></div><div id="stSum" style="margin-top:12px"></div></div></div>');
+  var draw = function (running) {
+    var b = $("stBody"); if (!b) return;
+    b.innerHTML = res.map(function (r) { return '<div class="eq-row"><span class="pill ' + (r.ok ? "ok" : "bad") + '">' + (r.ok ? "✓" : "✗") + '</span><span class="tx"><b>' + esc(r.name) + "</b><span>" + esc(r.d) + "</span></span></div>"; }).join("") + (running ? '<div class="eq-row"><span class="pill n">…</span><span class="tx"><b>' + esc(running) + "</b></span></div>" : "");
+  };
+  var step = async function (name, fn) { draw(name); try { var d = await fn(); res.push({ name: name, ok: true, d: d || "" }); } catch (e) { res.push({ name: name, ok: false, d: (e && (e.code ? e.code + " · " : "") + (e.message || "")) || String(e) }); } draw(); };
+  var ownerRef = null, wApp = null, wdb = null, wref = null, wuid = null, anon = null;
+  await step("الاتصال بقاعدة البيانات", async function () { await db.collection("config").doc("settings").get({ source: "server" }); return "متصل بالخادم"; });
+  await step("حفظ تسجيل وقراءته من الخادم", async function () {
+    ownerRef = db.collection("entries").doc();
+    await ownerRef.set({ type: "selftest", sec: "n", date: today, time: nowTime(), ts: Date.now(), by: uid, v: { ec: 1234 } });
+    var s = await ownerRef.get({ source: "server" }); if (!s.exists || s.data().v.ec !== 1234) throw new Error("القيمة المقروءة لا تطابق المحفوظة"); return "حُفظ وقُرئ من الخادم بنفس القيمة";
+  });
+  await step("حفظ صورة وقراءتها", async function () {
+    var pr = db.collection("photos").doc(); await pr.set({ data: "data:image/gif;base64,R0lGODlhAQABAAAAACw=", by: uid, ts: Date.now(), sec: "n" });
+    var s = await pr.get({ source: "server" }); if (!s.exists) throw new Error("لم تُقرأ الصورة"); await pr.delete(); return "تعمل";
+  });
+  await step("المشرف يعدّل الإعدادات", async function () { await db.collection("config").doc("settings").update({ lastSelfTest: Date.now() }); return "مسموح"; });
+  await step("منع غير المسجلين من قراءة البيانات", async function () {
+    anon = firebase.initializeApp(cfgF, "anon" + Date.now());
+    var r = await expectDenied(anon.firestore().collection("entries").limit(1).get({ source: "server" })); return r;
+  });
+  await step("إنشاء حساب عامل تجريبي", async function () {
+    wApp = firebase.initializeApp(cfgF, "stw" + Date.now());
+    var email = "selftest" + Date.now() + "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"), pw = "St" + Math.random().toString(36).slice(2, 10) + "9";
+    var cred = await wApp.auth().createUserWithEmailAndPassword(email, pw); wuid = cred.user.uid;
+    await db.collection("users").doc(wuid).set({ name: "فحص النظام", login: email, role: "worker", createdAt: Date.now(), selftest: true });
+    wdb = wApp.firestore(); return "تم";
+  });
+  if (wdb) {
+    await step("العامل يسجّل قراءة", async function () { wref = wdb.collection("entries").doc(); await wref.set({ type: "selftest", sec: "t", date: today, time: nowTime(), ts: Date.now(), by: wuid, v: { ec: 1 } }); return "مسموح"; });
+    await step("العامل يقرأ السجلات", async function () { await wdb.collection("entries").where("date", "==", today).get({ source: "server" }); return "مسموح"; });
+    await step("العامل يعدّل تسجيله قبل المراجعة", async function () { await wref.update({ v: { ec: 2 } }); return "مسموح"; });
+    await step("العامل لا يعدّل الإعدادات", function () { return expectDenied(wdb.collection("config").doc("settings").update({ x: 1 })); });
+    await step("العامل لا يعتمد التسجيلات", function () { return expectDenied(wref.update({ review: { s: "ok", by: wuid } })); });
+    await step("العامل لا يعدّل تسجيل غيره", function () { return expectDenied(wdb.collection("entries").doc(ownerRef.id).update({ v: { ec: 5 } })); });
+    await step("العامل لا يغيّر صلاحيته", function () { return expectDenied(wdb.collection("users").doc(wuid).update({ role: "sup" })); });
+    await step("العامل لا يعدّل الوصفات", function () { return expectDenied(wdb.collection("recipes").add({ x: 1, ts: 1 })); });
+    await step("العامل لا يسجّل باسم شخص آخر", function () { return expectDenied(wdb.collection("entries").add({ type: "selftest", sec: "n", date: today, by: uid, v: {} })); });
+    await step("العامل يحذف تسجيله قبل المراجعة", async function () { await wref.delete(); wref = null; return "مسموح"; });
+    await step("إيقاف الحساب يمنع الوصول فوراً", async function () { await db.collection("users").doc(wuid).update({ role: "disabled" }); return expectDenied(wdb.collection("entries").limit(1).get({ source: "server" })); });
+  }
+  await step("تنظيف بيانات الاختبار", async function () {
+    if (ownerRef) await ownerRef.delete();
+    if (wref) await db.collection("entries").doc(wref.id).delete();
+    if (wApp && wApp.auth().currentUser) { try { await wApp.auth().currentUser.delete(); } catch (e) { await wApp.auth().signOut(); } }
+    if (wApp) await wApp.delete(); if (anon) await anon.delete();
+    return "حُذفت بيانات وحساب الاختبار";
+  });
+  await step("صحة الحسابات", async function () {
+    var k = (1330 - 400) / 10, errs = [];
+    if (!near(k, 93, .001)) errs.push("معامل الخلطة");
+    var fm = freshMath(400, 865, 20, k, 1); if (!near(fm.mlA, 100, .01) || !near(fm.mlB, 100, .01)) errs.push("خلطة المشتل");
+    var b = refillMath({ Vc: 600, cur: 1166, raw: 424, tgt: 1500, Vf: 1000, cap: 1000, k: 93, ratio: 1, ecMin: 1200 }); if (b.mode !== 2 || !near(b.water, 400) || !near(b.mA, 6782.8, 1)) errs.push("التعزيز");
+    var d = refillMath({ Vc: 900, cur: 2000, raw: 400, tgt: 1500, Vf: 1000, cap: 1000, k: 93, ratio: 1, ecMin: 1200 }); if (d.mode !== 0 || !near(d.drain, 212.5) || !near(d.water, 312.5)) errs.push("التخفيف مع التصريف");
+    var fin = (2000 * (900 - d.drain) + 400 * d.water) / 1000; if (!near(fin, 1500, 1)) errs.push("الأملاح بعد التخفيف");
+    var w = refillMath({ Vc: 600, cur: 2000, raw: 400, tgt: 1500, Vf: 800, cap: 1000, k: 93, ratio: 1, ecMin: 1200 }); if (w.mode !== 0 || w.mA !== 0 || w.drain !== 0 || !near(w.water, 272.73, 0.1) || !near((2000 * 600 + 400 * w.water) / w.finalV, 1500, 1)) errs.push("التخفيف بالماء");
+    if (!near(ecTo25(868, 20.3, 0.019), 953.1, 0.5)) errs.push("تصحيح حرارة الأملاح");
+    if (!near(phTo25(6, 15), 5.965, 0.002)) errs.push("تصحيح حرارة pH");
+    if (fmtTime("13:05") !== "1:05 م" || fmtTime("00:30") !== "12:30 ص") errs.push("نظام 12 ساعة");
+    if (errs.length) throw new Error("خطأ في: " + errs.join("، "));
+    return "8 حسابات مطابقة للقيم المتوقعة";
+  });
+  draw();
+  var ok = res.filter(function (r) { return r.ok; }).length, sm = $("stSum");
+  if (sm) sm.innerHTML = '<div class="banner ' + (ok === res.length ? "ok" : "warn") + '"><b>' + ok + " / " + res.length + "</b>&nbsp;" + (ok === res.length ? "نجحت كل الاختبارات" : "بعض الاختبارات لم تنجح، صوّر هذه الشاشة وأرسلها") + "</div>";
+}
+
 /* ================= actions ================= */
 var delArm = null;
 function armDelete(b, id) { if (delArm === id) { delArm = null; return true; } delArm = id; b.textContent = "اضغط مرة أخرى للحذف"; setTimeout(function () { delArm = null; if (b.isConnected) b.textContent = "حذف"; }, 3000); return false; }
@@ -1369,6 +1452,7 @@ document.addEventListener("click", function (ev) {
       closeSheet(); toast("حُفظت الوصفة"); break;
     case "delRecipe": if (!armDelete(b, id)) return; db.collection("recipes").doc(id).delete().catch(fail); closeSheet(); break;
     case "newUser": openNewUser(); break;
+    case "selfTest": runSelfTest(); break;
     case "createUser": createUser(b); break;
     case "setRole": db.collection("users").doc(id).update({ role: b.getAttribute("data-r") }).then(function () { toast("تم تحديث الصلاحية"); }).catch(fail); break;
     case "saveSec":
