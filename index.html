@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>GREEN SIDE</title>
-<meta name="description" content="GREEN SIDE — سجل متابعة المشتل والبيت المحمي">
+<meta name="description" content="GREEN SIDE — سجل متابعة المشتل والأبراج في البيت المحمي">
 <meta name="theme-color" content="#1F5A3F">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -14,13 +14,17 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=2.0.0">
 </head>
-<body>
+<body class="sec-n">
 <header class="top" id="top" hidden>
   <div class="top-in">
     <div class="brand"><h1><span class="wm">GREEN SIDE</span></h1><small id="dateLabel"></small></div>
     <button class="who" id="who" type="button" data-act="account"></button>
+    <div class="secsw" id="secsw" role="group" aria-label="القسم">
+      <button type="button" data-sec="n"><span class="si">🌱</span><span>المشتل</span><b class="cnt"></b></button>
+      <button type="button" data-sec="t"><span class="si">🗼</span><span>الأبراج</span><b class="cnt"></b></button>
+    </div>
     <div class="datebar" id="datebar">
       <button class="iconbtn" id="prevDay" type="button" aria-label="اليوم السابق"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 6l6 6-6 6"/></svg></button>
       <input type="date" class="in num" id="datePick" aria-label="التاريخ">
@@ -35,12 +39,17 @@
 
 <nav class="tabs" id="tabsNav" aria-label="الأقسام" hidden><div class="tabs-in" id="tabs"></div></nav>
 <div id="sheetRoot"></div>
+<div class="exitbar" id="exitbar" hidden>
+  <span>اضغط رجوع مرة أخرى للخروج من التطبيق</span>
+  <button class="btn sm" type="button" data-act="stay">البقاء</button>
+  <button class="btn sm danger" type="button" data-act="exitApp">خروج</button>
+</div>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <script src="config.js"></script>
-<script src="app.js"></script>
+<script src="app.js?v=2.0.0"></script>
 </body>
 </html>
