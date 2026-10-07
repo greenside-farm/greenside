@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.0.3";
+var APP_VERSION = "2.0.4";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -548,8 +548,8 @@ function badReadings(E) {
 }
 function todayView() {
   var sec = S.sec, E = viewEntries(), SE = secEntries(S.entries, sec), isToday = S.date === todayStr(), h = "";
-  var os = sec === "n" ? "t" : "n", ot = tasksFor(os, S.entries);
-  h += '<section class="sec"><button class="otherbar" type="button" data-act="switchSec" data-s="' + os + '"><span>' + SECS[os].icon + " " + SECS[os].name + ": " + ot.done + " / " + ot.need + " مهام اليوم" + (ot.left ? " · متبقي " + ot.left : " ✓") + '</span><span class="muted">انتقال ‹</span></button></section>';
+  var mt = tasksFor(sec, S.entries), mp = mt.need ? Math.min(100, mt.done / mt.need * 100) : 100;
+  if (mt.need) h += '<section class="sec"><button class="mybar" type="button" data-act="goTasks"><span class="mb-t">' + SECS[sec].icon + " مهام " + SECS[sec].name + ': <b class="num">' + mt.done + " / " + mt.need + "</b>" + (mt.left ? " · متبقي <b class=\"num\">" + mt.left + "</b>" : " · اكتملت ✓") + '</span><span class="muted">التفاصيل ‹</span><span class="bar"><i class="' + (mp >= 100 ? "full" : "") + '" style="width:' + mp + '%"></i></span></button></section>';
   var alerts = equipAlerts();
   if (alerts.length) h += '<section class="sec alerts">' + alerts.join("") + "</section>";
   var ecE = lastOf(SE, function (e) { return e.v && num(e.v.ec) != null; }), phE = lastOf(SE, function (e) { return e.v && num(e.v.ph) != null; }), wtE = lastOf(SE, function (e) { return e.v && num(e.v.wt) != null && e.type !== "temp"; });
@@ -568,7 +568,7 @@ function todayView() {
   if (sec === "n") h += sowCard();
   var bad = badReadings(SE);
   if (bad.length) h += '<section class="sec"><div class="card" style="border-color:var(--bad)"><h3 style="color:var(--bad)">قراءات خارج الحدود (' + bad.length + ')</h3><ul style="margin:8px 0 0;padding-right:18px;font-size:13.5px">' + bad.map(function (b) { return "<li>" + esc(b) + "</li>"; }).join("") + "</ul></div></section>";
-  h += '<section class="sec"><div class="sec-h"><h2>مهام اليوم · ' + SECS[sec].name + '</h2></div><div class="card chk">';
+  h += '<section class="sec" id="tasksSec"><div class="sec-h"><h2>مهام اليوم · ' + SECS[sec].name + '</h2></div><div class="card chk">';
   TASKS[sec].forEach(function (x) {
     var need = num(cfg(x[1], sec)) || 0, done = SE.filter(function (e) { return e.type === x[0]; }).length, p = need ? Math.min(100, done / need * 100) : 100;
     if (!need && !done) return;
@@ -1425,6 +1425,7 @@ document.addEventListener("click", function (ev) {
     case "copyCred": copyCred(); break;
     case "exitApp": hideExit(); try { history.go(-2); } catch (e) {} break;
     case "switchSec": switchSec(b.getAttribute("data-s")); break;
+    case "goTasks": var ts = $("tasksSec"); if (ts) window.scrollTo({ top: ts.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); break;
     case "goTab": setTab(b.getAttribute("data-t")); break;
     case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); render(true); break;
     case "calc": openCalc(); break;
