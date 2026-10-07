@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.1.0";
+var APP_VERSION = "2.1.1";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -14,7 +14,7 @@ var DEF = {
   atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, capR: 3000, capL: 3000, daysToTransplant: 21,
   levelUnit: "L", lPerCm: 10, useLearned: true, noteCats: [], atcChecked: "",
   doses: [2.5, 5, 7.5, 10, 12.5], fullDose: 12.5,
-  sched: { n: { irr: ["08:00", "12:00", "16:00"], temp: ["08:00", "10:00", "12:00", "14:00", "16:00"], light: ["08:00", "10:00", "12:00", "14:00", "16:00"], note: ["16:00"], photo: ["16:00"] }, t: {} },
+  sched: { n: { mix: ["08:00"], irr: ["08:00", "12:00", "16:00"], temp: ["08:00", "10:00", "12:00", "14:00", "16:00"], light: ["08:00", "10:00", "12:00", "14:00", "16:00"], note: ["16:00"], photo: ["16:00"] }, t: {} },
   formula: { name: "خس ليما — مرحلة N (المشتل)", fullA: 10, fullB: 10, ecFull: 1330, ecRaw: 400, date: "2026-10-07" }
 };
 var DEF_T = {
@@ -93,8 +93,8 @@ var ECPH_FIELDS = [
   MEMO
 ];
 var NOTE_CATS = ["تعب / ذبول", "إصابة حشرية", "مرض فطري أو بكتيري", "اصفرار / نقص عناصر", "حروق أو إجهاد حراري", "رش / علاج", "صيانة / عطل", "أخرى"];
-var NOTE_NONE = "لا يوجد ملاحظات", NOTE_OTHER = "✏️ نوع آخر (اكتبه)";
-function noteCats() { var c = (S.settings.noteCats || []).filter(function (x) { return x && NOTE_CATS.indexOf(x) < 0; }); return [NOTE_NONE].concat(NOTE_CATS.slice(0, -1), c, ["أخرى", NOTE_OTHER]); }
+var NOTE_NONE = "لا يوجد ملاحظات", NOTE_OTHER = "نوع آخر";
+function noteCats() { var c = (S.settings.noteCats || []).filter(function (x) { return x && NOTE_CATS.indexOf(x) < 0; }); return [NOTE_NONE].concat(NOTE_CATS.slice(0, -1), c, [NOTE_OTHER]); }
 function noteHas(v) { return v.cat !== NOTE_NONE; }
 function noteOther(v) { return v.cat === NOTE_OTHER; }
 var NSIDE_LOC = ["كل المشتل"].concat(SIDES);
@@ -337,7 +337,7 @@ function nowMin() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(
 function tMin(t) { var p = String(t).split(":"); return (+p[0]) * 60 + (+p[1] || 0); }
 
 /* ================= navigation (Android back button) ================= */
-var NAV = { sheet: false, ignore: 0, tabs: [], lastBack: 0, armed: false, exitTimer: null };
+var NAV = { kp: false, sheet: false, ignore: 0, tabs: [], lastBack: 0, armed: false, exitTimer: null };
 function navInit() {
   if (NAV.armed) return; NAV.armed = true;
   try { history.replaceState({ gs: "base" }, ""); history.pushState({ gs: "app" }, ""); } catch (e) {}
@@ -345,6 +345,7 @@ function navInit() {
 }
 function onPop() {
   if (NAV.ignore > 0) { NAV.ignore--; return; }
+  if (NAV.kp) { var ai = document.activeElement; kpHide(true); if (ai && ai.blur) ai.blur(); return; }
   if (NAV.sheet) { closeSheet(true); return; }
   if (NAV.tabs.length) { setTab(NAV.tabs.pop(), true); return; }
   var now = Date.now();
@@ -359,6 +360,7 @@ function setTab(t, fromPop) {
   S.tab = t; if (t === "rep") loadReport(); render(true); window.scrollTo(0, 0);
 }
 function openSheet(html) {
+  if (NAV.kp) kpHide();
   $("sheetRoot").innerHTML = html;
   document.documentElement.classList.add("lock");
   if (!NAV.sheet) { NAV.sheet = true; try { history.pushState({ gs: "sheet" }, ""); } catch (e) {} }
@@ -366,10 +368,11 @@ function openSheet(html) {
 }
 function closeSheet(fromPop) {
   var had = NAV.sheet;
-  kpHide(); $("sheetRoot").innerHTML = ""; FORM = null; CALC.open = false;
+  var kpw = NAV.kp; NAV.kp = false; kpHide(true); $("sheetRoot").innerHTML = ""; FORM = null; CALC.open = false;
   document.documentElement.classList.remove("lock");
   NAV.sheet = false;
-  if (had && !fromPop) { NAV.ignore++; history.back(); }
+  var steps = (had && !fromPop ? 1 : 0) + (kpw ? 1 : 0);
+  if (steps) { NAV.ignore++; history.go(-steps); }
   if (S.dirty) render();
 }
 function sheetHead(title, sec, icon) {
@@ -379,7 +382,7 @@ function sheetHead(title, sec, icon) {
 /* ================= boot ================= */
 function boot() {
   var cfgF = window.GS_CONFIG && window.GS_CONFIG.firebase;
-  if (!window.firebase || !cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-512.png" alt="GREEN SIDE"></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
+  if (!window.firebase || !cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
   firebase.initializeApp(cfgF);
   S.auth = firebase.auth(); S.db = firebase.firestore();
   S.db.enablePersistence({ synchronizeTabs: true }).catch(function () {});
@@ -409,7 +412,7 @@ function showAuth() {
   renderAuth();
 }
 function renderAuth() {
-  var h = '<div class="login"><div class="logo"><img src="icons/icon-512.png" alt="GREEN SIDE"><span class="muted">سجل متابعة المشتل والأبراج</span></div>';
+  var h = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span><span class="muted">سجل متابعة المشتل والأبراج</span></div>';
   if (AUTH_MODE === "setup") {
     h += '<div class="card"><h2>إعداد الحساب الأول</h2><p class="muted" style="font-size:13.5px">هذا الحساب سيكون مالك التطبيق والمشرف الرئيسي.</p><form id="authForm" class="fgrid" novalidate>' +
       '<label class="f full" for="a_name">الاسم<input class="in" id="a_name" autocomplete="name"></label>' +
@@ -443,7 +446,7 @@ function onAuthSubmit(ev) {
 /* ================= session ================= */
 function startSession() {
   var db = S.db, uid = S.uid;
-  $("view").innerHTML = '<div class="splash"><img class="splash-logo" src="icons/icon-512.png" alt="GREEN SIDE"><span class="muted">جارٍ التحميل…</span></div>';
+  $("view").innerHTML = '<div class="splash"><span class="wm big">GREEN SIDE</span><span class="muted">جارٍ التحميل…</span></div>';
   db.collection("config").doc("owner").get().then(function (s) {
     if (!s.exists && window.__setupName) {
       return db.collection("config").doc("owner").set({ uid: uid, at: Date.now() })
@@ -465,7 +468,7 @@ function onRole() {
   if (!S.role) {
     unsubDay.forEach(function (u) { u(); }); unsubDay = []; memberSubs = false;
     $("top").hidden = true; $("tabsNav").hidden = true;
-    $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-512.png" alt="GREEN SIDE"></div><div class="card"><h2>الحساب غير مفعّل</h2><p class="muted">حسابك غير مفعّل أو موقوف. تواصل مع المشرف.</p><button class="btn block" data-act="logout">تسجيل الخروج</button></div></div>';
+    $("view").innerHTML = '<div class="login"><div class="logo"><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>الحساب غير مفعّل</h2><p class="muted">حسابك غير مفعّل أو موقوف. تواصل مع المشرف.</p><button class="btn block" data-act="logout">تسجيل الخروج</button></div></div>';
     return;
   }
   $("top").hidden = false; $("tabsNav").hidden = false; netState(); navInit();
@@ -480,7 +483,7 @@ function onRole() {
     subWindowed(["sow", "xplant", "batt", "cal", "harvest"], function (q) { S.meta = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
     subDay();
   }
-  render(); setTimeout(checkAlarms, 2500);
+  render();
 }
 function logErr(e) { console.warn(e); }
 /* reads are limited to the last WINDOW_DAYS for history used by the calculator, stock, sowing and equipment.
@@ -602,7 +605,7 @@ function todayView() {
   if (sec === "n") h += sowCard();
   var bad = badReadings(SE);
   if (bad.length) h += '<section class="sec"><div class="card" style="border-color:var(--bad)"><h3 style="color:var(--bad)">قراءات خارج الحدود (' + bad.length + ')</h3><ul style="margin:8px 0 0;padding-right:18px;font-size:13.5px">' + bad.map(function (b) { return "<li>" + esc(b) + "</li>"; }).join("") + "</ul></div></section>";
-  h += '<section class="sec" id="tasksSec"><div class="sec-h"><h2>مهام اليوم · ' + SECS[sec].name + '</h2><button class="btn sm" type="button" data-act="alarmSet">' + ico("bell", 16) + "&nbsp;المنبه</button></div><div class=\"card chk\">";
+  h += '<section class="sec" id="tasksSec"><div class="sec-h"><h2>مهام اليوم · ' + SECS[sec].name + '</h2></div><div class="card chk">';
   var nm = nowMin(), past = S.date < todayStr();
   TASKS[sec].forEach(function (x) {
     var times = schedOf(sec, x[0]), need = needOf(sec, x), done = doneOf(SE, x[0]), p = need ? Math.min(100, done / need * 100) : 100;
@@ -803,10 +806,13 @@ function gridHTML(fd, v) {
   var h = '<div class="g3wrap" id="w_' + fd.k + '"><div class="grp-h" style="margin:0">' + fd.l + " (" + fd.u + ")</div>" +
     '<div class="tbl-wrap" style="border:0;background:none"><table class="g3"><thead><tr><th class="zh"></th>' + D.colL.map(function (l) { return "<th>" + l + "</th>"; }).join("") + "<th>المتوسط</th></tr></thead><tbody>";
   D.rows.forEach(function (r, ri) {
-    h += '<tr class="gr-' + r + '"><th class="zh">' + D.rowL[ri] + "</th>" + D.cols.map(function (c, ci) { var k = gkey(fd.k, r, c); return '<td><input class="in num gin" ' + KPA() + ' autocomplete="off" id="f_' + k + '" aria-label="' + fd.l + " · " + D.rowL[ri] + " " + D.colL[ci] + '" value="' + esc(v[k] == null ? "" : v[k]) + '"></td>'; }).join("") + '<td class="avg" id="avg_' + fd.k + "_" + r + '">—</td></tr>';
+    h += '<tr class="gr-' + r + '"><th class="zh">' + D.rowL[ri] + "</th>" + D.cols.map(function (c, ci) { var k = gkey(fd.k, r, c); var sep = fd.c === "lux", val = v[k] == null || v[k] === "" ? "" : (sep && num(v[k]) != null ? f(num(v[k])) : v[k]); return '<td><input class="in num gin" ' + KPA() + (sep ? ' data-sep="1"' : "") + ' autocomplete="off" id="f_' + k + '" aria-label="' + fd.l + " · " + D.rowL[ri] + " " + D.colL[ci] + '" value="' + esc(val) + '"></td>'; }).join("") + '<td class="avg" id="avg_' + fd.k + "_" + r + '">—</td></tr>';
   });
   return h + '</tbody><tfoot><tr><td colspan="' + (D.cols.length + 2) + '" id="avgall_' + fd.k + '"></td></tr></tfoot></table></div><span class="hint" id="h_' + fd.k + '">المستهدف ' + rangeTxt(fd.c, FORM.vsec) + "</span></div>";
 }
+function inVal(el) { return el.hasAttribute("data-sep") ? el.value.replace(/[,،]/g, "") : el.value; }
+function sepFmt(raw) { raw = String(raw).replace(/[٠-٩]/g, function (d) { return "٠١٢٣٤٥٦٧٨٩".indexOf(d); }).replace(/[^\d]/g, ""); return raw ? Number(raw).toLocaleString("en-US") : ""; }
+document.addEventListener("input", function (ev) { var t = ev.target; if (t && t.hasAttribute && t.hasAttribute("data-sep") && !t.__kp) { var nv = sepFmt(t.value); if (nv !== t.value) { t.value = nv; caretEnd(t); } } }, true);
 function opts(fd) { return typeof fd.o === "function" ? fd.o() : fd.o; }
 function photoHTML(fd) {
   var sx = fd.side ? "_" + fd.side : "", e = FORM.e, cur = !fd.side && e && (e.thumb || e.photo);
@@ -876,7 +882,7 @@ function formValues() {
   var v = {};
   FORM.fields.forEach(function (fd) {
     if (fd.t === "photo") return;
-    if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var el = $("f_" + k); v[k] = el ? el.value.trim() : ""; }); return; }
+    if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var el = $("f_" + k); v[k] = el ? inVal(el).trim() : ""; }); return; }
     if (fd.t === "t") { var on = $("on_" + fd.k); v[fd.k] = on && !on.checked ? "" : readTime("f_" + fd.k); return; }
     var el = $("f_" + fd.k); v[fd.k] = el ? el.value.trim() : "";
   });
@@ -898,7 +904,7 @@ function updForm() {
     if (fd.t === "photo") return;
     if (fd.t === "grid") {
       var D = dimOf(fd), dec = fd.c === "lux" ? 0 : 1;
-      D.rows.forEach(function (r) { var vals = D.cols.map(function (c) { var el = $("f_" + gkey(fd.k, r, c)), n = num(el.value); el.classList.toggle("bad", isBad(chk(fd.c, n, sec))); return n; }); $("avg_" + fd.k + "_" + r).textContent = f(avg(vals), dec); });
+      D.rows.forEach(function (r) { var vals = D.cols.map(function (c) { var el = $("f_" + gkey(fd.k, r, c)), n = num(inVal(el)); el.classList.toggle("bad", isBad(chk(fd.c, n, sec))); return n; }); $("avg_" + fd.k + "_" + r).textContent = f(avg(vals), dec); });
       var all = avg(gridKeysD(fd.k, D).map(function (k) { return num(v[k]); }));
       $("avgall_" + fd.k).textContent = all == null ? "" : "متوسط " + D.all + " " + f(all, dec) + " · " + D.colL.map(function (l, i) { return l + " " + f(colAvg(v, fd.k, D, i), dec); }).join(" / ");
       return;
@@ -911,7 +917,21 @@ function updForm() {
     if (fd.w === "third") { el.textContent = n == null ? "" : st === "ok" ? "✓" : (st === "lo" ? "منخفض" : "مرتفع"); return; }
     el.textContent = (n == null ? "المستهدف " + rangeTxt(fd.c, sec) : st === "ok" ? "✓ ضمن المستهدف " + rangeTxt(fd.c, sec) : (st === "lo" ? "أقل" : "أعلى") + " من المستهدف " + rangeTxt(fd.c, sec)) + (tag ? " · " + tag : "");
   });
-  if (FORM.type === "mix") { var w = num(v.water), a = num(v.mlA), b = num(v.mlB), mh = $("mixHint"); if (mh) mh.textContent = w && (a || b) ? "المعدل: A " + f(a / w, 2) + " مل/لتر · B " + f(b / w, 2) + " مل/لتر" + (a ? " · الجرعة ≈ " + Math.round(a / w / fullDose() * 100) + "% من الجرعة الكاملة (" + fml(fullDose()) + " مل/لتر)" : "") : ""; }
+  if (FORM.type === "mix") mixExpect(v);
+}
+/* mixing: from water + A + B, the dose per litre and the salts this mix should give on the meter (±5%) */
+function mixExpect(v) {
+  var w = num(v.water), a = num(v.mlA), b = num(v.mlB), mh = $("mixHint"), he = $("h_ec"); if (!mh || !he) return;
+  if (!w || !a) { mh.textContent = ""; return; }
+  var perL = a / w, wt = num(v.wt), atc = cfg("atc"), coef = num(cfg("ecCoef")), rr = num(v.ecRaw);
+  var raw25 = rr != null ? ec25(rr, wt) : (num(lastRaw()) != null ? num(lastRaw()) : num(formula().ecRaw));
+  var e25 = raw25 + kUse().k * perL, dev = function (x) { return atc || wt == null ? x : x * (1 + coef * (wt - 25)); };
+  var exp = dev(e25), lo = exp * 0.95, hi = exp * 1.05, nd = doses().filter(function (d) { return Math.abs(d - perL) <= 0.15; })[0];
+  var where = !atc && wt != null ? " على جهازك عند " + f(wt, 1) + "°" : " (عند 25°)";
+  mh.innerHTML = "المعدل: A <b class=\"num\">" + f(perL, 2) + "</b> مل/لتر · B <b class=\"num\">" + f(b / w, 2) + "</b> مل/لتر" + (nd != null ? " · يحاكي <b>جرعة " + fml(nd) + " مل</b>" : "");
+  var n = num(v.ec), txt = "المتوقع لهذه الخلطة" + where + ": " + f(lo) + " – " + f(hi) + " (≈ " + f(exp) + ")", cls = "hint";
+  if (n != null) { var dp = (n / exp - 1) * 100; if (Math.abs(dp) <= 5) { txt = "✓ مطابقة · " + txt; cls = "hint ok"; } else { txt = "قراءتك " + (dp > 0 ? "أعلى" : "أقل") + " من المتوقع بـ " + f(Math.abs(dp), 0) + "% · " + txt; cls = "hint " + (dp > 0 ? "hi" : "lo"); } }
+  he.className = cls; he.textContent = txt;
 }
 function needOneOk(T, v) {
   if (!T.needOne) return true;
@@ -1011,7 +1031,7 @@ function phRate(sec, dir) {
 function doses() { var d = S.settings.doses; d = Array.isArray(d) && d.length ? d : DEF.doses; var u = {}; return d.map(num).filter(function (x) { if (!(x > 0) || u[x]) return false; u[x] = 1; return true; }).sort(function (a, b) { return a - b; }); }
 function fullDose() { var x = num(S.settings.fullDose); if (!(x > 0)) { var d = doses(); x = d[d.length - 1] || num(formula().fullA); } return x; }
 function doseRatio() { var F = formula(); return num(F.fullB) / num(F.fullA); }
-function doseName(d) { var fd = fullDose(); return Math.abs(d - fd) < 1e-9 ? "الجرعة الكاملة" : Math.round(d / fd * 100) + "% من الكاملة"; }
+function doseName(d) { return "جرعة " + fml(d) + " مل"; }
 /* meter check: the same sample read cold (e1 at t1) and warm (e2 at t2). Without ATC the reading follows EC25·(1+α(t−25)),
    so α = (r−1) / ((t2−25) − r(t1−25)) with r = e2/e1. A meter with ATC gives α ≈ 0. */
 function atcAlpha(e1, t1, e2, t2) { var r = e2 / e1; return (r - 1) / ((t2 - 25) - r * (t1 - 25)); }
@@ -1047,8 +1067,8 @@ function openCalc() {
   h += '<label class="f" for="c_raw">أملاح ماء المصدر<div class="unitwrap"><input class="in num" id="c_raw" ' + KPA() + ' value="' + esc(lastRaw()) + '"><span class="u">µS/cm</span></div><span class="hint" id="hc_raw"></span></label>' +
     '<label class="f" for="c_wt">حرارة الماء<div class="unitwrap"><input class="in num" id="c_wt" ' + KPA() + ' value="' + esc(lastWt()) + '"><span class="u">°C</span></div></label>';
   var DS = doses(), ratio0 = doseRatio();
-  h += '<div class="grp-h">الهدف</div><div class="full c-fresh"><div class="stagebar" id="c_stages"><button type="button" data-act="cstage" data-s="ec" aria-pressed="true">حسب الأملاح<b>المستهدفة</b></button>' + DS.map(function (d) { return '<button type="button" data-act="cstage" data-s="' + d + '" aria-pressed="false">' + doseName(d) + '<b class="num">' + fml(d) + " + " + fml(d * ratio0) + "</b></button>"; }).join("") + '<button type="button" data-act="cstage" data-s="custom" aria-pressed="false">جرعة أخرى<b>اكتبها</b></button></div>' +
-    '<p class="help" style="margin:6px 0 0">الأرقام = مل A + مل B لكل لتر ماء.' + (isSup() ? ' <button type="button" class="linkbtn" data-act="editDoses" data-from="calc">تعديل الجرعات</button>' : "") + "</p></div>";
+  h += '<div class="grp-h">الهدف</div><div class="full c-fresh"><div class="stagebar" id="c_stages"><button type="button" data-act="cstage" data-s="ec" aria-pressed="true">حسب الأملاح<b>المستهدفة</b></button>' + DS.map(function (d) { return '<button type="button" data-act="cstage" data-s="' + d + '" aria-pressed="false"><span class="num">' + fml(d) + ' مل</span><b class="num" data-dexp="' + d + '">—</b></button>'; }).join("") + '<button type="button" data-act="cstage" data-s="custom" aria-pressed="false">جرعة أخرى<b>اكتبها</b></button></div>' +
+    '<p class="help" style="margin:6px 0 0">الجرعة = مل من A ' + (Math.abs(ratio0 - 1) < 1e-6 ? "ومثلها من B" : "ومعها B بنسبة الخلطة") + ' لكل لتر ماء. الرقم تحتها = الأملاح المتوقعة على جهازك (µS/cm).' + (isSup() ? ' <button type="button" class="linkbtn" data-act="editDoses" data-from="calc">تعديل الجرعات</button>' : "") + "</p></div>";
   h += '<label class="f full c-fresh" for="c_dose" id="w_c_dose" hidden>جرعة A لكل لتر<div class="unitwrap"><input class="in num" id="c_dose" ' + KPA() + '><span class="u">مل/لتر</span></div><span class="hint">B تُحسب تلقائياً بنسبة الخلطة (' + fml(ratio0) + " مل B لكل 1 مل A)</span></label>";
   h += '<label class="f full" for="c_target" id="w_c_target">الأملاح المستهدفة (عند 25°)<div class="unitwrap"><input class="in num" id="c_target" ' + KPA() + ' value="' + esc(cfg("ecTarget", sec)) + '"><span class="u">µS/cm</span></div><span class="hint">الحدود لـ' + SECS[sec].name + ": " + rangeTxt("ec", sec) + "</span></label>";
   h += '</form><div id="calcOut" style="margin-top:14px"></div>';
@@ -1074,6 +1094,7 @@ function calcRun() {
   var corr = function (id, val) { var el = $(id); if (el) el.textContent = val != null && !atc && wt != null ? "≈ " + f(val) + " عند 25°" : ""; };
   corr("hc_raw", rawR != null ? raw : null);
   var expRead = function (t25) { return atc || wt == null ? t25 : t25 * (1 + coef * (wt - 25)); };
+  document.querySelectorAll("#c_stages [data-dexp]").forEach(function (el) { el.textContent = rawR == null ? "—" : "≈ " + f(expRead(raw + k * num(el.getAttribute("data-dexp")))); });
   var res = null, h = "", Vph = null;
   if (rawR == null) h = '<div class="empty">اكتب أملاح ماء المصدر.</div>';
   else if (fresh) {
@@ -1085,7 +1106,7 @@ function calcRun() {
       var FM = freshMath(raw, t25, V, k, ratio), mlA = FM.mlA, mlB = FM.mlB, st = chk("ec", t25, sec); Vph = V;
       res = { kind: "fresh", water: V, ecRaw: rawR, wt: wt, mlA: Math.round(mlA * 10) / 10, mlB: Math.round(mlB * 10) / 10 };
       h = '<div class="res-big"><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول A</span><span class="val num">' + fml(mlA) + ' <small>مل</small></span><span class="sub num">' + f(perL, 2) + ' مل لكل لتر</span></div><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول B</span><span class="val num">' + fml(mlB) + ' <small>مل</small></span><span class="sub num">' + f(perL * ratio, 2) + " مل لكل لتر</span></div></div>" +
-        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الجرعة</dt><dd>' + Math.round(perL / fullDose() * 100) + "% من الجرعة الكاملة (" + fml(fullDose()) + " مل/لتر)</dd><dt>الأملاح المتوقعة (عند 25°)</dt><dd><b class=\"num\">" + f(t25) + "</b> µS/cm " + (st === "ok" ? '<span class="pill ok">ضمن الحد</span>' : '<span class="pill bad">خارج الحد ' + rangeTxt("ec", sec) + "</span>") + "</dd>" +
+        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الجرعة</dt><dd class="num">' + fml(perL) + " مل A + " + fml(perL * ratio) + " مل B لكل لتر</dd><dt>الأملاح المتوقعة (عند 25°)</dt><dd><b class=\"num\">" + f(t25) + "</b> µS/cm " + (st === "ok" ? '<span class="pill ok">ضمن الحد</span>' : '<span class="pill bad">خارج الحد ' + rangeTxt("ec", sec) + "</span>") + "</dd>" +
         (!atc && wt != null ? "<dt>القراءة المتوقعة على جهازك</dt><dd><b class=\"num\">" + f(expRead(t25)) + "</b> µS/cm عند " + f(wt, 1) + "°</dd>" : "") + "</dl></div>" +
         '<div class="card" style="margin-top:10px"><h3>خطوات الخلط</h3><ol class="cal-steps"><li>ضع <b class="num">' + f(V) + "</b> لتر ماء أولاً، ولا تضف المركّز لإناء فارغ.</li><li>أضف <b>A</b>: <b class=\"num\">" + fml(mlA * .9) + "</b> مل (90%) وحرّك جيداً.</li><li>أضف <b>B</b>: <b class=\"num\">" + fml(mlB * .9) + "</b> مل وحرّك. لا تخلط A و B مركّزين أبداً.</li><li>قِس الأملاح. إذا كانت أقل من <b class=\"num\">" + f(expRead(t25)) + "</b> أكمل الـ 10% الباقية (" + fml(mlA * .1) + " مل A ثم " + fml(mlB * .1) + " مل B).</li><li>اضبط pH بعد ضبط الأملاح، ثم سجّل الكميات الفعلية.</li></ol></div>";
     }
@@ -1443,7 +1464,7 @@ function schedCard(sec) {
       times.map(function (t) { return '<button type="button" class="tchip edit" data-act="schDel" data-sec="' + sec + '" data-type="' + x[0] + '" data-t="' + t + '">' + fmtTime(t) + ' <span aria-hidden="true">✕</span></button>'; }).join("") +
       '<button type="button" class="tchip add" data-act="schAdd" data-sec="' + sec + '" data-type="' + x[0] + '">+ وقت</button></div></div>';
   });
-  return h + '<p class="help" style="margin:8px 0 0">عدد مهام اليوم = عدد المواعيد. المنبه يرن في الجوال عند كل موعد لم تُسجَّل مهمته بعد. المهمة بدون مواعيد تأخذ عددها من الحدود أدناه. اضغط ✕ لحذف موعد.</p></div></section>';
+  return h + '<p class="help" style="margin:8px 0 0">عدد مهام اليوم = عدد المواعيد، وتظهر في صفحة اليوم (✓ تمت، برتقالي حان وقتها، أحمر متأخرة). اضبط منبه الجوال على نفس الأوقات. المهمة بدون مواعيد تأخذ عددها من الحدود أدناه. اضغط ✕ لحذف موعد.</p></div></section>';
 }
 function saveSched(sec, type, arr) {
   var sc = clone(S.settings.sched || DEF.sched); sc[sec] = sc[sec] || {};
@@ -1455,13 +1476,13 @@ function openSchAdd(sec, type) {
     '<div class="f full"><span>الوقت</span>' + timePicker("sch_tp", "08:00") + '</div><div class="sheet-actions"><button class="btn pri" type="button" data-act="schSave" data-sec="' + sec + '" data-type="' + type + '">إضافة الموعد</button></div></div></div>');
 }
 function openDoses(from) {
-  var DS = doses(), full = fullDose(), rt = doseRatio();
-  var row = function (d) { return '<div class="dose-row"><div class="unitwrap"><input class="in num" ' + KPA() + ' data-dose value="' + esc(d) + '" aria-label="جرعة A"><span class="u">مل/لتر</span></div><label class="dr-full"><input type="radio" name="fullDose" ' + (Math.abs(d - full) < 1e-9 ? "checked" : "") + '> الكاملة</label><button class="iconbtn" type="button" data-act="rmDose" aria-label="حذف">✕</button></div>'; };
+  var DS = doses(), rt = doseRatio();
+  var row = function (d) { return '<div class="dose-row"><div class="unitwrap"><input class="in num" ' + KPA() + ' data-dose value="' + esc(d) + '" aria-label="جرعة A"><span class="u">مل/لتر</span></div><button class="iconbtn" type="button" data-act="rmDose" aria-label="حذف">✕</button></div>'; };
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("جرعات الحاسبة", "n", "calc") +
-    '<p class="help" style="margin-top:0">اكتب جرعة A لكل لتر. جرعة B تُحسب تلقائياً بنسبة الخلطة (' + fml(rt) + ' مل B لكل 1 مل A). اختر الجرعة التي تعتبرها "الكاملة"، وباقي الجرعات تظهر كنسبة منها.</p><div id="doseList">' + DS.map(row).join("") + "</div>" +
+    '<p class="help" style="margin-top:0">اكتب جرعة A لكل لتر. جرعة B تُحسب تلقائياً بنسبة الخلطة (' + fml(rt) + ' مل B لكل 1 مل A). كل جرعة تظهر في الحاسبة ومعها الأملاح المتوقعة.</p><div id="doseList">' + DS.map(row).join("") + "</div>" +
     '<button class="btn sm" type="button" data-act="addDose">+ إضافة جرعة</button><div class="sheet-actions"><button class="btn pri" type="button" data-act="saveDoses" data-from="' + (from || "") + '">حفظ الجرعات</button></div></div></div>');
 }
-function doseRowHTML() { return '<div class="dose-row"><div class="unitwrap"><input class="in num" ' + KPA() + ' data-dose value="" aria-label="جرعة A"><span class="u">مل/لتر</span></div><label class="dr-full"><input type="radio" name="fullDose"> الكاملة</label><button class="iconbtn" type="button" data-act="rmDose" aria-label="حذف">✕</button></div>'; }
+function doseRowHTML() { return '<div class="dose-row"><div class="unitwrap"><input class="in num" ' + KPA() + ' data-dose value="" aria-label="جرعة A"><span class="u">مل/لتر</span></div><button class="iconbtn" type="button" data-act="rmDose" aria-label="حذف">✕</button></div>'; }
 function openAtcTest() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("اختبار جهاز القياس", null, "cal") +
     '<ol class="cal-steps" style="margin-top:0"><li>خذ كوباً من محلول الري، وبرّده (ماء بارد أو ثلاجة) حتى تقل حرارته عن 20°.</li><li>ضع المجس، حرّكه، وانتظر حتى تثبت القراءة. سجّل <b>الأملاح والحرارة</b> كما تظهر على الشاشة.</li><li>دفّئ نفس الكوب (في الشمس أو داخل ماء دافئ) حتى ترتفع الحرارة 8 درجات أو أكثر، ثم قِس مرة أخرى.</li></ol>' +
@@ -1540,7 +1561,6 @@ function openAccount() {
     '<div class="card"><dl class="kv"><dt>الاسم</dt><dd>' + esc(nameOf(S.uid)) + '</dd><dt>الدخول</dt><dd class="num">' + esc(showLogin(S.user.email)) + "</dd><dt>الصلاحية</dt><dd>" + (isSup() ? "مشرف" : "عامل") + "</dd></dl></div>" +
     '<form class="fgrid" id="pwForm" style="margin-top:14px" novalidate><label class="f full" for="p_new">تغيير كلمة المرور<input class="in" id="p_new" type="password" dir="ltr" autocomplete="new-password" placeholder="كلمة المرور الجديدة"></label><button class="btn full" type="button" data-act="changePw">حفظ كلمة المرور</button></form>' +
     '<div class="f full" style="margin-top:14px"><span>لوحة الأرقام في خانات القياس</span><div class="seg" id="kp_on" role="group"><button type="button" data-v="1" aria-pressed="' + kpOn() + '">لوحة GREEN SIDE الكبيرة</button><button type="button" data-v="0" aria-pressed="' + !kpOn() + '">لوحة الجوال</button></div></div>' +
-    '<button class="btn block" style="margin-top:12px;width:100%" type="button" data-act="alarmSet">' + ico("bell", 18) + "&nbsp;منبه مواعيد المهام</button>" +
     (S.installEvt ? '<button class="btn pri block" style="margin-top:14px" type="button" data-act="install">تثبيت التطبيق على الجوال</button>' : '<p class="muted" style="font-size:13px;margin-top:14px">لتثبيت التطبيق: من قائمة المتصفح (⋮) اختر "تثبيت التطبيق".</p>') +
     '<div class="sheet-actions"><button class="btn danger" type="button" data-act="logout">تسجيل الخروج</button></div><p class="muted" style="font-size:12px;text-align:center">GREEN SIDE · الإصدار ' + APP_VERSION + "</p></div></div>");
 }
@@ -1549,20 +1569,22 @@ function openAccount() {
 /* A large on-screen number pad for numeric fields: the same on every phone, with a big clear decimal point.
    Each phone can switch back to its own keyboard from "حسابي". */
 function kpOn() { return lsGet("gs_kp") !== "0"; }
-function KPA() { return 'inputmode="' + (kpOn() ? "none" : "decimal") + '" enterkeyhint="next" data-kp="1"'; }
+/* readonly stops the phone keyboard on every phone (also when returning from another app); the pad writes the value itself */
+function KPA() { return kpOn() ? 'readonly inputmode="none" data-kp="1"' : 'inputmode="decimal" enterkeyhint="next" data-kp="1"'; }
 var KP = { el: null, inp: null };
 function kpBuild() {
   if (KP.el) return KP.el;
   var d = document.createElement("div"); d.className = "kp"; d.id = "kp"; d.hidden = true;
   var keys = [["1"], ["2"], ["3"], ["bk", "⌫", "kp-act"], ["4"], ["5"], ["6"], ["clr", "مسح", "kp-act"], ["7"], ["8"], ["9"], ["next", "التالي", "kp-next"], [".", "", "kp-dot"], ["0"], ["done", "إخفاء", "kp-act"]];
-  d.innerHTML = '<div class="kp-h"><span id="kpL"></span><b class="num" id="kpV"></b></div><div class="kp-g">' + keys.map(function (k) { return '<button type="button" tabindex="-1" class="kp-k ' + (k[2] || "") + '" data-k="' + k[0] + '" aria-label="' + (k[0] === "." ? "فاصلة عشرية" : (k[1] || k[0])) + '">' + (k[0] === "." ? '<span class="dot"></span><small>فاصلة</small>' : (k[1] || k[0])) + "</button>"; }).join("") + "</div>";
+  d.innerHTML = '<div class="kp-h"><span id="kpL"></span><b class="num" id="kpV"></b></div><div class="kp-g">' + keys.map(function (k) { return '<button type="button" tabindex="-1" class="kp-k ' + (k[2] || "") + '" data-k="' + k[0] + '" aria-label="' + (k[0] === "." ? "فاصلة عشرية" : (k[1] || k[0])) + '">' + (k[0] === "." ? '<span class="dot"></span>' : (k[1] || k[0])) + "</button>"; }).join("") + "</div>";
   d.addEventListener("pointerdown", function (ev) { ev.preventDefault(); var b = ev.target.closest("[data-k]"); if (!b) return; b.classList.add("on"); setTimeout(function () { b.classList.remove("on"); }, 120); kpKey(b.getAttribute("data-k")); });
   d.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
   d.addEventListener("click", function (ev) { ev.preventDefault(); });
   document.body.appendChild(d); KP.el = d; return d;
 }
 function kpShow(el) {
-  kpBuild(); KP.inp = el; el.setAttribute("inputmode", "none");
+  kpBuild(); KP.inp = el; el.setAttribute("inputmode", "none"); el.setAttribute("readonly", "");
+  if (!NAV.kp) { NAV.kp = true; try { history.pushState({ gs: "kp" }, ""); } catch (x) {} }
   var lab = el.closest("label"), t = el.getAttribute("aria-label") || "";
   if (!t && lab) { var n0 = lab.firstChild; t = n0 && n0.nodeType === 3 ? n0.textContent : ((lab.querySelector(":scope > span") || {}).textContent || ""); }
   var u = el.parentNode.querySelector(".u"); KP.unit = u ? u.textContent : "";
@@ -1571,17 +1593,21 @@ function kpShow(el) {
   setTimeout(function () { if (KP.inp !== el) return; try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (x) { el.scrollIntoView(); } }, 80);
 }
 function kpVal() { if (KP.inp) $("kpV").textContent = (KP.inp.value || "—") + (KP.inp.value && KP.unit ? " " + KP.unit : ""); }
-function kpHide() { if (!KP.el || KP.el.hidden) return; KP.el.hidden = true; KP.inp = null; document.documentElement.classList.remove("kp-open"); }
+function kpHide(noHist) {
+  if (KP.el && !KP.el.hidden) { KP.el.hidden = true; KP.inp = null; document.documentElement.classList.remove("kp-open"); }
+  if (NAV.kp) { NAV.kp = false; if (!noHist) { NAV.ignore++; history.back(); } }
+}
 function kpKey(k) {
   var el = KP.inp; if (!el || !document.body.contains(el)) { kpHide(); return; }
   if (k === "next") { focusNext(el); return; }
   if (k === "done") { el.blur(); kpHide(); return; }
-  var v = el.value, a = el.selectionStart, b = el.selectionEnd; if (a == null) a = b = v.length;
-  if (k === "bk") { if (a === b && a > 0) a--; v = v.slice(0, a) + v.slice(b); b = a; }
-  else if (k === "clr") { v = ""; a = b = 0; }
-  else { if (k === "." && v.replace(/[٫,]/g, ".").indexOf(".") >= 0) return; var ins = k === "." && a === 0 ? "0." : k; v = v.slice(0, a) + ins + v.slice(b); a = b = a + ins.length; }
-  el.value = v; try { el.setSelectionRange(a, a); } catch (x) {}
-  el.dispatchEvent(new Event("input", { bubbles: true }));
+  var sep = el.hasAttribute("data-sep"), v = sep ? inVal(el) : el.value;
+  if (k === "bk") v = v.slice(0, -1);
+  else if (k === "clr") v = "";
+  else if (k === ".") { if (sep || v.replace(/[٫,]/g, ".").indexOf(".") >= 0) return; v = (v === "" ? "0" : v) + "."; }
+  else v += k;
+  el.value = sep ? sepFmt(v) : v;
+  el.__kp = 1; el.dispatchEvent(new Event("input", { bubbles: true })); el.__kp = 0;
   kpVal(); try { if (navigator.vibrate) navigator.vibrate(6); } catch (x) {}
 }
 /* "next" on the pad or the phone keyboard moves to the next field; after the last one it closes the pad (and shows the calculator result) */
@@ -1596,7 +1622,9 @@ function focusNext(el) {
 }
 function caretEnd(t) { setTimeout(function () { try { var n = t.value.length; t.setSelectionRange(n, n); } catch (x) {} }, 0); }
 var FOCUS_T = 0;
-document.addEventListener("pointerdown", function (ev) { var t = ev.target.closest && ev.target.closest("[data-kp]"); if (t) t.setAttribute("inputmode", kpOn() ? "none" : "decimal"); }, true);
+document.addEventListener("pointerdown", function (ev) { var t = ev.target.closest && ev.target.closest("[data-kp]"); if (!t) return; if (kpOn()) { t.setAttribute("readonly", ""); t.setAttribute("inputmode", "none"); } else { t.removeAttribute("readonly"); t.setAttribute("inputmode", "decimal"); } }, true);
+/* leaving the app (recent apps, home) drops the focus so the phone keyboard does not pop up on return */
+document.addEventListener("visibilitychange", function () { if (document.hidden) { var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); kpHide(); } });
 document.addEventListener("focusin", function (ev) {
   var t = ev.target; if (!t || !t.matches) return;
   if (t.matches("input.in, textarea.in")) { FOCUS_T = Date.now(); caretEnd(t); }
@@ -1605,90 +1633,6 @@ document.addEventListener("focusin", function (ev) {
 document.addEventListener("focusout", function () { setTimeout(function () { if (KP.inp && document.activeElement !== KP.inp) kpHide(); }, 0); });
 /* typing starts at the end of the text wherever the field is tapped */
 document.addEventListener("click", function (ev) { var t = ev.target; if (t && t.matches && t.matches("input.in, textarea.in") && Date.now() - FOCUS_T < 700) caretEnd(t); }, true);
-
-/* ================= task alarm ================= */
-/* At each task time the phone rings (repeating beeps + vibration) until "stop", if that task is not recorded yet.
-   Works while the app is open. When the app is in the background a notification is shown if allowed. */
-var ALARM = { ctx: null, on: false, items: [], timer: null, vib: null, stopAt: null };
-function alarmOn() { return lsGet("gs_alarm") !== "0"; }
-function audioUnlock() { try { if (!ALARM.ctx) { var AC = window.AudioContext || window.webkitAudioContext; if (AC) ALARM.ctx = new AC(); } if (ALARM.ctx && ALARM.ctx.state === "suspended") ALARM.ctx.resume(); } catch (e) {} }
-document.addEventListener("pointerdown", audioUnlock, true);
-function beep() {
-  var c = ALARM.ctx; if (!c) return;
-  try { var t0 = c.currentTime + 0.02; [0, 0.22, 0.44, 0.66].forEach(function (dt, i) { var o = c.createOscillator(), g = c.createGain(); o.type = "square"; o.frequency.value = i % 2 ? 1046 : 880; g.gain.setValueAtTime(0.0001, t0 + dt); g.gain.exponentialRampToValueAtTime(0.3, t0 + dt + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.18); o.connect(g); g.connect(c.destination); o.start(t0 + dt); o.stop(t0 + dt + 0.2); }); } catch (e) {}
-}
-function vib() { try { if (navigator.vibrate) navigator.vibrate([700, 300, 700]); } catch (e) {} }
-function fireAlarm(items) {
-  if (ALARM.on) stopAlarm();
-  ALARM.on = true; ALARM.items = items;
-  var test = items[0] && items[0].test, by = {};
-  items.forEach(function (it) { if (!it.test) (by[it.sec] = by[it.sec] || []).push(typeDef(it.type, it.sec).label); });
-  var list = test ? "<li>هذه تجربة لصوت المنبه. إذا لم تسمع الصوت ارفع صوت الوسائط في الجوال.</li>" : Object.keys(by).map(function (sc) { return "<li><b>" + SECS[sc].icon + " " + SECS[sc].name + ":</b> " + by[sc].join("، ") + "</li>"; }).join("");
-  var d = document.createElement("div"); d.className = "alarm"; d.id = "alarm"; d.setAttribute("role", "alertdialog");
-  d.innerHTML = '<div class="alarm-in"><div class="alarm-ic">' + ico("bell", 46) + "</div><h2>" + (test ? "تجربة المنبه" : "حان وقت المهام") + '</h2><div class="alarm-t num">' + fmtTime(items[0].t) + "</div><ul>" + list + "</ul>" +
-    (test ? "" : '<button class="btn pri block" type="button" data-act="alarmGo">إيقاف المنبه والتسجيل الآن</button>') + '<button class="btn block" type="button" data-act="alarmStop">إيقاف المنبه</button></div>';
-  document.body.appendChild(d);
-  audioUnlock(); beep(); vib();
-  ALARM.timer = setInterval(beep, 1300); ALARM.vib = setInterval(vib, 2200); ALARM.stopAt = setTimeout(stopAlarm, 10 * 60 * 1000);
-  if (!test && document.hidden) notifyAlarm(items);
-}
-function stopAlarm() {
-  clearInterval(ALARM.timer); clearInterval(ALARM.vib); clearTimeout(ALARM.stopAt); ALARM.on = false;
-  try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
-  var a = $("alarm"); if (a) a.remove();
-  try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.ready.then(function (r) { return r.getNotifications({ tag: "gs-alarm" }); }).then(function (ns) { (ns || []).forEach(function (n) { n.close(); }); }).catch(function () {}); } catch (e) {}
-}
-function notifyAlarm(items) {
-  try {
-    if (!("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
-    var body = items.map(function (it) { return SECS[it.sec].name + ": " + typeDef(it.type, it.sec).label; }).join("\n");
-    navigator.serviceWorker.ready.then(function (reg) { return reg.showNotification("GREEN SIDE · حان وقت المهام " + fmtTime(items[0].t), { body: body, tag: "gs-alarm", renotify: true, requireInteraction: true, vibrate: [700, 300, 700, 300, 700], icon: "icons/icon-192.png", badge: "icons/icon-192.png", dir: "rtl", lang: "ar" }); }).catch(function () {});
-  } catch (e) {}
-}
-function firedKey() { return "gs_fired_" + todayStr(); }
-function checkAlarms() {
-  if (!S.role || !alarmOn() || ALARM.on) return;
-  var nm = nowMin(), today = todayStr(), fired, due = [];
-  try { fired = JSON.parse(lsGet(firedKey()) || "[]"); } catch (e) { fired = []; }
-  ["n", "t"].forEach(function (sec) {
-    var E = S.date === today ? secEntries(S.entries, sec) : null;
-    TASKS[sec].forEach(function (x) {
-      var done = E ? doneOf(E, x[0]) : 0;
-      schedOf(sec, x[0]).forEach(function (t, i) {
-        var m = tMin(t), key = sec + "|" + x[0] + "|" + t;
-        if (nm < m || nm > m + 20 || fired.indexOf(key) >= 0 || (E && i < done)) return;
-        due.push({ sec: sec, type: x[0], t: t, key: key });
-      });
-    });
-  });
-  if (!due.length) return;
-  lsSet(firedKey(), JSON.stringify(fired.concat(due.map(function (d) { return d.key; }))));
-  fireAlarm(due);
-}
-function alarmClean() { try { for (var i = localStorage.length - 1; i >= 0; i--) { var k = localStorage.key(i); if (k && k.indexOf("gs_fired_") === 0 && k !== firedKey()) localStorage.removeItem(k); } } catch (e) {} }
-var WAKE = null;
-function wakeOn() { return lsGet("gs_wake") === "1"; }
-function wakeApply() {
-  try {
-    if (wakeOn() && "wakeLock" in navigator && document.visibilityState === "visible") { if (!WAKE) navigator.wakeLock.request("screen").then(function (w) { WAKE = w; w.addEventListener("release", function () { WAKE = null; }); }).catch(function () {}); }
-    else if (WAKE) { WAKE.release(); WAKE = null; }
-  } catch (e) {}
-}
-document.addEventListener("visibilitychange", function () { wakeApply(); if (!document.hidden) checkAlarms(); });
-setInterval(checkAlarms, 15000);
-function openAlarmSet() {
-  var perm = "Notification" in window ? Notification.permission : "na";
-  var list = ["n", "t"].map(function (sec) { var rows = TASKS[sec].map(function (x) { var t = schedOf(sec, x[0]); return t.length ? "<li>" + typeDef(x[0], sec).label + ': <span class="num">' + t.map(fmtTime).join(" · ") + "</span></li>" : ""; }).join(""); return rows ? "<h3>" + SECS[sec].icon + " " + SECS[sec].name + '</h3><ul class="help" style="margin:4px 0 10px;padding-right:18px">' + rows + "</ul>" : ""; }).join("");
-  var seg = function (id, on, a, b) { return '<div class="seg" id="' + id + '" role="group"><button type="button" data-v="1" aria-pressed="' + on + '">' + a + '</button><button type="button" data-v="0" aria-pressed="' + !on + '">' + b + "</button></div>"; };
-  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("منبه مواعيد المهام", null, "bell") +
-    '<div class="f full"><span>المنبه على هذا الجوال</span>' + seg("al_on", alarmOn(), "تشغيل", "إيقاف") + "</div>" +
-    ('wakeLock' in navigator ? '<div class="f full" style="margin-top:12px"><span>إبقاء الشاشة مضاءة والتطبيق مفتوح (لجوال العمل)</span>' + seg("al_wake", wakeOn(), "نعم", "لا") + "</div>" : "") +
-    '<div style="margin-top:12px">' + (perm === "granted" ? '<span class="pill ok">✓ الإشعارات مسموحة</span>' : perm === "denied" ? '<div class="banner warn">الإشعارات محظورة لهذا التطبيق. من إعدادات الجوال ← التطبيقات ← Chrome (أو GREEN SIDE) ← الإشعارات: اسمح بها.</div>' : perm === "na" ? "" : '<button class="btn block" style="width:100%" type="button" data-act="notifAsk">السماح بالإشعارات</button>') + "</div>" +
-    '<button class="btn block" style="margin-top:10px;width:100%" type="button" data-act="alarmTest">تجربة صوت المنبه</button>' +
-    '<div class="card" style="margin-top:12px">' + (list || '<p class="help">لا توجد مواعيد محددة.</p>') + "</div>" +
-    '<p class="help">يرن المنبه بصوت متكرر واهتزاز عند كل موعد لم تُسجَّل مهمته بعد، حتى تضغط "إيقاف". يعمل والتطبيق مفتوح. إذا أُغلق التطبيق أو قُفلت الشاشة طويلاً يتوقف الجوال عن تشغيله، لذلك على جوال العمل: فعّل "إبقاء الشاشة مضاءة" واشحنه، أو اضبط منبه الجوال على نفس الأوقات احتياطاً. ارفع صوت الوسائط.</p>' +
-    (isSup() ? '<div class="sheet-actions"><button class="btn" type="button" data-act="goSched">تعديل المواعيد</button></div>' : '<div style="height:12px"></div>') + "</div></div>");
-}
 
 /* ================= system check (owner) ================= */
 function expectDenied(p) { return p.then(function () { var e = new Error("سُمح بالعملية ولم تُمنع"); e.code = "allowed"; throw e; }, function (e) { if (e && e.code === "permission-denied") return "مُنع كما يجب"; throw e; }); }
@@ -1778,8 +1722,8 @@ function armDelete(b, id) { if (delArm === id) { delArm = null; return true; } d
 document.addEventListener("click", function (ev) {
   var tp = ev.target.closest(".tp [data-ap]");
   if (tp) { var w = tp.closest(".tp"); w.setAttribute("data-ap", tp.getAttribute("data-ap")); w.querySelectorAll("button[data-ap]").forEach(function (x) { x.setAttribute("aria-pressed", x === tp); }); updForm(); return; }
-  var sg = ev.target.closest("#kp_on [data-v], #al_on [data-v], #al_wake [data-v]");
-  if (sg) { var gid = sg.parentNode.id, gv = sg.getAttribute("data-v"); sg.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === sg); }); if (gid === "kp_on") lsSet("gs_kp", gv); else if (gid === "al_on") lsSet("gs_alarm", gv); else { lsSet("gs_wake", gv); wakeApply(); } return; }
+  var sg = ev.target.closest("#kp_on [data-v]");
+  if (sg) { sg.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === sg); }); lsSet("gs_kp", sg.getAttribute("data-v")); return; }
   var ur = ev.target.closest("#u_role [data-r]");
   if (ur) { ur.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === ur); }); return; }
   var bg = ev.target.closest("[data-close]"); if (bg && ev.target === bg) { closeSheet(); return; }
@@ -1799,12 +1743,6 @@ document.addEventListener("click", function (ev) {
     case "switchSec": switchSec(b.getAttribute("data-s")); break;
     case "goTasks": var ts = $("tasksSec"); if (ts) window.scrollTo({ top: ts.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); break;
     case "goTab": setTab(b.getAttribute("data-t")); break;
-    case "alarmSet": openAlarmSet(); break;
-    case "alarmStop": stopAlarm(); break;
-    case "alarmGo": var it0 = ALARM.items[0]; stopAlarm(); if (NAV.sheet) closeSheet(); if (it0 && it0.sec && it0.sec !== S.sec) switchSec(it0.sec); if (S.date !== todayStr()) { S.date = todayStr(); $("datePick").value = S.date; subDay(); } setTab("add"); break;
-    case "alarmTest": closeSheet(); fireAlarm([{ test: 1, t: nowTime() }]); break;
-    case "notifAsk": if ("Notification" in window) Notification.requestPermission().then(function () { openAlarmSet(); }); break;
-    case "goSched": closeSheet(); if (S.tab !== "sup") setTab("sup"); setTimeout(function () { var el = $("schedSec"); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); }, 80); break;
     case "schDel": var sd1 = b.getAttribute("data-sec"), ty1 = b.getAttribute("data-type"), tt1 = b.getAttribute("data-t"); saveSched(sd1, ty1, schedOf(sd1, ty1).filter(function (x) { return x !== tt1; })).catch(fail); toast("حُذف موعد " + fmtTime(tt1)); break;
     case "schAdd": openSchAdd(b.getAttribute("data-sec"), b.getAttribute("data-type")); break;
     case "schSave": var sd2 = b.getAttribute("data-sec"), ty2 = b.getAttribute("data-type"), tt2 = readTime("sch_tp"); saveSched(sd2, ty2, schedOf(sd2, ty2).concat([tt2])).catch(fail); closeSheet(); toast("أُضيف موعد " + fmtTime(tt2)); break;
@@ -1812,11 +1750,11 @@ document.addEventListener("click", function (ev) {
     case "addDose": $("doseList").insertAdjacentHTML("beforeend", doseRowHTML()); break;
     case "rmDose": b.closest(".dose-row").remove(); break;
     case "saveDoses":
-      var rowsD = Array.prototype.map.call(document.querySelectorAll("#doseList .dose-row"), function (r) { return { d: num(r.querySelector("[data-dose]").value), full: r.querySelector('input[type="radio"]').checked }; }).filter(function (x) { return x.d > 0; });
+      var rowsD = Array.prototype.map.call(document.querySelectorAll("#doseList [data-dose]"), function (el) { return num(el.value); }).filter(function (x) { return x > 0; }).sort(function (x, y) { return x - y; });
       if (!rowsD.length) { toast("أضف جرعة واحدة على الأقل"); return; }
-      var fullD = (rowsD.filter(function (x) { return x.full; })[0] || rowsD.slice().sort(function (x, y) { return y.d - x.d; })[0]).d, fromD = b.getAttribute("data-from");
-      db.collection("config").doc("settings").set(Object.assign({}, S.settings, { doses: rowsD.map(function (x) { return x.d; }).sort(function (x, y) { return x - y; }), fullDose: fullD })).catch(fail);
-      toast("حُفظت الجرعات · الكاملة " + fml(fullD) + " مل/لتر"); setTimeout(function () { if (fromD === "calc") openCalc(); else closeSheet(); }, 60); break;
+      var fromD = b.getAttribute("data-from");
+      db.collection("config").doc("settings").set(Object.assign({}, S.settings, { doses: rowsD, fullDose: rowsD[rowsD.length - 1] })).catch(fail);
+      toast("حُفظت الجرعات"); setTimeout(function () { if (fromD === "calc") openCalc(); else closeSheet(); }, 60); break;
     case "atcTest": openAtcTest(); break;
     case "saveAtc": if (!ATC_RES) return; var oa = { atc: ATC_RES.atc, atcChecked: todayStr() }; if (!ATC_RES.atc) oa.ecCoef = ATC_RES.coef; db.collection("config").doc("settings").set(Object.assign({}, S.settings, oa)).catch(fail); closeSheet(); toast(ATC_RES.atc ? "اعتُمد: الجهاز يعوّض الحرارة (ATC)" : "اعتُمد معامل الحرارة " + f(ATC_RES.coef * 100, 2) + "% لكل درجة"); break;
     case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); render(true); break;
@@ -1891,6 +1829,6 @@ document.addEventListener("keydown", function (e) {
   if (e.key === "Escape" && NAV.sheet) closeSheet();
   if (e.key === "Enter" && e.target && e.target.matches && e.target.matches("input.in") && !e.target.closest("#authForm")) { e.preventDefault(); focusNext(e.target); }
 });
-alarmClean();
+try { for (var i = localStorage.length - 1; i >= 0; i--) { var k = localStorage.key(i); if (k && (k.indexOf("gs_fired_") === 0 || k === "gs_alarm" || k === "gs_wake")) localStorage.removeItem(k); } } catch (e) {}
 if ("serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
 boot();
