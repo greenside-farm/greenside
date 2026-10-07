@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.0.2";
+var APP_VERSION = "2.0.3";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -1305,9 +1305,17 @@ function createUser(btn) {
   var email = toEmail(id), sec = firebase.apps.filter(function (a) { return a.name === "secondary"; })[0] || firebase.initializeApp(window.GS_CONFIG.firebase, "secondary");
   sec.auth().createUserWithEmailAndPassword(email, pw).then(function (cred) { var uid = cred.user.uid; return sec.auth().signOut().then(function () { return S.db.collection("users").doc(uid).set({ name: name, login: email, role: role, createdAt: Date.now() }); }); })
     .then(function () {
-      openSheet('<div class="sheet-bg" data-close><div class="sheet">' + sheetHead("تم إنشاء الحساب") + "<p>أرسل هذه البيانات إلى " + esc(name) + ':</p><div class="card"><dl class="kv"><dt>الرابط</dt><dd class="num">' + esc(location.origin + location.pathname) + '</dd><dt>اسم المستخدم</dt><dd class="num">' + esc(showLogin(email)) + '</dd><dt>كلمة المرور</dt><dd class="num">' + esc(pw) + "</dd></dl></div>" +
-        '<div class="sheet-actions"><button class="btn pri" type="button" data-act="close">تم</button></div></div></div>');
+      openSheet('<div class="sheet-bg" data-close><div class="sheet">' + sheetHead("تم إنشاء الحساب") + "<p>أرسل هذه البيانات إلى " + esc(name) + ':</p><div class="card selectable" id="credCard"><dl class="kv"><dt>الرابط</dt><dd class="num">' + esc(location.origin + location.pathname) + '</dd><dt>اسم المستخدم</dt><dd class="num">' + esc(showLogin(email)) + '</dd><dt>كلمة المرور</dt><dd class="num">' + esc(pw) + "</dd></dl></div>" +
+        '<div class="sheet-actions"><button class="btn" type="button" data-act="copyCred">نسخ البيانات</button><button class="btn pri" type="button" data-act="close">تم</button></div></div></div>');
     }).catch(function (e) { er.textContent = errMsg(e); btn.disabled = false; });
+}
+function copyCred() {
+  var c = $("credCard"); if (!c) return;
+  var dt = c.querySelectorAll("dt"), dd = c.querySelectorAll("dd"), t = [];
+  for (var i = 0; i < dt.length; i++) t.push(dt[i].textContent + ": " + dd[i].textContent);
+  var txt = "GREEN SIDE\n" + t.join("\n"), ok = function () { toast("تم نسخ البيانات — الصقها في واتساب"); };
+  function fallback() { var a = document.createElement("textarea"); a.value = txt; a.style.position = "fixed"; a.style.opacity = "0"; document.body.appendChild(a); a.select(); try { document.execCommand("copy"); ok(); } catch (e) { toast("لم يتم النسخ — اضغط مطوّلاً على البيانات لتحديدها"); } a.remove(); }
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(ok, fallback); else fallback();
 }
 function openAccount() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("حسابي") +
@@ -1414,6 +1422,7 @@ document.addEventListener("click", function (ev) {
     case "changePw": var np = $("p_new").value; if (np.length < 6) { toast("كلمة المرور 6 أحرف أو أكثر"); return; } b.disabled = true; S.user.updatePassword(np).then(function () { toast("تم تغيير كلمة المرور"); closeSheet(); }).catch(fail); break;
     case "close": closeSheet(); break;
     case "stay": hideExit(); NAV.lastBack = 0; break;
+    case "copyCred": copyCred(); break;
     case "exitApp": hideExit(); try { history.go(-2); } catch (e) {} break;
     case "switchSec": switchSec(b.getAttribute("data-s")); break;
     case "goTab": setTab(b.getAttribute("data-t")); break;

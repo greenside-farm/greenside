@@ -283,3 +283,8 @@ html.lock,html.lock body{overflow:hidden!important;overscroll-behavior:none}
 .stagebar button[aria-pressed="true"] b{color:inherit}
 .help{font-size:12.5px;color:var(--muted);line-height:1.6}
 .cal-steps{margin:8px 0 0;padding-right:20px;font-size:14px;line-height:1.85}
+
+/* v2.0.3 — منع تحديد النص وبحث جوجل عند الضغط المطوّل؛ الحقول تبقى قابلة للكتابة والتحديد */
+html,body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+input,textarea,select,[contenteditable],.selectable,.selectable *{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default}
+img{-webkit-user-drag:none;-webkit-touch-callout:none}
