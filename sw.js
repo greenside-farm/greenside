@@ -1,8 +1,8 @@
 /* GREEN SIDE service worker: يجعل التطبيق يفتح بدون إنترنت.
    ملفات التطبيق: الشبكة أولاً (لتصل التحديثات فوراً) ثم النسخة المحفوظة.
    المكتبات والخطوط: النسخة المحفوظة أولاً. بيانات Firestore لا تمر من هنا. */
-var CACHE = "greenside-v2-4";
-var SHELL = ["./", "index.html", "styles.css?v=2.0.4", "app.js?v=2.0.4", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
+var CACHE = "greenside-v2-10";
+var SHELL = ["./", "index.html", "styles.css?v=2.1.0", "app.js?v=2.1.0", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
 });
@@ -23,4 +23,12 @@ self.addEventListener("fetch", function (e) {
       return r || fetch(req).then(function (res) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); return res; });
     }));
   }
+});
+/* task alarm notification: tapping it opens the app */
+self.addEventListener("notificationclick", function (e) {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(function (cs) {
+    for (var i = 0; i < cs.length; i++) { if ("focus" in cs[i]) return cs[i].focus(); }
+    return self.clients.openWindow ? self.clients.openWindow("./") : null;
+  }));
 });

@@ -3,16 +3,18 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.0.4";
+var APP_VERSION = "2.1.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
 var DEF = {
   ecMin: 800, ecMax: 1500, ecTarget: 1200, phMin: 5.5, phMax: 6.5, wtMin: 18, wtMax: 26,
   airMin: 15, airMax: 32, rhMin: 50, rhMax: 85, luxMin: 10000, luxMax: 40000,
-  nMix: 1, nEcph: 3, nTemp: 3, nLight: 3, nIrr: 4, nPhoto: 1, pumpL: 20, tankL: 25, zoneNote: "",
-  atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, daysToTransplant: 21,
-  levelUnit: "L", lPerCm: 10, useLearned: true,
+  nMix: 1, nEcph: 3, nTemp: 5, nLight: 5, nIrr: 3, nPhoto: 1, nNote: 1, pumpL: 20, tankL: 25, zoneNote: "",
+  atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, capR: 3000, capL: 3000, daysToTransplant: 21,
+  levelUnit: "L", lPerCm: 10, useLearned: true, noteCats: [], atcChecked: "",
+  doses: [2.5, 5, 7.5, 10, 12.5], fullDose: 12.5,
+  sched: { n: { irr: ["08:00", "12:00", "16:00"], temp: ["08:00", "10:00", "12:00", "14:00", "16:00"], light: ["08:00", "10:00", "12:00", "14:00", "16:00"], note: ["16:00"], photo: ["16:00"] }, t: {} },
   formula: { name: "خس ليما — مرحلة N (المشتل)", fullA: 10, fullB: 10, ecFull: 1330, ecRaw: 400, date: "2026-10-07" }
 };
 var DEF_T = {
@@ -24,9 +26,14 @@ var DEF_T = {
 var CHECK = { ec: ["ecMin", "ecMax"], ph: ["phMin", "phMax"], wt: ["wtMin", "wtMax"], air: ["airMin", "airMax"], rh: ["rhMin", "rhMax"], lux: ["luxMin", "luxMax"] };
 var ZONES = ["البداية", "الوسط", "النهاية"], ZK = ["b", "m", "e"], LEVELS = ["أسفل", "وسط", "أعلى"];
 var ZONE_N = ["كل المشتل"].concat(ZONES), ZONE_T = ["كل البيت"].concat(ZONES), LEVEL_OPTS = ["كل البرج"].concat(LEVELS);
+var SIDES = ["اليمين", "اليسار"], SK = ["r", "l"], SIDE_FULL = ["الجهة اليمنى", "الجهة اليسرى"];
+/* grids: towers = 3 zones × 3 levels (keys air_b1…), nursery = 2 sides × 3 positions (keys air_r1…) */
+var DIMS = {
+  t: { rows: ZK, rowL: ZONES, cols: ["1", "2", "3"], colL: LEVELS, rowName: "المنطقة", colName: "المستوى", all: "البيت" },
+  n: { rows: SK, rowL: SIDES, cols: ["1", "2", "3"], colL: ZONES, rowName: "الجهة", colName: "الموقع", all: "المشتل" }
+};
 var PH_ADJ = ["لا شيء", "خافض pH فقط", "رافع pH فقط", "خافض ورافع معاً"];
 var REFILL_MODES = ["تخفيف: ماء فقط", "تعويض قياسي: محلول بتركيز الهدف", "تعزيز: محلول مُعزَّز"];
-var STAGES = [[0.25, "ربع الجرعة"], [0.5, "نصف الجرعة"], [0.75, "ثلاثة أرباع"], [1, "الجرعة الكاملة"]];
 var NK = { air: ["air1", "air2", "air3"], rh: ["rh1", "rh2", "rh3"], lux: ["l1", "l2", "l3"] };
 var MNAME = { air: "حرارة الجو", rh: "الرطوبة", lux: "الضوء" };
 var IC = {
@@ -49,7 +56,9 @@ var IC = {
   today: '<rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/>',
   add: '<circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/>',
   rep: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
-  sup: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>'
+  sup: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
+  cam: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'
 };
 function ico(k, w) { w = w || 24; return '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (IC[k] || IC.note) + "</svg>"; }
 
@@ -84,52 +93,60 @@ var ECPH_FIELDS = [
   MEMO
 ];
 var NOTE_CATS = ["تعب / ذبول", "إصابة حشرية", "مرض فطري أو بكتيري", "اصفرار / نقص عناصر", "حروق أو إجهاد حراري", "رش / علاج", "صيانة / عطل", "أخرى"];
+var NOTE_NONE = "لا يوجد ملاحظات", NOTE_OTHER = "✏️ نوع آخر (اكتبه)";
+function noteCats() { var c = (S.settings.noteCats || []).filter(function (x) { return x && NOTE_CATS.indexOf(x) < 0; }); return [NOTE_NONE].concat(NOTE_CATS.slice(0, -1), c, ["أخرى", NOTE_OTHER]); }
+function noteHas(v) { return v.cat !== NOTE_NONE; }
+function noteOther(v) { return v.cat === NOTE_OTHER; }
+var NSIDE_LOC = ["كل المشتل"].concat(SIDES);
+/* split: 1 → a new record shows the right and left sides on one screen and saves one record per filled side (fields marked ps).
+   edit: 1 → field shown only when editing a saved record. blk → fields drawn together in one box. */
 var TYPES_N = {
   mix: { label: "خلط محلول الري", short: "خلط المحلول", desc: "ماء المصدر، كمية A و B، الحرارة، الأملاح وpH", target: "nMix", fields: mixFields() },
-  ecph: { label: "قراءة الأملاح و pH", short: "أملاح و pH", desc: "حرارة الماء ثم الأملاح وpH خلال اليوم", target: "nEcph", fields: ECPH_FIELDS },
-  temp: { label: "حرارة ورطوبة الجو", short: "الجو", desc: "حرارة الجو والرطوبة في 3 مناطق", target: "nTemp", needOne: ["air1", "air2", "air3"], fields: [
+  ecph: { label: "قراءة الأملاح و pH", short: "أملاح و pH", desc: "أصبحت داخل ري الشتلات", legacy: 1, fields: ECPH_FIELDS },
+  temp: { label: "حرارة ورطوبة الجو", short: "الجو", desc: "اليمين واليسار × البداية والوسط والنهاية", target: "nTemp", needOne: ["air", "rh"], fields: [
     { k: "time", l: "وقت القياس", t: "t", req: 1, w: "full" },
-    { k: "air1", l: "البداية", t: "n", u: "°C", c: "air", w: "third", grp: "حرارة الجو", pg: "air", zn: 1 },
-    { k: "air2", l: "الوسط", t: "n", u: "°C", c: "air", w: "third", pg: "air" },
-    { k: "air3", l: "النهاية", t: "n", u: "°C", c: "air", w: "third", pg: "air" },
-    { k: "rh1", l: "البداية", t: "n", u: "%", c: "rh", w: "third", grp: "الرطوبة النسبية", pg: "rh" },
-    { k: "rh2", l: "الوسط", t: "n", u: "%", c: "rh", w: "third", pg: "rh" },
-    { k: "rh3", l: "النهاية", t: "n", u: "%", c: "rh", w: "third", pg: "rh" },
+    { k: "air", l: "حرارة الجو", t: "grid", dim: "n", u: "°C", c: "air" },
+    { k: "rh", l: "الرطوبة النسبية", t: "grid", dim: "n", u: "%", c: "rh" },
     MEMO] },
-  irr: { label: "ري الشتلات", short: "الري", desc: "وقت كل رية بمضخة البطارية", target: "nIrr", fields: [
+  irr: { label: "ري الشتلات", short: "الري", desc: "قراءة المحلول (حرارة، أملاح، pH) ثم ري اليمين واليسار", target: "nIrr", needOne: ["liters_r", "liters_l", "liters"], fields: [
     { k: "time", l: "وقت الري", t: "t", req: 1, w: "full" },
-    { k: "liters", l: "كمية المحلول", t: "n", u: "لتر", req: 1, def: "pumpL" },
-    { k: "mins", l: "مدة الري", t: "n", u: "دقيقة" },
-    { k: "zone", l: "المنطقة", t: "s", o: ZONE_N, w: "full" },
+    { k: "wt", l: "حرارة ماء المحلول", t: "n", u: "°C", req: 1, c: "wt", w: "full", blk: "rd", blkT: "1. قراءة المحلول قبل الري" },
+    { k: "ec", l: "الأملاح", t: "n", u: "µS/cm", req: 1, c: "ec", comp: "ec", blk: "rd" },
+    { k: "ph", l: "pH", t: "n", u: "pH", req: 1, c: "ph", comp: "ph", blk: "rd" },
+    { k: "liters_r", l: "كمية المحلول", cl: "ري اليمين", t: "n", u: "لتر", blk: "r", blkT: "2. ري الجهة اليمنى" },
+    { k: "mins_r", l: "مدة الري", cl: "مدة اليمين", t: "n", u: "دقيقة", blk: "r" },
+    { k: "liters_l", l: "كمية المحلول", cl: "ري اليسار", t: "n", u: "لتر", blk: "l", blkT: "3. ري الجهة اليسرى" },
+    { k: "mins_l", l: "مدة الري", cl: "مدة اليسار", t: "n", u: "دقيقة", blk: "l" },
     MEMO] },
-  light: { label: "قياس الضوء", short: "الضوء", desc: "ثلاث نقاط: البداية، الوسط، النهاية", target: "nLight", fields: [
+  light: { label: "قياس الضوء", short: "الضوء", desc: "اليمين واليسار × البداية والوسط والنهاية", target: "nLight", needOne: ["lux"], fields: [
     { k: "time", l: "وقت القياس", t: "t", req: 1, w: "full" },
     { k: "sky", l: "حالة الجو", t: "s", o: ["مشمس", "غائم جزئياً", "غائم"], w: "full" },
-    { k: "l1", l: "البداية", t: "n", u: "lux", req: 1, c: "lux", w: "third", grp: "شدة الإضاءة", pg: "lux", zn: 1 },
-    { k: "l2", l: "الوسط", t: "n", u: "lux", req: 1, c: "lux", w: "third", pg: "lux" },
-    { k: "l3", l: "النهاية", t: "n", u: "lux", req: 1, c: "lux", w: "third", pg: "lux" },
+    { k: "lux", l: "شدة الإضاءة", t: "grid", dim: "n", u: "lux", c: "lux" },
     MEMO] },
-  sow: { label: "زراعة البذور", short: "الزراعة", desc: "تاريخ ووقت الزراعة، الصنف والكمية", fields: [
+  sow: { label: "زراعة البذور", short: "الزراعة", desc: "اليمين واليسار في شاشة واحدة · الصنف والكمية", split: 1, fields: [
     { k: "time", l: "وقت الزراعة", t: "t", req: 1, w: "full" },
-    { k: "crop", l: "الصنف / نوع البذور", t: "x", req: 1, w: "full", list: "crops" },
-    { k: "seeds", l: "عدد البذور المزروعة", t: "n", u: "بذرة", req: 1 },
-    { k: "trays", l: "عدد الصواني", t: "n", u: "صينية" },
+    { k: "side", l: "الجهة", t: "s", o: SIDES, req: 1, w: "full", edit: 1 },
+    { k: "crop", l: "الصنف / نوع البذور", t: "x", req: 1, w: "full", list: "crops", ps: 1 },
+    { k: "seeds", l: "عدد البذور", t: "n", u: "بذرة", req: 1, ps: 1 },
+    { k: "trays", l: "عدد الصواني", t: "n", u: "صينية", ps: 1 },
     { k: "lot", l: "المورد / رقم التشغيلة", t: "x", w: "full" },
     MEMO] },
-  photo: { label: "التصوير اليومي", short: "التصوير", desc: "صورة يومية لمتابعة النمو", target: "nPhoto", photo: "req", fields: [
+  note: { label: "ملاحظة على النبات", short: "ملاحظات", desc: "تعب، إصابة، مرض، رش، أو لا يوجد ملاحظات", target: "nNote", photo: "opt", photoShow: noteHas, fields: [
     { k: "time", l: "الوقت", t: "t", req: 1, w: "full" },
-    { k: "batch", l: "دفعة الزراعة", t: "batch", w: "full" },
-    { k: "loc", l: "المكان", t: "s", o: ZONE_N },
-    { k: "height", l: "ارتفاع النبات", t: "n", u: "سم" },
-    MEMO] },
-  note: { label: "ملاحظة على النبات", short: "ملاحظات", desc: "تعب، إصابة، مرض، رش أو أي ملاحظة", photo: "opt", fields: [
+    { k: "cat", l: "النوع", t: "s", o: noteCats, req: 1, w: "full" },
+    { k: "catX", l: "اكتب نوع الملاحظة", t: "x", req: 1, w: "full", show: noteOther },
+    { k: "sev", l: "الشدة", t: "s", o: ["خفيفة", "متوسطة", "شديدة"], show: noteHas },
+    { k: "loc", l: "الجهة", t: "s", o: NSIDE_LOC, show: noteHas },
+    { k: "pos", l: "الموقع", t: "s", o: ZONES, show: noteHas },
+    { k: "crop", l: "الصنف / رقم الصواني", t: "x", show: noteHas },
+    { k: "text", l: "وصف الملاحظة", t: "ta", req: 1, w: "full", show: noteHas },
+    { k: "action", l: "الإجراء المتخذ (اسم المبيد والجرعة إن وجد)", t: "ta", w: "full", show: noteHas }] },
+  photo: { label: "التصوير اليومي", short: "التصوير", desc: "صورة لكل جهة في شاشة واحدة", target: "nPhoto", photo: "req", split: 1, fields: [
     { k: "time", l: "الوقت", t: "t", req: 1, w: "full" },
-    { k: "cat", l: "النوع", t: "s", o: NOTE_CATS, req: 1, w: "full" },
-    { k: "sev", l: "الشدة", t: "s", o: ["خفيفة", "متوسطة", "شديدة"] },
-    { k: "loc", l: "المكان", t: "s", o: ZONE_N },
-    { k: "crop", l: "الصنف / رقم الصواني", t: "x", w: "full" },
-    { k: "text", l: "وصف الملاحظة", t: "ta", req: 1, w: "full" },
-    { k: "action", l: "الإجراء المتخذ (اسم المبيد والجرعة إن وجد)", t: "ta", w: "full" }] }
+    { k: "side", l: "الجهة", t: "s", o: SIDES, req: 1, w: "full", edit: 1 },
+    { k: "batch", l: "دفعة الزراعة", t: "batch", w: "full", ps: 1 },
+    { k: "height", l: "ارتفاع النبات", t: "n", u: "سم", ps: 1 },
+    MEMO] }
 };
 var TYPES_T = {
   refill: { label: "تعويض الخزان", short: "تعويض الخزان", desc: "مستوى الماء، الأملاح قبل وبعد، نوع التعويض", target: "nRefill", fields: [
@@ -188,15 +205,16 @@ var TYPES_T = {
     { k: "batch", l: "دفعة الزراعة", t: "batch", w: "full" },
     { k: "height", l: "ارتفاع النبات", t: "n", u: "سم" },
     MEMO] },
-  note: { label: "ملاحظة على النبات", short: "ملاحظات", desc: "تعب، إصابة، مرض، رش أو أي ملاحظة", photo: "opt", fields: [
+  note: { label: "ملاحظة على النبات", short: "ملاحظات", desc: "تعب، إصابة، مرض، رش، أو لا يوجد ملاحظات", target: "nNote", photo: "opt", photoShow: noteHas, fields: [
     { k: "time", l: "الوقت", t: "t", req: 1, w: "full" },
-    { k: "cat", l: "النوع", t: "s", o: NOTE_CATS, req: 1, w: "full" },
-    { k: "loc", l: "المنطقة", t: "s", o: ZONE_T },
-    { k: "lvl", l: "المستوى في البرج", t: "s", o: LEVEL_OPTS },
-    { k: "sev", l: "الشدة", t: "s", o: ["خفيفة", "متوسطة", "شديدة"] },
-    { k: "crop", l: "الصنف / رقم البرج", t: "x" },
-    { k: "text", l: "وصف الملاحظة", t: "ta", req: 1, w: "full" },
-    { k: "action", l: "الإجراء المتخذ (اسم المبيد والجرعة إن وجد)", t: "ta", w: "full" }] }
+    { k: "cat", l: "النوع", t: "s", o: noteCats, req: 1, w: "full" },
+    { k: "catX", l: "اكتب نوع الملاحظة", t: "x", req: 1, w: "full", show: noteOther },
+    { k: "loc", l: "المنطقة", t: "s", o: ZONE_T, show: noteHas },
+    { k: "lvl", l: "المستوى في البرج", t: "s", o: LEVEL_OPTS, show: noteHas },
+    { k: "sev", l: "الشدة", t: "s", o: ["خفيفة", "متوسطة", "شديدة"], show: noteHas },
+    { k: "crop", l: "الصنف / رقم البرج", t: "x", show: noteHas },
+    { k: "text", l: "وصف الملاحظة", t: "ta", req: 1, w: "full", show: noteHas },
+    { k: "action", l: "الإجراء المتخذ (اسم المبيد والجرعة إن وجد)", t: "ta", w: "full", show: noteHas }] }
 };
 var TYPES_G = {
   batt: { label: "شحن بطارية مضخة الري", short: "شحن البطارية", fields: [
@@ -211,8 +229,8 @@ var TYPES_G = {
     { k: "result", l: "النتيجة", t: "s", o: ["ناجحة", "تحتاج إعادة", "الجهاز يحتاج صيانة أو استبدال"], req: 1, w: "full" },
     MEMO] }
 };
-var ORDER = { n: ["mix", "ecph", "temp", "irr", "light", "sow", "photo", "note"], t: ["refill", "ecph", "temp", "light", "pump", "photo", "note", "xplant", "harvest", "mix"] };
-var TASKS = { n: [["mix", "nMix"], ["ecph", "nEcph"], ["temp", "nTemp"], ["irr", "nIrr"], ["light", "nLight"], ["photo", "nPhoto"]],
+var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "note", "photo"], t: ["refill", "ecph", "temp", "light", "pump", "photo", "note", "xplant", "harvest", "mix"] };
+var TASKS = { n: [["mix", "nMix"], ["temp", "nTemp"], ["irr", "nIrr"], ["light", "nLight"], ["note", "nNote"], ["photo", "nPhoto"]],
   t: [["refill", "nRefill"], ["ecph", "nEcph"], ["temp", "nTemp"], ["light", "nLight"], ["pump", "nPump"], ["photo", "nPhoto"]] };
 var SHARED = ["mix", "ecph", "note", "photo"];
 var FERTS = ["ULTRASOL CALCIUM", "AGRIFER EDDHA", "ULTRASOLINE KNO3", "MGSO4", "ULTRASOL SOP", "SOLUMKP", "VSP Stock", "Micro Stock", "نترات الكالسيوم", "نترات البوتاسيوم", "سلفات المغنيسيوم", "حديد مخلبي"];
@@ -287,21 +305,36 @@ function phAt(p25, t) { if (p25 == null) return null; if (cfg("atc") || t == nul
 function compVal(fd, raw, v) { var n = num(raw); if (n == null) return null; var t = num(v.wt); if (fd.comp === "ec") return ec25(n, t); if (fd.comp === "ph") return ph25(n, t); return n; }
 function unitOf(fd) { return typeof fd.u === "function" ? fd.u() : (fd.u || ""); }
 
-/* grid helpers (towers: 3 zones × 3 levels) */
-function gridKeys(k) { var a = []; ZK.forEach(function (z) { [1, 2, 3].forEach(function (l) { a.push(k + "_" + z + l); }); }); return a; }
+/* grid helpers */
+function dimOf(fd) { return DIMS[fd.dim || "t"]; }
+function gkey(k, r, c) { return k + "_" + r + c; }
+function gridKeysD(k, D) { var a = []; D.rows.forEach(function (r) { D.cols.forEach(function (c) { a.push(gkey(k, r, c)); }); }); return a; }
+function gridKeys(k) { return gridKeysD(k, DIMS.t).concat(gridKeysD(k, DIMS.n)); }
 function metric(v, m) { v = v || {}; return avg(NK[m].concat(gridKeys(m)).map(function (k) { return num(v[k]); })); }
-function zoneAvg(v, m, zi) { var z = ZK[zi]; var g = avg([1, 2, 3].map(function (l) { return num(v[m + "_" + z + l]); })); if (g != null) return g; return num(v[NK[m][zi]]); }
-function levelAvg(v, m, li) { return avg(ZK.map(function (z) { return num(v[m + "_" + z + (li + 1)]); })); }
+function rowAvg(v, m, D, ri) { v = v || {}; return avg(D.cols.map(function (c) { return num(v[gkey(m, D.rows[ri], c)]); })); }
+function colAvg(v, m, D, ci) { v = v || {}; return avg(D.rows.map(function (r) { return num(v[gkey(m, r, D.cols[ci])]); })); }
+function zoneAvg(v, m, zi) { var g = rowAvg(v, m, DIMS.t, zi); if (g != null) return g; return num((v || {})[NK[m][zi]]); }
+function levelAvg(v, m, li) { return colAvg(v, m, DIMS.t, li); }
+function sideAvg(v, m, si) { return rowAvg(v, m, DIMS.n, si); }
+function sideIdx(v) { return SIDES.indexOf((v || {}).side); }
+/* irrigation litres: per side (si = 0 right, 1 left) or total; old records have one "liters" value */
+function irrL(v, si) { v = v || {}; if (si != null) return num(v["liters_" + SK[si]]); var a = num(v.liters_r), b = num(v.liters_l); if (a == null && b == null) return num(v.liters); return (a || 0) + (b || 0); }
 
 /* ================= types ================= */
 function typeDef(type, sec) { if (TYPES_G[type]) return TYPES_G[type]; return (sec === "t" ? TYPES_T : TYPES_N)[type] || TYPES_N[type] || TYPES_T[type]; }
 function secEntries(list, sec) { return list.filter(function (e) { return secOf(e) === sec && e.type !== "selftest"; }); }
 function viewEntries() { return S.entries.filter(function (e) { return e.type !== "selftest" && (secOf(e) === S.sec || e.sec === "g"); }); }
+/* task times: settings.sched[sec][type] = ["08:00", …]. A task with times needs one record per time; without times it uses the daily count. */
+function schedOf(sec, type) { var s = S.settings.sched, x = s && s[sec] && s[sec][type]; if (!Array.isArray(x)) x = (DEF.sched[sec] && DEF.sched[sec][type]) || []; return x.slice().sort(); }
+function needOf(sec, x) { var t = schedOf(sec, x[0]); return t.length ? t.length : (num(cfg(x[1], sec)) || 0); }
+function doneOf(E, type) { var seen = {}, n = 0; E.forEach(function (e) { if (e.type !== type) return; var g = e.grp || e.id; if (!seen[g]) { seen[g] = 1; n++; } }); return n; }
 function tasksFor(sec, entries) {
   var E = secEntries(entries, sec), need = 0, done = 0;
-  TASKS[sec].forEach(function (x) { var n = num(cfg(x[1], sec)) || 0; need += n; done += Math.min(n, E.filter(function (e) { return e.type === x[0]; }).length); });
+  TASKS[sec].forEach(function (x) { var n = needOf(sec, x); need += n; done += Math.min(n, doneOf(E, x[0])); });
   return { need: need, done: done, left: Math.max(0, need - done) };
 }
+function nowMin() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+function tMin(t) { var p = String(t).split(":"); return (+p[0]) * 60 + (+p[1] || 0); }
 
 /* ================= navigation (Android back button) ================= */
 var NAV = { sheet: false, ignore: 0, tabs: [], lastBack: 0, armed: false, exitTimer: null };
@@ -333,7 +366,7 @@ function openSheet(html) {
 }
 function closeSheet(fromPop) {
   var had = NAV.sheet;
-  $("sheetRoot").innerHTML = ""; FORM = null; CALC.open = false;
+  kpHide(); $("sheetRoot").innerHTML = ""; FORM = null; CALC.open = false;
   document.documentElement.classList.remove("lock");
   NAV.sheet = false;
   if (had && !fromPop) { NAV.ignore++; history.back(); }
@@ -346,7 +379,7 @@ function sheetHead(title, sec, icon) {
 /* ================= boot ================= */
 function boot() {
   var cfgF = window.GS_CONFIG && window.GS_CONFIG.firebase;
-  if (!window.firebase || !cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
+  if (!window.firebase || !cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-512.png" alt="GREEN SIDE"></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
   firebase.initializeApp(cfgF);
   S.auth = firebase.auth(); S.db = firebase.firestore();
   S.db.enablePersistence({ synchronizeTabs: true }).catch(function () {});
@@ -376,7 +409,7 @@ function showAuth() {
   renderAuth();
 }
 function renderAuth() {
-  var h = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span><span class="muted">سجل متابعة المشتل والأبراج</span></div>';
+  var h = '<div class="login"><div class="logo"><img src="icons/icon-512.png" alt="GREEN SIDE"><span class="muted">سجل متابعة المشتل والأبراج</span></div>';
   if (AUTH_MODE === "setup") {
     h += '<div class="card"><h2>إعداد الحساب الأول</h2><p class="muted" style="font-size:13.5px">هذا الحساب سيكون مالك التطبيق والمشرف الرئيسي.</p><form id="authForm" class="fgrid" novalidate>' +
       '<label class="f full" for="a_name">الاسم<input class="in" id="a_name" autocomplete="name"></label>' +
@@ -410,7 +443,7 @@ function onAuthSubmit(ev) {
 /* ================= session ================= */
 function startSession() {
   var db = S.db, uid = S.uid;
-  $("view").innerHTML = '<div class="splash"><span class="wm big">GREEN SIDE</span><span class="muted">جارٍ التحميل…</span></div>';
+  $("view").innerHTML = '<div class="splash"><img class="splash-logo" src="icons/icon-512.png" alt="GREEN SIDE"><span class="muted">جارٍ التحميل…</span></div>';
   db.collection("config").doc("owner").get().then(function (s) {
     if (!s.exists && window.__setupName) {
       return db.collection("config").doc("owner").set({ uid: uid, at: Date.now() })
@@ -432,7 +465,7 @@ function onRole() {
   if (!S.role) {
     unsubDay.forEach(function (u) { u(); }); unsubDay = []; memberSubs = false;
     $("top").hidden = true; $("tabsNav").hidden = true;
-    $("view").innerHTML = '<div class="login"><div class="logo"><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>الحساب غير مفعّل</h2><p class="muted">حسابك غير مفعّل أو موقوف. تواصل مع المشرف.</p><button class="btn block" data-act="logout">تسجيل الخروج</button></div></div>';
+    $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-512.png" alt="GREEN SIDE"></div><div class="card"><h2>الحساب غير مفعّل</h2><p class="muted">حسابك غير مفعّل أو موقوف. تواصل مع المشرف.</p><button class="btn block" data-act="logout">تسجيل الخروج</button></div></div>';
     return;
   }
   $("top").hidden = false; $("tabsNav").hidden = false; netState(); navInit();
@@ -447,7 +480,7 @@ function onRole() {
     subWindowed(["sow", "xplant", "batt", "cal", "harvest"], function (q) { S.meta = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
     subDay();
   }
-  render();
+  render(); setTimeout(checkAlarms, 2500);
 }
 function logErr(e) { console.warn(e); }
 /* reads are limited to the last WINDOW_DAYS for history used by the calculator, stock, sowing and equipment.
@@ -537,11 +570,12 @@ function badReadings(E) {
     T.fields.forEach(function (fd) {
       if (!fd.c) return;
       if (fd.t === "grid") {
-        ZK.forEach(function (z, zi) { [1, 2, 3].forEach(function (l) { var n = num(v[fd.k + "_" + z + l]), st = chk(fd.c, n, sec); if (isBad(st)) out.push(fmtTime(e.time) + " · " + fd.l + " " + ZONES[zi] + "/" + LEVELS[l - 1] + ": " + f(n, 1) + " " + fd.u + " (" + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec) + ")"); }); });
+        var D = dimOf(fd);
+        D.rows.forEach(function (r, ri) { D.cols.forEach(function (c, ci) { var n = num(v[gkey(fd.k, r, c)]), st = chk(fd.c, n, sec); if (isBad(st)) out.push(fmtTime(e.time) + " · " + fd.l + " " + D.rowL[ri] + "/" + D.colL[ci] + ": " + f(n, 1) + " " + fd.u + " (" + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec) + ")"); }); });
         return;
       }
       var n = compVal(fd, v[fd.k], v), st = chk(fd.c, n, sec);
-      if (isBad(st)) out.push(fmtTime(e.time) + " · " + T.short + ": " + (fd.pg ? MNAME[fd.pg] + " " : "") + fd.l + " " + f(n, fd.c === "ph" ? 2 : 0) + " " + unitOf(fd) + (fd.comp && !cfg("atc") ? " (عند 25°)" : "") + " — " + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec));
+      if (isBad(st)) out.push(fmtTime(e.time) + " · " + T.short + ": " + (fd.pg ? MNAME[fd.pg] + " " : "") + (fd.cl || fd.l) + " " + f(n, fd.c === "ph" ? 2 : 0) + " " + unitOf(fd) + (fd.comp && !cfg("atc") ? (fd.comp === "ph" ? " (مصحح)" : " (عند 25°)") : "") + " — " + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec));
     });
   });
   return out;
@@ -561,18 +595,20 @@ function todayView() {
     statTile("حرارة ماء المحلول", wtE ? num(wtE.v.wt) : null, "°C", "wt", wtE ? fmtTime(wtE.time) : "") +
     statTile("حرارة الجو (متوسط)", airE ? metric(airE.v, "air") : null, "°C", "air", airE ? fmtTime(airE.time) : "") +
     statTile("متوسط الضوء", lE ? metric(lE.v, "lux") : null, "lux", "lux", lE ? fmtTime(lE.time) : "", 0);
-  if (sec === "n") { var irr = SE.filter(function (e) { return e.type === "irr"; }); h += '<div class="stat"><span class="lab">الري</span><span class="val num">' + irr.length + ' <small>رية</small></span><span class="sub">' + f(sum(irr.map(function (e) { return num(e.v.liters); })), 1) + " لتر محلول</span></div>"; }
+  if (sec === "n") { var irr = SE.filter(function (e) { return e.type === "irr"; }); h += '<div class="stat"><span class="lab">الري</span><span class="val num">' + irr.length + ' <small>رية</small></span><span class="sub">' + f(sum(irr.map(function (e) { return irrL(e.v); })), 1) + " لتر محلول</span></div>"; }
   else { var tk = tankState(); h += '<div class="stat"><span class="lab">خزان الأبراج</span><span class="val num">' + (tk && tk.vol != null ? f(tk.vol) : "—") + ' <small>لتر</small></span><span class="sub">' + (tk ? (tk.date === todayStr() ? "" : fmtShort(tk.date) + " ") + fmtTime(tk.time) : "لا توجد بيانات") + "</span></div>"; }
   h += "</div></section>";
-  if (sec === "t") h += zoneCard(SE);
+  if (sec === "t") h += zoneCard(SE); else h += sideCard(SE);
   if (sec === "n") h += sowCard();
   var bad = badReadings(SE);
   if (bad.length) h += '<section class="sec"><div class="card" style="border-color:var(--bad)"><h3 style="color:var(--bad)">قراءات خارج الحدود (' + bad.length + ')</h3><ul style="margin:8px 0 0;padding-right:18px;font-size:13.5px">' + bad.map(function (b) { return "<li>" + esc(b) + "</li>"; }).join("") + "</ul></div></section>";
-  h += '<section class="sec" id="tasksSec"><div class="sec-h"><h2>مهام اليوم · ' + SECS[sec].name + '</h2></div><div class="card chk">';
+  h += '<section class="sec" id="tasksSec"><div class="sec-h"><h2>مهام اليوم · ' + SECS[sec].name + '</h2><button class="btn sm" type="button" data-act="alarmSet">' + ico("bell", 16) + "&nbsp;المنبه</button></div><div class=\"card chk\">";
+  var nm = nowMin(), past = S.date < todayStr();
   TASKS[sec].forEach(function (x) {
-    var need = num(cfg(x[1], sec)) || 0, done = SE.filter(function (e) { return e.type === x[0]; }).length, p = need ? Math.min(100, done / need * 100) : 100;
+    var times = schedOf(sec, x[0]), need = needOf(sec, x), done = doneOf(SE, x[0]), p = need ? Math.min(100, done / need * 100) : 100;
     if (!need && !done) return;
-    h += '<div class="chk-row"><span>' + typeDef(x[0], sec).label + '</span><span class="num" style="font-size:13px">' + done + " / " + need + '</span><div class="bar"><i class="' + (p >= 100 ? "full" : "") + '" style="width:' + p + '%"></i></div></div>';
+    var chips = times.map(function (t, i) { var st = i < done ? "ok" : (past || (isToday && nm > tMin(t) + 30)) ? "late" : (isToday && nm >= tMin(t)) ? "due" : ""; return '<span class="tchip ' + st + '">' + (st === "ok" ? "✓ " : "") + fmtTime(t) + "</span>"; }).join("");
+    h += '<div class="chk-row"><span>' + typeDef(x[0], sec).label + '</span><span class="num" style="font-size:13px">' + done + " / " + need + "</span>" + (chips ? '<div class="tchips">' + chips + "</div>" : "") + '<div class="bar"><i class="' + (p >= 100 ? "full" : "") + '" style="width:' + p + '%"></i></div></div>';
   });
   h += "</div></section>";
   h += equipCard();
@@ -602,16 +638,37 @@ function zoneCard(SE) {
   return '<section class="sec"><div class="card"><div class="sec-h"><h3>متوسط المناطق (آخر قياس)</h3></div><div class="tbl-wrap" style="border:0;margin-top:6px"><table class="minitable"><thead><tr><th></th>' + ZONES.map(function (z) { return "<th>" + z + "</th>"; }).join("") + "<th>البيت</th></tr></thead><tbody>" +
     row("حرارة °C", te, "air", 1) + row("رطوبة %", te, "rh", 0) + row("ضوء lux", le, "lux", 0) + '</tbody></table></div><p class="help" style="margin:6px 0 0">' + esc(cfg("zoneNote", "t")) + "</p></div></section>";
 }
+function sideCard(SE) {
+  var hasSide = function (e, ms) { return ms.some(function (m) { return sideAvg(e.v, m, 0) != null || sideAvg(e.v, m, 1) != null; }); };
+  var te = lastOf(SE, function (e) { return e.type === "temp" && hasSide(e, ["air", "rh"]); }), le = lastOf(SE, function (e) { return e.type === "light" && hasSide(e, ["lux"]); });
+  var irr = SE.filter(function (e) { return e.type === "irr"; }), il = [0, 1].map(function (si) { return sum(irr.map(function (e) { return irrL(e.v, si); })); });
+  var anyIrr = irr.some(function (e) { return irrL(e.v, 0) != null || irrL(e.v, 1) != null; });
+  if (!te && !le && !anyIrr) return "";
+  var row = function (lab, e, m, dec) {
+    if (!e) return ""; var vs = [0, 1].map(function (si) { return sideAvg(e.v, m, si); }); if (vs.every(function (x) { return x == null; })) return "";
+    return "<tr><td>" + lab + ' <span class="muted">' + fmtTime(e.time) + "</span></td>" + vs.map(function (x) { return '<td class="' + (isBad(chk(m, x)) ? "bad" : "") + '">' + f(x, dec) + "</td>"; }).join("") + "<td><b>" + f(avg(vs), dec) + "</b></td></tr>";
+  };
+  return '<section class="sec"><div class="card"><div class="sec-h"><h3>اليمين واليسار · آخر قياس</h3></div><div class="tbl-wrap" style="border:0;margin-top:6px"><table class="minitable"><thead><tr><th></th>' + SIDES.map(function (x) { return "<th>" + x + "</th>"; }).join("") + "<th>المشتل</th></tr></thead><tbody>" +
+    row("حرارة °C", te, "air", 1) + row("رطوبة %", te, "rh", 0) + row("ضوء lux", le, "lux", 0) +
+    (anyIrr ? "<tr><td>الري اليوم (لتر)</td>" + il.map(function (x) { return "<td>" + f(x, 1) + "</td>"; }).join("") + "<td><b>" + f(il[0] + il[1], 1) + "</b></td></tr>" : "") + "</tbody></table></div></div></section>";
+}
 function sowBatches() { return S.meta.filter(function (e) { return e.type === "sow"; }); }
 function transplanted(id) { return sum(S.meta.filter(function (e) { return e.type === "xplant" && e.v && e.v.batch === id; }).map(function (e) { return num(e.v.count); })); }
 function sowCard() {
-  var m = S.date.slice(0, 7), cap = num(cfg("capacity")) || 0, sow = sowBatches().filter(function (e) { return (e.date || "").slice(0, 7) === m; });
-  var seeds = sum(sow.map(function (e) { return num(e.v.seeds); })), d = new Date(S.date + "T12:00:00"), last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(), left = last - d.getDate() + 1;
-  var rem = Math.max(0, cap - seeds), perDay = left ? rem / left : 0, p = cap ? Math.min(100, seeds / cap * 100) : 0;
+  var m = S.date.slice(0, 7), caps = [num(cfg("capR")) || 0, num(cfg("capL")) || 0], sow = sowBatches().filter(function (e) { return (e.date || "").slice(0, 7) === m; });
+  var bySide = [0, 0], unk = 0; sow.forEach(function (e) { var n = num(e.v.seeds) || 0, si = sideIdx(e.v); if (si >= 0) bySide[si] += n; else unk += n; });
+  var d = new Date(S.date + "T12:00:00"), last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(), left = last - d.getDate() + 1;
+  var inNow = [0, 0]; sowBatches().forEach(function (e) { var si = sideIdx(e.v), age = daysBetween(e.date, todayStr()); if (si < 0 || age < 0 || age > 60) return; inNow[si] += Math.max(0, (num(e.v.seeds) || 0) - transplanted(e.id)); });
   var ready = sowBatches().filter(function (e) { var age = daysBetween(e.date, todayStr()); return age >= num(cfg("daysToTransplant")) && transplanted(e.id) < (num(e.v.seeds) || 0) && age < 60; });
-  return '<section class="sec"><div class="card"><div class="sec-h"><h3>الزراعة في ' + fmtDate(S.date, { month: "long" }) + '</h3><button class="btn sm" data-act="sowPlan">جدول الزراعة</button></div>' +
-    '<div style="margin-top:8px" class="num"><b style="font-size:20px">' + f(seeds) + "</b> / " + f(cap) + ' <span class="muted">بذرة</span></div><div class="bar" style="margin:6px 0"><i class="' + (p >= 100 ? "full" : "") + '" style="width:' + p + '%"></i></div>' +
-    '<div class="help">' + (rem ? "المتبقي " + f(rem) + " · يلزم تقريباً <b>" + f(Math.ceil(perDay)) + "</b> بذرة يومياً لبقية الشهر (" + left + " يوم)" : "تم الوصول للطاقة الإنتاجية لهذا الشهر ✓") + (ready.length ? '<br><b style="color:var(--warn)">' + ready.length + " دفعة جاهزة للنقل إلى الأبراج</b>" : "") + "</div></div></section>";
+  var h = '<section class="sec"><div class="card"><div class="sec-h"><h3>الزراعة في ' + fmtDate(S.date, { month: "long" }) + '</h3><button class="btn sm" data-act="sowPlan">جدول الزراعة</button></div>';
+  [0, 1].forEach(function (si) {
+    var cap = caps[si], seeds = bySide[si], p = cap ? Math.min(100, seeds / cap * 100) : 0, rem = Math.max(0, cap - seeds);
+    h += '<div class="side-sow s-' + SK[si] + '"><div class="ss-h"><b>' + SIDES[si] + '</b><span class="num"><b>' + f(seeds) + "</b> / " + f(cap) + ' <span class="muted">بذرة</span></span></div><div class="bar"><i class="' + (p >= 100 ? "full" : "") + '" style="width:' + p + '%"></i></div>' +
+      '<div class="help">' + (rem ? "المتبقي " + f(rem) + " · نحو <b>" + f(Math.ceil(left ? rem / left : 0)) + "</b> بذرة يومياً" : "اكتملت طاقة هذا الشهر ✓") + " · في المشتل الآن ≈ " + f(inNow[si]) + "</div></div>";
+  });
+  if (unk) h += '<div class="help">مسجّلة قبل تقسيم المشتل (بدون جهة): ' + f(unk) + " بذرة</div>";
+  if (ready.length) h += '<div class="help"><b style="color:var(--warn)">' + ready.length + " دفعة جاهزة للنقل إلى الأبراج</b></div>";
+  return h + "</div></section>";
 }
 
 /* ---------- equipment ---------- */
@@ -648,32 +705,36 @@ function equipCard() {
 }
 
 /* ---------- entry cards ---------- */
+var LEGACY = { liters: ["كمية المحلول", "لتر"], mins: ["مدة الري", "دقيقة"], zone: ["المنطقة", ""], loc: ["المكان", ""] };
+function pgChip(m, u, v, sec) {
+  var vs = NK[m].map(function (k) { return num(v[k]); }); if (vs.every(function (x) { return x == null; })) return "";
+  var b2 = vs.some(function (x) { return isBad(chk(m, x, sec)); }), d2 = m === "lux" ? 0 : 1;
+  return '<span class="chip ' + (b2 ? "bad" : "") + '"><span class="k">' + MNAME[m] + ' (ب/و/ن)</span><span class="num">' + vs.map(function (x) { return f(x, d2); }).join(" · ") + "</span> " + u + ' <span class="k">· متوسط ' + f(avg(vs), d2) + "</span></span>";
+}
 function summaryChips(e) {
   var sec = secOf(e), T = typeDef(e.type, sec); if (!T) return "";
-  var v = e.v || {}, out = "", seen = {};
+  var v = e.v || {}, out = "", seen = {}, keys = {};
   T.fields.forEach(function (fd) {
-    if (["time", "memo", "text", "action", "crop", "batch", "lot", "endTime"].indexOf(fd.k) >= 0) return;
+    keys[fd.k] = 1;
+    if (["time", "memo", "text", "action", "crop", "batch", "lot", "endTime", "catX"].indexOf(fd.k) >= 0) return;
     if (fd.show && !fd.show(v)) return;
     if (fd.t === "grid") {
-      var vals = gridKeys(fd.k).map(function (k) { return num(v[k]); }); if (vals.every(function (x) { return x == null; })) return;
+      var D = dimOf(fd), vals = gridKeysD(fd.k, D).map(function (k) { return num(v[k]); });
+      if (vals.every(function (x) { return x == null; })) { if (NK[fd.k]) out += pgChip(fd.k, fd.u, v, sec); return; }
       var anyBad = vals.some(function (x) { return isBad(chk(fd.c, x, sec)); }), dec = fd.c === "lux" ? 0 : 1;
-      out += '<span class="chip ' + (anyBad ? "bad" : "") + '"><span class="k">' + fd.l + '</span>متوسط <b class="num">' + f(metric(v, fd.k), dec) + "</b> " + fd.u + ' <span class="k">· ' + ZONES.map(function (z, zi) { return z + " " + f(zoneAvg(v, fd.k, zi), dec); }).join(" · ") + "</span></span>";
+      out += '<span class="chip ' + (anyBad ? "bad" : "") + '"><span class="k">' + fd.l + '</span>متوسط <b class="num">' + f(avg(vals), dec) + "</b> " + fd.u + ' <span class="k">· ' + D.rowL.map(function (z, ri) { return z + " " + f(rowAvg(v, fd.k, D, ri), dec); }).join(" · ") + "</span></span>";
       return;
     }
-    if (fd.pg) {
-      if (seen[fd.pg]) return; seen[fd.pg] = 1;
-      var vs = NK[fd.pg].map(function (k) { return num(v[k]); }); if (vs.every(function (x) { return x == null; })) return;
-      var b2 = vs.some(function (x) { return isBad(chk(fd.c, x, sec)); }), d2 = fd.c === "lux" ? 0 : 1;
-      out += '<span class="chip ' + (b2 ? "bad" : "") + '"><span class="k">' + MNAME[fd.pg] + ' (ب/و/ن)</span><span class="num">' + vs.map(function (x) { return f(x, d2); }).join(" · ") + "</span> " + fd.u + ' <span class="k">· متوسط ' + f(avg(vs), d2) + "</span></span>";
-      return;
-    }
+    if (fd.pg) { if (seen[fd.pg]) return; seen[fd.pg] = 1; out += pgChip(fd.pg, fd.u, v, sec); return; }
     var raw = v[fd.k]; if (raw === "" || raw == null) return;
-    if (fd.t === "s" || fd.t === "x") { out += '<span class="chip"><span class="k">' + fd.l + "</span>" + esc(raw) + "</span>"; return; }
+    if (fd.t === "s" || fd.t === "x") { out += '<span class="chip"><span class="k">' + (fd.cl || fd.l) + "</span>" + esc(raw) + "</span>"; return; }
     if (fd.t !== "n") return;
     var n = num(raw), cv = compVal(fd, raw, v), st = chk(fd.c, cv, sec), dec = fd.c === "ph" || fd.comp === "ph" ? 2 : 1;
-    var extra = (fd.comp && cv != null && Math.abs(cv - n) > (fd.comp === "ph" ? 0.005 : 1)) ? ' <span class="k">(≈' + f(cv, fd.comp === "ph" ? 2 : 0) + " عند 25°)</span>" : "";
-    out += '<span class="chip ' + (isBad(st) ? "bad" : "") + '"><span class="k">' + fd.l + '</span><span class="num">' + f(n, dec) + "</span>" + (unitOf(fd) && unitOf(fd) !== "pH" ? " " + unitOf(fd) : "") + extra + "</span>";
+    var extra = (fd.comp && cv != null && Math.abs(cv - n) > (fd.comp === "ph" ? 0.005 : 1)) ? ' <span class="k">(' + (fd.comp === "ph" ? "مصحح ≈" + f(cv, 2) : "≈" + f(cv, 0) + " عند 25°") + ")</span>" : "";
+    out += '<span class="chip ' + (isBad(st) ? "bad" : "") + '"><span class="k">' + (fd.cl || fd.l) + '</span><span class="num">' + f(n, dec) + "</span>" + (unitOf(fd) && unitOf(fd) !== "pH" ? " " + unitOf(fd) : "") + extra + "</span>";
   });
+  Object.keys(LEGACY).forEach(function (k) { if (keys[k] || v[k] === "" || v[k] == null) return; var L = LEGACY[k]; out += '<span class="chip"><span class="k">' + L[0] + "</span>" + esc(v[k]) + (L[1] ? " " + L[1] : "") + "</span>"; });
+  if (e.type === "irr" && num(v.liters_r) != null && num(v.liters_l) != null) out += '<span class="chip"><span class="k">مجموع الري</span><span class="num">' + f(irrL(v), 1) + "</span> لتر</span>";
   if (e.type === "temp" && num(v.wt) != null) out += '<span class="chip"><span class="k">حرارة الماء</span><span class="num">' + f(num(v.wt), 1) + "</span> °C</span>";
   if (v.batch) { var b = sowBatches().filter(function (x) { return x.id === v.batch; })[0]; if (b) out += '<span class="chip"><span class="k">الدفعة</span>' + esc(b.v.crop) + " · " + fmtShort(b.date) + ' <span class="k">(عمر ' + daysBetween(b.date, e.date) + " يوم)</span></span>"; }
   if (e.type === "sow") out += '<span class="chip"><span class="k">النقل المتوقع</span>' + fmtShort(addDays(e.date, num(cfg("daysToTransplant")))) + "</span>";
@@ -688,14 +749,14 @@ function entryCard(e, showDate) {
   if (v.memo) txt.push(v.memo); if (v.text) txt.push(v.text); if (v.action) txt.push("الإجراء: " + v.action);
   var rev = e.review, foot = '<span class="muted" style="font-size:12.5px">' + esc(nameOf(e.by)) + "</span>";
   foot += rev ? (rev.s === "ok" ? '<span class="pill ok">✓ تمت المراجعة</span>' : '<span class="pill warn">⚑ ملاحظة المشرف</span>') : '<span class="pill n">بانتظار المراجعة</span>';
-  if (e.type === "note") foot += e.open ? '<span class="pill bad">مفتوحة</span>' : '<span class="pill ok">تم الحل</span>';
+  var noneNote = e.type === "note" && v.cat === NOTE_NONE;
+  if (e.type === "note" && !noneNote) foot += e.open ? '<span class="pill bad">مفتوحة</span>' : '<span class="pill ok">تم الحل</span>';
   foot += '<span class="sp"></span>';
   if (isSup()) {
     if (!rev || rev.s !== "ok") foot += '<button class="btn sm ok" data-act="approve" data-id="' + e.id + '">اعتماد</button>';
     foot += '<button class="btn sm warn" data-act="flag" data-id="' + e.id + '">ملاحظة</button>';
-    if (e.type === "note") foot += '<button class="btn sm" data-act="toggleNote" data-id="' + e.id + '">' + (e.open ? "تم الحل" : "إعادة فتح") + "</button>";
+    if (e.type === "note" && !noneNote) foot += '<button class="btn sm" data-act="toggleNote" data-id="' + e.id + '">' + (e.open ? "تم الحل" : "إعادة فتح") + "</button>";
   }
-  if (canEditEntry(e) && SHARED.indexOf(e.type) >= 0 && sec !== "g") { var os = sec === "n" ? "t" : "n"; foot += '<button class="btn sm ghost" data-act="move" data-id="' + e.id + '">نقل إلى ' + SECS[os].name + "</button>"; }
   if (canEditEntry(e)) foot += '<button class="btn sm ghost" data-act="edit" data-id="' + e.id + '">تعديل</button>';
   var chips = summaryChips(e), img = e.thumb ? '<img class="e-thumb" alt="صورة" src="' + e.thumb + '" data-act="lightbox" data-pid="' + esc(e.photo || "") + '">' : (e.photo ? '<img class="e-photo" alt="صورة" data-photo="' + esc(e.photo) + '">' : "");
   return '<article class="entry ' + (rev && rev.s === "flag" ? "flag" : "") + '"><div class="e-head"><span class="e-ic">' + ico(e.type, 19) + '</span><div class="e-t"><b>' + esc(T.label) + "</b><span>" + (showDate ? esc(fmtShort(e.date)) + " · " : "") + fmtTime(e.time) + "</span></div>" + (sec === "g" ? secTag("g") : "") + "</div>" +
@@ -738,39 +799,62 @@ function batchOptions(val) {
   return '<option value="">—</option>' + list.map(function (e) { return '<option value="' + e.id + '"' + (e.id === val ? " selected" : "") + ">" + esc(fmtShort(e.date) + " · " + (e.v.crop || "") + " · " + f(num(e.v.seeds)) + " بذرة · عمر " + daysBetween(e.date, todayStr()) + " يوم") + "</option>"; }).join("");
 }
 function gridHTML(fd, v) {
+  var D = dimOf(fd);
   var h = '<div class="g3wrap" id="w_' + fd.k + '"><div class="grp-h" style="margin:0">' + fd.l + " (" + fd.u + ")</div>" +
-    '<div class="tbl-wrap" style="border:0;background:none"><table class="g3"><thead><tr><th class="zh"></th>' + LEVELS.map(function (l) { return "<th>" + l + "</th>"; }).join("") + "<th>المتوسط</th></tr></thead><tbody>";
-  ZK.forEach(function (z, zi) {
-    h += '<tr><th class="zh">' + ZONES[zi] + "</th>" + [1, 2, 3].map(function (l) { var k = fd.k + "_" + z + l; return '<td><input class="in num gin" inputmode="decimal" autocomplete="off" id="f_' + k + '" aria-label="' + ZONES[zi] + " " + LEVELS[l - 1] + '" value="' + esc(v[k] == null ? "" : v[k]) + '"></td>'; }).join("") + '<td class="avg" id="avg_' + fd.k + "_" + z + '">—</td></tr>';
+    '<div class="tbl-wrap" style="border:0;background:none"><table class="g3"><thead><tr><th class="zh"></th>' + D.colL.map(function (l) { return "<th>" + l + "</th>"; }).join("") + "<th>المتوسط</th></tr></thead><tbody>";
+  D.rows.forEach(function (r, ri) {
+    h += '<tr class="gr-' + r + '"><th class="zh">' + D.rowL[ri] + "</th>" + D.cols.map(function (c, ci) { var k = gkey(fd.k, r, c); return '<td><input class="in num gin" ' + KPA() + ' autocomplete="off" id="f_' + k + '" aria-label="' + fd.l + " · " + D.rowL[ri] + " " + D.colL[ci] + '" value="' + esc(v[k] == null ? "" : v[k]) + '"></td>'; }).join("") + '<td class="avg" id="avg_' + fd.k + "_" + r + '">—</td></tr>';
   });
-  return h + '</tbody><tfoot><tr><td colspan="5" id="avgall_' + fd.k + '"></td></tr></tfoot></table></div><span class="hint" id="h_' + fd.k + '">المستهدف ' + rangeTxt(fd.c, FORM.vsec) + "</span></div>";
+  return h + '</tbody><tfoot><tr><td colspan="' + (D.cols.length + 2) + '" id="avgall_' + fd.k + '"></td></tr></tfoot></table></div><span class="hint" id="h_' + fd.k + '">المستهدف ' + rangeTxt(fd.c, FORM.vsec) + "</span></div>";
+}
+function opts(fd) { return typeof fd.o === "function" ? fd.o() : fd.o; }
+function photoHTML(fd) {
+  var sx = fd.side ? "_" + fd.side : "", e = FORM.e, cur = !fd.side && e && (e.thumb || e.photo);
+  return '<div class="f full" id="w_' + fd.k + '"><span>الصورة' + (fd.req ? ' <span class="req">*</span>' : " (اختياري)") + '</span><div class="photo-btns"><label class="btn" for="f_cam' + sx + '">' + ico("cam", 20) + '&nbsp;الكاميرا</label><label class="btn" for="f_gal' + sx + '">' + ico("gallery", 20) + "&nbsp;المعرض</label></div>" +
+    '<input type="file" accept="image/*" capture="environment" id="f_cam' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden><input type="file" accept="image/*" id="f_gal' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden>' +
+    '<img class="photo-prev" id="f_prev' + sx + '" alt="" ' + (cur ? (e.thumb ? 'src="' + e.thumb + '"' : 'data-photo="' + esc(e.photo) + '"') : "hidden") + "></div>";
 }
 function fieldHTML(fd, v) {
   if (fd.t === "grid") return gridHTML(fd, v);
+  if (fd.t === "photo") return photoHTML(fd);
   var id = "f_" + fd.k, val = v[fd.k], inp, out = "";
   if (val == null) val = fd.def ? cfg(fd.def, FORM.vsec) : "";
   if (fd.grp) out += '<div class="grp-h">' + fd.grp + "</div>";
-  if (fd.zn) { var zn = cfg("zoneNote", FORM.vsec); if (zn) out += '<div class="zone-note">' + esc(zn) + "</div>"; }
-  if (fd.t === "s") inp = '<select class="in" id="' + id + '"><option value="">—</option>' + fd.o.map(function (o) { return "<option" + (o === val ? " selected" : "") + ">" + esc(o) + "</option>"; }).join("") + "</select>";
+  if (fd.t === "s") { var o = opts(fd); if (val && o.indexOf(val) < 0) o = o.concat([val]); inp = '<select class="in" id="' + id + '"><option value="">—</option>' + o.map(function (x) { return "<option" + (x === val ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select>"; }
   else if (fd.t === "batch") inp = '<select class="in" id="' + id + '">' + batchOptions(val) + "</select>";
   else if (fd.t === "ta") inp = '<textarea class="in" id="' + id + '">' + esc(val) + "</textarea>";
   else if (fd.t === "t") inp = (fd.opt && !val ? '<span class="muted" style="font-size:12.5px"><input type="checkbox" id="on_' + fd.k + '"> تسجيل هذا الوقت</span>' : "") + timePicker(id, val || (fd.k === "time" && FORM.e ? FORM.e.time : ""));
-  else if (fd.t === "x") inp = '<input class="in" id="' + id + '" value="' + esc(val) + '"' + (fd.list ? ' list="dl_' + fd.list + '"' : "") + (fd.ph ? ' placeholder="' + esc(fd.ph) + '"' : "") + ">";
-  else inp = '<div class="unitwrap"><input class="in num" id="' + id + '" inputmode="decimal" autocomplete="off" value="' + esc(val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
+  else if (fd.t === "x") inp = '<input class="in" id="' + id + '" enterkeyhint="next" value="' + esc(val) + '"' + (fd.list ? ' list="dl_' + fd.list + '"' : "") + (fd.ph ? ' placeholder="' + esc(fd.ph) + '"' : "") + ">";
+  else inp = '<div class="unitwrap"><input class="in num" id="' + id + '" ' + KPA() + ' autocomplete="off" value="' + esc(val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
   out += '<label class="f ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><span>' + fd.l + (fd.req ? ' <span class="req">*</span>' : "") + "</span>" + inp + (fd.c || fd.comp ? '<span class="hint" id="h_' + fd.k + '"></span>' : "") + "</label>";
   return out;
 }
+/* the list of inputs on the form. Split records (sowing, daily photo) repeat the per-side fields for the right and left side. */
+function buildFields(T, split) {
+  if (!split) { var fl = T.fields.slice(); if (T.photo) fl.push({ k: "photo", t: "photo", side: "", req: T.photo === "req", show: T.photoShow }); return fl; }
+  var shared = T.fields.filter(function (fd) { return !fd.edit && !fd.ps; }), blocks = [];
+  SK.forEach(function (sd, si) {
+    if (T.photo) blocks.push({ k: "photo__" + sd, t: "photo", side: sd, blk: sd, blkT: SIDE_FULL[si], req: T.photo === "req" });
+    T.fields.forEach(function (fd) { if (fd.ps) blocks.push(Object.assign({}, fd, { k: fd.k + "__" + sd, base: fd.k, side: sd, blk: sd, blkT: SIDE_FULL[si], grp: null })); });
+  });
+  return [shared[0]].concat(blocks, shared.slice(1));
+}
 function openForm(type, e, prefill) {
   var sec = e ? secOf(e) : (TYPES_G[type] ? "g" : S.sec), vsec = sec === "g" ? S.sec : sec, T = typeDef(type, vsec);
-  FORM = { type: type, e: e, sec: sec, vsec: vsec, photo: null, modeTouched: !!e };
+  FORM = { type: type, e: e, sec: sec, vsec: vsec, photos: {}, modeTouched: !!e, split: !!(T.split && !e) };
+  FORM.fields = buildFields(T, FORM.split);
   var v = e ? clone(e.v || {}) : (prefill || {});
   if (type === "batt" && e) { if (v.start) v.time = tsHM(v.start); if (v.end) v.endTime = tsHM(v.end); }
   var h = '<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + sheetHead(T.label, sec, type) + '<form id="entryForm" class="fgrid" novalidate>';
-  if (vsec === "t" && T.fields.some(function (x) { return x.t === "grid"; })) { var zn = cfg("zoneNote", "t"); if (zn) h += '<div class="zone-note" style="margin:0">' + esc(zn) + "</div>"; }
-  T.fields.forEach(function (fd) { h += fieldHTML(fd, v); });
-  if (T.photo) h += '<div class="f full"><span>الصورة' + (T.photo === "req" ? ' <span class="req">*</span>' : " (اختياري)") + '</span><div class="photo-btns"><label class="btn" for="f_cam">📷 فتح الكاميرا</label><label class="btn" for="f_gal">🖼️ من المعرض</label></div>' +
-    '<input type="file" accept="image/*" capture="environment" id="f_cam" class="photo-in" hidden><input type="file" accept="image/*" id="f_gal" class="photo-in" hidden>' +
-    '<img class="photo-prev" id="f_prev" alt="" ' + (e && (e.thumb || e.photo) ? (e.thumb ? 'src="' + e.thumb + '"' : 'data-photo="' + esc(e.photo) + '"') : "hidden") + "></div>";
+  if (T.fields.some(function (x) { return x.t === "grid"; })) { var zn = cfg("zoneNote", vsec); if (zn) h += '<div class="zone-note" style="margin:0">' + esc(zn) + "</div>"; }
+  var fl = FORM.fields;
+  fl.forEach(function (fd, i) {
+    if (!fd.blk) { h += fieldHTML(fd, v); return; }
+    if (!fl[i - 1] || fl[i - 1].blk !== fd.blk) h += '<div class="blk full blk-' + fd.blk + '"><div class="blk-h">' + fd.blkT + '</div><div class="fgrid">';
+    h += fieldHTML(fd, v);
+    if (!fl[i + 1] || fl[i + 1].blk !== fd.blk) h += "</div></div>";
+  });
+  if (FORM.split) h += '<p class="help full" style="margin:0">' + (T.photo ? "صوّر كل جهة في خانتها. إذا صوّرت جهة واحدة فقط تُحفظ وحدها." : "عبّئ الجهة التي زرعتها أو الجهتين معاً. كل جهة تُحفظ كتسجيل مستقل.") + "</p>";
   if (type === "mix") h += '<div class="full help" id="mixHint"></div>';
   h += '<datalist id="dl_crops">' + uniqueCrops().map(function (c) { return '<option value="' + esc(c) + '">'; }).join("") + "</datalist>";
   h += '</form><div class="sheet-actions">' + (e ? '<button class="btn danger" type="button" data-act="del" data-id="' + e.id + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
@@ -785,13 +869,14 @@ function openForm(type, e, prefill) {
 function uniqueCrops() { var s = {}; S.meta.forEach(function (e) { if (e.v && e.v.crop) s[e.v.crop] = 1; }); return Object.keys(s); }
 function onPhotoPick(ev) {
   var file = ev.target.files && ev.target.files[0]; if (!file || !FORM) return;
-  var pv = $("f_prev"); pv.hidden = false; pv.style.opacity = .4;
-  shrink(file).then(function (r) { if (!FORM || !r.full) { if (pv) pv.style.opacity = 1; return; } FORM.photo = r; pv.src = r.thumb; pv.removeAttribute("data-photo"); pv.style.opacity = 1; });
+  var sd = ev.target.getAttribute("data-side") || "", pv = $("f_prev" + (sd ? "_" + sd : "")); pv.hidden = false; pv.style.opacity = .4;
+  shrink(file).then(function (r) { if (!FORM || !r.full) { if (pv) pv.style.opacity = 1; return; } FORM.photos[sd || "_"] = r; pv.src = r.thumb; pv.removeAttribute("data-photo"); pv.style.opacity = 1; });
 }
 function formValues() {
-  var v = {}, T = typeDef(FORM.type, FORM.vsec);
-  T.fields.forEach(function (fd) {
-    if (fd.t === "grid") { gridKeys(fd.k).forEach(function (k) { var el = $("f_" + k); v[k] = el ? el.value.trim() : ""; }); return; }
+  var v = {};
+  FORM.fields.forEach(function (fd) {
+    if (fd.t === "photo") return;
+    if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var el = $("f_" + k); v[k] = el ? el.value.trim() : ""; }); return; }
     if (fd.t === "t") { var on = $("on_" + fd.k); v[fd.k] = on && !on.checked ? "" : readTime("f_" + fd.k); return; }
     var el = $("f_" + fd.k); v[fd.k] = el ? el.value.trim() : "";
   });
@@ -803,61 +888,89 @@ function refillSuggest(v, sec) {
   if (e0 < num(cfg("ecMin", sec))) return REFILL_MODES[2];
   return REFILL_MODES[1];
 }
+function compTag(fd, n, cv) { return fd.comp === "ph" ? "مصحح ≈" + f(cv, 2) : "≈" + f(cv, 0) + " عند 25°"; }
 function updForm() {
   if (!FORM) return;
-  var v = formValues(), T = typeDef(FORM.type, FORM.vsec), sec = FORM.vsec;
+  var v = formValues(), sec = FORM.vsec;
   if (FORM.type === "refill" && !FORM.modeTouched) { var sg = refillSuggest(v, sec); if (sg && $("f_mode")) { $("f_mode").value = sg; v.mode = sg; } }
-  T.fields.forEach(function (fd) {
-    if (fd.show) $("w_" + fd.k).hidden = !fd.show(v);
+  FORM.fields.forEach(function (fd) {
+    if (fd.show) { var w = $("w_" + fd.k); if (w) w.hidden = !fd.show(v); }
+    if (fd.t === "photo") return;
     if (fd.t === "grid") {
-      var dec = fd.c === "lux" ? 0 : 1;
-      ZK.forEach(function (z) { var vals = [1, 2, 3].map(function (l) { var el = $("f_" + fd.k + "_" + z + l), n = num(el.value); el.classList.toggle("bad", isBad(chk(fd.c, n, sec))); return n; }); $("avg_" + fd.k + "_" + z).textContent = f(avg(vals), dec); });
-      var all = avg(gridKeys(fd.k).map(function (k) { return num(v[k]); }));
-      $("avgall_" + fd.k).textContent = all == null ? "" : "متوسط البيت " + f(all, dec) + " · " + LEVELS.map(function (l, i) { return l + " " + f(levelAvg(v, fd.k, i), dec); }).join(" / ");
+      var D = dimOf(fd), dec = fd.c === "lux" ? 0 : 1;
+      D.rows.forEach(function (r) { var vals = D.cols.map(function (c) { var el = $("f_" + gkey(fd.k, r, c)), n = num(el.value); el.classList.toggle("bad", isBad(chk(fd.c, n, sec))); return n; }); $("avg_" + fd.k + "_" + r).textContent = f(avg(vals), dec); });
+      var all = avg(gridKeysD(fd.k, D).map(function (k) { return num(v[k]); }));
+      $("avgall_" + fd.k).textContent = all == null ? "" : "متوسط " + D.all + " " + f(all, dec) + " · " + D.colL.map(function (l, i) { return l + " " + f(colAvg(v, fd.k, D, i), dec); }).join(" / ");
       return;
     }
     var el = $("h_" + fd.k); if (!el) return;
     var n = num(v[fd.k]), cv = compVal(fd, v[fd.k], v), st = chk(fd.c, cv, sec), tag = "";
-    if (fd.comp && n != null && cv != null && !cfg("atc") && num(v.wt) != null) tag = "≈" + f(cv, fd.comp === "ph" ? 2 : 0) + " عند 25°";
+    if (fd.comp && n != null && cv != null && !cfg("atc") && num(v.wt) != null) tag = compTag(fd, n, cv);
     el.className = "hint " + (fd.c ? (st || "") : "");
     if (!fd.c) { el.textContent = tag; return; }
     if (fd.w === "third") { el.textContent = n == null ? "" : st === "ok" ? "✓" : (st === "lo" ? "منخفض" : "مرتفع"); return; }
     el.textContent = (n == null ? "المستهدف " + rangeTxt(fd.c, sec) : st === "ok" ? "✓ ضمن المستهدف " + rangeTxt(fd.c, sec) : (st === "lo" ? "أقل" : "أعلى") + " من المستهدف " + rangeTxt(fd.c, sec)) + (tag ? " · " + tag : "");
   });
-  if (FORM.type === "mix") { var w = num(v.water), a = num(v.mlA), b = num(v.mlB), mh = $("mixHint"); if (mh) mh.textContent = w && (a || b) ? "المعدل: A " + f(a / w, 2) + " مل/لتر · B " + f(b / w, 2) + " مل/لتر" + (a ? " · الجرعة ≈ " + Math.round(a / w / num(formula().fullA) * 100) + "% من الجرعة الكاملة" : "") : ""; }
+  if (FORM.type === "mix") { var w = num(v.water), a = num(v.mlA), b = num(v.mlB), mh = $("mixHint"); if (mh) mh.textContent = w && (a || b) ? "المعدل: A " + f(a / w, 2) + " مل/لتر · B " + f(b / w, 2) + " مل/لتر" + (a ? " · الجرعة ≈ " + Math.round(a / w / fullDose() * 100) + "% من الجرعة الكاملة (" + fml(fullDose()) + " مل/لتر)" : "") : ""; }
 }
 function needOneOk(T, v) {
   if (!T.needOne) return true;
-  return T.needOne.some(function (k) { var keys = (k === "air" || k === "rh" || k === "lux") ? gridKeys(k) : [k]; return keys.some(function (kk) { return num(v[kk]) != null; }); });
+  return T.needOne.some(function (k) { var keys = NK[k] ? gridKeys(k).concat(NK[k]) : [k]; return keys.some(function (kk) { return num(v[kk]) != null; }); });
 }
 function saveForm(btn) {
-  var type = FORM.type, e = FORM.e, T = typeDef(type, FORM.vsec), raw = formValues(), v = {}, miss = [];
-  T.fields.forEach(function (fd) {
-    if (fd.t === "grid") { gridKeys(fd.k).forEach(function (k) { var x = raw[k]; if (x === "") { v[k] = ""; return; } var n = num(x); if (n == null) miss.push(fd.l + " (رقم غير صحيح)"); else v[k] = n; }); return; }
+  var type = FORM.type, e = FORM.e, T = typeDef(type, FORM.vsec), raw = formValues(), v = {}, miss = [], wasOther = false;
+  var sideName = function (fd) { return fd.side ? SIDES[SK.indexOf(fd.side)] + ": " : ""; };
+  FORM.fields.forEach(function (fd) {
+    if (fd.t === "photo") return;
+    if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var x = raw[k]; if (x === "") { v[k] = ""; return; } var n = num(x); if (n == null) miss.push(fd.l + " (رقم غير صحيح)"); else v[k] = n; }); return; }
     var x = raw[fd.k];
     if (fd.show && !fd.show(raw)) { v[fd.k] = ""; return; }
-    if (fd.t === "n" && x !== "") { var n = num(x); if (n == null) { miss.push(fd.l + " (رقم غير صحيح)"); return; } x = n; }
-    if (fd.req && (x === "" || x == null)) miss.push((fd.pg ? MNAME[fd.pg] + " " : "") + fd.l);
+    if (fd.t === "n" && x !== "") { var n = num(x); if (n == null) { miss.push(sideName(fd) + (fd.cl || fd.l) + " (رقم غير صحيح)"); return; } x = n; }
+    if (fd.req && !fd.side && (x === "" || x == null)) miss.push((fd.pg ? MNAME[fd.pg] + " " : "") + fd.l);
     v[fd.k] = x;
   });
-  if (!needOneOk(T, v)) miss.push("قراءة واحدة على الأقل");
-  if (T.photo === "req" && !FORM.photo && !(e && e.photo)) miss.push("الصورة");
+  if (type === "note" && v.cat === NOTE_OTHER) { v.cat = v.catX; wasOther = true; }
+  delete v.catX;
+  var groups = [];
+  if (FORM.split) {
+    var shared = {}; FORM.fields.forEach(function (fd) { if (!fd.side && fd.t !== "photo") shared[fd.k] = v[fd.k]; });
+    SK.forEach(function (sd, si) {
+      var sv = {}, used = !!FORM.photos[sd], req = [];
+      FORM.fields.forEach(function (fd) { if (fd.side !== sd || fd.t === "photo") return; sv[fd.base] = v[fd.k]; if (v[fd.k] !== "" && v[fd.k] != null) used = true; if (fd.req) req.push(fd); });
+      if (!used) return;
+      req.forEach(function (fd) { if (sv[fd.base] === "" || sv[fd.base] == null) miss.push(SIDES[si] + ": " + fd.l); });
+      if (T.photo === "req" && !FORM.photos[sd]) miss.push(SIDES[si] + ": الصورة");
+      groups.push({ v: Object.assign({}, shared, sv, { side: SIDES[si] }), photo: FORM.photos[sd] });
+    });
+    if (!groups.length) miss.push(T.photo === "req" ? "صورة جهة واحدة على الأقل" : "بيانات جهة واحدة على الأقل");
+  } else {
+    if (!needOneOk(T, e ? Object.assign({}, e.v, v) : v)) miss.push(type === "irr" ? "كمية الري لجهة واحدة على الأقل" : "قراءة واحدة على الأقل");
+    if (T.photo === "req" && !FORM.photos._ && !(e && e.photo)) miss.push("الصورة");
+  }
   if (miss.length) { toast("أكمل: " + miss.join("، ")); return; }
   btn.disabled = true; btn.textContent = "جارٍ الحفظ…";
-  var ops = [], photoId = e && e.photo || null, thumb = e && e.thumb || null;
-  if (FORM.photo) { var pref = S.db.collection("photos").doc(); photoId = pref.id; thumb = FORM.photo.thumb; ops.push(pref.set({ data: FORM.photo.full, by: S.uid, ts: Date.now(), sec: FORM.sec })); S.photos[photoId] = FORM.photo.full; }
-  var date = e ? e.date : S.date;
+  var ops = [], date = e ? e.date : S.date, col = S.db.collection("entries");
+  var putPhoto = function (ph) { var pref = S.db.collection("photos").doc(); ops.push(pref.set({ data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec })); S.photos[pref.id] = ph.full; return pref.id; };
   if (type === "batt") { v.start = hmToTs(date, v.time); v.end = v.endTime ? hmToTs(date, v.endTime, v.start) : null; delete v.endTime; }
-  if (e) { var up = { v: v, time: v.time }; if (photoId) { up.photo = photoId; up.thumb = thumb; } ops.push(S.db.collection("entries").doc(e.id).update(up)); }
-  else {
+  if (e) {
+    var nv = Object.assign(clone(e.v || {}), v), up = { v: nv, time: nv.time };
+    if (FORM.photos._) { up.photo = putPhoto(FORM.photos._); up.thumb = FORM.photos._.thumb; }
+    if (type === "note" && nv.cat === NOTE_NONE) up.open = false;
+    ops.push(col.doc(e.id).update(up));
+  } else if (FORM.split) {
+    var grp = col.doc().id;
+    groups.forEach(function (g) { var d = { type: type, sec: FORM.sec, date: date, time: g.v.time, ts: Date.now(), by: S.uid, v: g.v, grp: grp }; if (g.photo) { d.photo = putPhoto(g.photo); d.thumb = g.photo.thumb; } ops.push(col.doc().set(d)); });
+  } else {
     var d = { type: type, sec: FORM.sec, date: date, time: v.time, ts: Date.now(), by: S.uid, v: v };
-    if (photoId) { d.photo = photoId; d.thumb = thumb; } if (type === "note") d.open = true;
-    ops.push(S.db.collection("entries").doc().set(d));
+    if (FORM.photos._) { d.photo = putPhoto(FORM.photos._); d.thumb = FORM.photos._.thumb; }
+    if (type === "note") d.open = v.cat !== NOTE_NONE;
+    ops.push(col.doc().set(d));
   }
+  if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) ops.push(S.db.collection("config").doc("settings").update({ noteCats: (S.settings.noteCats || []).concat([v.cat]) }));
   Promise.all(ops).catch(function (err) { console.warn(err); toast("لم يُحفظ التسجيل: " + errMsg(err)); });
   var where = FORM.sec === "g" ? "" : " في " + SECS[FORM.sec].name;
   closeSheet();
-  toast(navigator.onLine ? "تم الحفظ" + where : "حُفظ في الجوال وسيُرسل عند رجوع الإنترنت");
+  toast(navigator.onLine ? "تم الحفظ" + where + (groups.length > 1 ? " · الجهتان" : "") : "حُفظ في الجوال وسيُرسل عند رجوع الإنترنت");
 }
 function hmToTs(date, hm, after) { var d = new Date(date + "T" + hm + ":00").getTime(); if (after && d < after) d += 864e5; return d; }
 function shrink(file) {
@@ -894,6 +1007,14 @@ function phRate(sec, dir) {
   });
   arr = arr.slice(-10); return { r: median(arr), n: arr.length };
 }
+/* doses in mL of A per litre (B follows the formula ratio). The "full dose" is chosen by the supervisor (default 12.5). */
+function doses() { var d = S.settings.doses; d = Array.isArray(d) && d.length ? d : DEF.doses; var u = {}; return d.map(num).filter(function (x) { if (!(x > 0) || u[x]) return false; u[x] = 1; return true; }).sort(function (a, b) { return a - b; }); }
+function fullDose() { var x = num(S.settings.fullDose); if (!(x > 0)) { var d = doses(); x = d[d.length - 1] || num(formula().fullA); } return x; }
+function doseRatio() { var F = formula(); return num(F.fullB) / num(F.fullA); }
+function doseName(d) { var fd = fullDose(); return Math.abs(d - fd) < 1e-9 ? "الجرعة الكاملة" : Math.round(d / fd * 100) + "% من الكاملة"; }
+/* meter check: the same sample read cold (e1 at t1) and warm (e2 at t2). Without ATC the reading follows EC25·(1+α(t−25)),
+   so α = (r−1) / ((t2−25) − r(t1−25)) with r = e2/e1. A meter with ATC gives α ≈ 0. */
+function atcAlpha(e1, t1, e2, t2) { var r = e2 / e1; return (r - 1) / ((t2 - 25) - r * (t1 - 25)); }
 /* pure math (also verified by the system check) */
 function ecTo25(ec, t, coef) { return ec / (1 + coef * (t - 25)); }
 function phTo25(ph, t) { return 7 + (ph - 7) * 298.15 / (t + 273.15); }
@@ -919,17 +1040,21 @@ function openCalc() {
   if (sec === "t") h += '<div class="seg" role="group" style="margin-bottom:12px"><button type="button" data-act="cmode" data-m="refill" aria-pressed="' + (CALC.mode === "refill") + '">تعويض الخزان</button><button type="button" data-act="cmode" data-m="fresh" aria-pressed="' + (CALC.mode === "fresh") + '">تجهيز خزان جديد</button></div>';
   h += '<form id="calcForm" class="fgrid" novalidate><div class="full help" id="c_mode_help"></div>';
   h += '<div class="grp-h c-ref">الخزان الآن</div>' +
-    '<label class="f c-ref" for="c_level">مستوى الماء الآن<div class="unitwrap"><input class="in num" id="c_level" inputmode="decimal"><span class="u">' + lvlUnit() + "</span></div></label>" +
-    '<label class="f c-ref" for="c_vol">الحجم بعد التعويض<div class="unitwrap"><input class="in num" id="c_vol" inputmode="decimal" value="' + esc(cfg("tankL", "t")) + '"><span class="u">لتر</span></div><span class="hint">سعة الخزان ' + f(num(cfg("tankL", "t"))) + " لتر</span></label>" +
-    '<label class="f c-ref full" for="c_ecCur">أملاح الخزان الآن<div class="unitwrap"><input class="in num" id="c_ecCur" inputmode="decimal"><span class="u">µS/cm</span></div><span class="hint" id="hc_ecCur"></span></label>';
-  h += '<div class="grp-h c-fresh">الماء</div><label class="f c-fresh full" for="c_water">كمية الماء<div class="unitwrap"><input class="in num" id="c_water" inputmode="decimal" value="' + esc(cfg("tankL", sec)) + '"><span class="u">لتر</span></div></label>';
-  h += '<label class="f" for="c_raw">أملاح ماء المصدر<div class="unitwrap"><input class="in num" id="c_raw" inputmode="decimal" value="' + esc(lastRaw()) + '"><span class="u">µS/cm</span></div><span class="hint" id="hc_raw"></span></label>' +
-    '<label class="f" for="c_wt">حرارة الماء<div class="unitwrap"><input class="in num" id="c_wt" inputmode="decimal" value="' + esc(lastWt()) + '"><span class="u">°C</span></div></label>';
-  h += '<div class="grp-h">الهدف</div><div class="full c-fresh"><div class="stagebar" id="c_stages"><button type="button" data-act="cstage" data-s="ec" aria-pressed="true">حسب الأملاح<b>المستهدفة</b></button>' + STAGES.map(function (s) { return '<button type="button" data-act="cstage" data-s="' + s[0] + '" aria-pressed="false">' + s[1] + "<b>" + fml(num(F.fullA) * s[0]) + " مل/لتر</b></button>"; }).join("") + "</div></div>";
-  h += '<label class="f full" for="c_target" id="w_c_target">الأملاح المستهدفة (عند 25°)<div class="unitwrap"><input class="in num" id="c_target" inputmode="decimal" value="' + esc(cfg("ecTarget", sec)) + '"><span class="u">µS/cm</span></div><span class="hint">الحدود لـ' + SECS[sec].name + ": " + rangeTxt("ec", sec) + "</span></label>";
+    '<label class="f c-ref" for="c_level">مستوى الماء الآن<div class="unitwrap"><input class="in num" id="c_level" ' + KPA() + '><span class="u">' + lvlUnit() + "</span></div></label>" +
+    '<label class="f c-ref" for="c_vol">الحجم بعد التعويض<div class="unitwrap"><input class="in num" id="c_vol" ' + KPA() + ' value="' + esc(cfg("tankL", "t")) + '"><span class="u">لتر</span></div><span class="hint">سعة الخزان ' + f(num(cfg("tankL", "t"))) + " لتر</span></label>" +
+    '<label class="f c-ref full" for="c_ecCur">أملاح الخزان الآن<div class="unitwrap"><input class="in num" id="c_ecCur" ' + KPA() + '><span class="u">µS/cm</span></div><span class="hint" id="hc_ecCur"></span></label>';
+  h += '<div class="grp-h c-fresh">الماء</div><label class="f c-fresh full" for="c_water">كمية الماء<div class="unitwrap"><input class="in num" id="c_water" ' + KPA() + ' value="' + esc(cfg("tankL", sec)) + '"><span class="u">لتر</span></div></label>';
+  h += '<label class="f" for="c_raw">أملاح ماء المصدر<div class="unitwrap"><input class="in num" id="c_raw" ' + KPA() + ' value="' + esc(lastRaw()) + '"><span class="u">µS/cm</span></div><span class="hint" id="hc_raw"></span></label>' +
+    '<label class="f" for="c_wt">حرارة الماء<div class="unitwrap"><input class="in num" id="c_wt" ' + KPA() + ' value="' + esc(lastWt()) + '"><span class="u">°C</span></div></label>';
+  var DS = doses(), ratio0 = doseRatio();
+  h += '<div class="grp-h">الهدف</div><div class="full c-fresh"><div class="stagebar" id="c_stages"><button type="button" data-act="cstage" data-s="ec" aria-pressed="true">حسب الأملاح<b>المستهدفة</b></button>' + DS.map(function (d) { return '<button type="button" data-act="cstage" data-s="' + d + '" aria-pressed="false">' + doseName(d) + '<b class="num">' + fml(d) + " + " + fml(d * ratio0) + "</b></button>"; }).join("") + '<button type="button" data-act="cstage" data-s="custom" aria-pressed="false">جرعة أخرى<b>اكتبها</b></button></div>' +
+    '<p class="help" style="margin:6px 0 0">الأرقام = مل A + مل B لكل لتر ماء.' + (isSup() ? ' <button type="button" class="linkbtn" data-act="editDoses" data-from="calc">تعديل الجرعات</button>' : "") + "</p></div>";
+  h += '<label class="f full c-fresh" for="c_dose" id="w_c_dose" hidden>جرعة A لكل لتر<div class="unitwrap"><input class="in num" id="c_dose" ' + KPA() + '><span class="u">مل/لتر</span></div><span class="hint">B تُحسب تلقائياً بنسبة الخلطة (' + fml(ratio0) + " مل B لكل 1 مل A)</span></label>";
+  h += '<label class="f full" for="c_target" id="w_c_target">الأملاح المستهدفة (عند 25°)<div class="unitwrap"><input class="in num" id="c_target" ' + KPA() + ' value="' + esc(cfg("ecTarget", sec)) + '"><span class="u">µS/cm</span></div><span class="hint">الحدود لـ' + SECS[sec].name + ": " + rangeTxt("ec", sec) + "</span></label>";
   h += '</form><div id="calcOut" style="margin-top:14px"></div>';
-  h += '<div class="card" style="margin-top:12px"><h3>ضبط pH</h3><div class="fgrid" style="margin-top:8px"><label class="f full" for="c_ph">قراءة pH بعد إضافة السماد<div class="unitwrap"><input class="in num" id="c_ph" inputmode="decimal"><span class="u">pH</span></div></label></div><div id="phOut" class="help" style="margin-top:8px"></div></div>';
-  h += '<p class="help" style="margin-top:10px">أساس الحساب: ' + esc(F.name) + " · كل 1 مل A + " + fml(num(F.fullB) / num(F.fullA)) + " مل B لكل لتر يرفع الأملاح ≈ <b>" + f(ki.k) + "</b> µS/cm " + (ki.src === "learned" ? "(محسوب من آخر " + ki.n + " خلطات مسجلة)" : "(من الخلطة المعتمدة)") + ". " + (cfg("atc") ? "جهازك يعوّض الحرارة تلقائياً (ATC)." : "القراءات مصححة إلى 25° لأن الجهاز مضبوط في الإعدادات على أنه بدون تعويض حرارة.") + "</p>";
+  h += '<div class="card" style="margin-top:12px"><h3>ضبط pH</h3><div class="fgrid" style="margin-top:8px"><label class="f full" for="c_ph">قراءة pH بعد إضافة السماد<div class="unitwrap"><input class="in num" id="c_ph" ' + KPA() + '><span class="u">pH</span></div></label></div><div id="phOut" class="help" style="margin-top:8px"></div></div>';
+  h += '<p class="help" style="margin-top:10px">أساس الحساب: ' + esc(F.name) + " · كل 1 مل A + " + fml(num(F.fullB) / num(F.fullA)) + " مل B لكل لتر يرفع الأملاح ≈ <b>" + f(ki.k) + "</b> µS/cm " + (ki.src === "learned" ? "(محسوب من آخر " + ki.n + " خلطات مسجلة)" : "(من الخلطة المعتمدة)") + ". " + (cfg("atc") ? "جهازك يعوّض الحرارة تلقائياً (ATC)، لذلك تُستخدم القراءة كما هي." : "الأملاح تُحوَّل إلى 25° بمعامل " + f(num(cfg("ecCoef")) * 100, 2) + "% لكل درجة، والحاسبة تعرض القراءة المتوقعة على جهازك عند حرارة الماء الحالية.") + "</p>" +
+    (S.settings.atcChecked ? "" : '<div class="banner warn" style="margin-top:8px"><span>لم يُختبر جهاز القياس بعد لمعرفة هل يعوّض الحرارة (ATC). ' + (isSup() ? '<button type="button" class="linkbtn" data-act="atcTest">اختبر الجهاز الآن</button>' : "اطلب من المشرف إجراء الاختبار.") + "</span></div>");
   h += '<div class="sheet-actions"><button class="btn pri" type="button" data-act="calcToForm">تسجيل بهذه الكميات</button></div></div></div>';
   openSheet(h);
   $("calcForm").addEventListener("input", calcRun); $("c_ph").addEventListener("input", calcRun);
@@ -943,6 +1068,7 @@ function calcRun() {
   var fresh = CALC.mode === "fresh";
   document.querySelectorAll(".c-ref").forEach(function (x) { x.hidden = fresh; }); document.querySelectorAll(".c-fresh").forEach(function (x) { x.hidden = !fresh; });
   $("w_c_target").hidden = fresh && CALC.stage !== "ec";
+  $("w_c_dose").hidden = !(fresh && CALC.stage === "custom");
   $("c_mode_help").textContent = fresh ? (sec === "t" ? "تجهيز خزان جديد: تفريغ الخزان وتعبئته بماء المصدر ثم إضافة A و B." : "نظام مفتوح: كل خلطة تُحضّر من ماء المصدر مباشرة.") : "نظام مغلق: الحساب على الماء الموجود في الخزان وأملاحه الحالية، ثم ما يلزم إضافته للوصول للهدف.";
   var rawR = num($("c_raw").value), raw = ec25(rawR == null ? 0 : rawR, wt), tgt = num($("c_target").value);
   var corr = function (id, val) { var el = $(id); if (el) el.textContent = val != null && !atc && wt != null ? "≈ " + f(val) + " عند 25°" : ""; };
@@ -952,14 +1078,14 @@ function calcRun() {
   if (rawR == null) h = '<div class="empty">اكتب أملاح ماء المصدر.</div>';
   else if (fresh) {
     var V = num($("c_water").value), perL, t25;
-    if (CALC.stage !== "ec") { perL = num(F.fullA) * CALC.stage; t25 = raw + k * perL; } else { t25 = tgt; perL = tgt != null ? (tgt - raw) / k : null; }
-    if (!V || perL == null) h = '<div class="empty">اكتب كمية الماء والهدف.</div>';
+    if (CALC.stage !== "ec") { perL = CALC.stage === "custom" ? num($("c_dose").value) : CALC.stage; t25 = perL != null ? raw + k * perL : null; } else { t25 = tgt; perL = tgt != null ? (tgt - raw) / k : null; }
+    if (!V || perL == null) h = '<div class="empty">اكتب كمية الماء و' + (CALC.stage === "custom" ? "جرعة A لكل لتر" : "الهدف") + ".</div>";
     else if (perL <= 0) h = '<div class="banner warn">أملاح ماء المصدر (' + f(raw) + ") أعلى من أو تساوي الهدف. لا تضف سماداً قبل مراجعة المشرف.</div>";
     else {
       var FM = freshMath(raw, t25, V, k, ratio), mlA = FM.mlA, mlB = FM.mlB, st = chk("ec", t25, sec); Vph = V;
       res = { kind: "fresh", water: V, ecRaw: rawR, wt: wt, mlA: Math.round(mlA * 10) / 10, mlB: Math.round(mlB * 10) / 10 };
       h = '<div class="res-big"><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول A</span><span class="val num">' + fml(mlA) + ' <small>مل</small></span><span class="sub num">' + f(perL, 2) + ' مل لكل لتر</span></div><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول B</span><span class="val num">' + fml(mlB) + ' <small>مل</small></span><span class="sub num">' + f(perL * ratio, 2) + " مل لكل لتر</span></div></div>" +
-        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الجرعة</dt><dd>' + Math.round(perL / num(F.fullA) * 100) + "% من الجرعة الكاملة</dd><dt>الأملاح المتوقعة (عند 25°)</dt><dd><b class=\"num\">" + f(t25) + "</b> µS/cm " + (st === "ok" ? '<span class="pill ok">ضمن الحد</span>' : '<span class="pill bad">خارج الحد ' + rangeTxt("ec", sec) + "</span>") + "</dd>" +
+        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الجرعة</dt><dd>' + Math.round(perL / fullDose() * 100) + "% من الجرعة الكاملة (" + fml(fullDose()) + " مل/لتر)</dd><dt>الأملاح المتوقعة (عند 25°)</dt><dd><b class=\"num\">" + f(t25) + "</b> µS/cm " + (st === "ok" ? '<span class="pill ok">ضمن الحد</span>' : '<span class="pill bad">خارج الحد ' + rangeTxt("ec", sec) + "</span>") + "</dd>" +
         (!atc && wt != null ? "<dt>القراءة المتوقعة على جهازك</dt><dd><b class=\"num\">" + f(expRead(t25)) + "</b> µS/cm عند " + f(wt, 1) + "°</dd>" : "") + "</dl></div>" +
         '<div class="card" style="margin-top:10px"><h3>خطوات الخلط</h3><ol class="cal-steps"><li>ضع <b class="num">' + f(V) + "</b> لتر ماء أولاً، ولا تضف المركّز لإناء فارغ.</li><li>أضف <b>A</b>: <b class=\"num\">" + fml(mlA * .9) + "</b> مل (90%) وحرّك جيداً.</li><li>أضف <b>B</b>: <b class=\"num\">" + fml(mlB * .9) + "</b> مل وحرّك. لا تخلط A و B مركّزين أبداً.</li><li>قِس الأملاح. إذا كانت أقل من <b class=\"num\">" + f(expRead(t25)) + "</b> أكمل الـ 10% الباقية (" + fml(mlA * .1) + " مل A ثم " + fml(mlB * .1) + " مل B).</li><li>اضبط pH بعد ضبط الأملاح، ثم سجّل الكميات الفعلية.</li></ol></div>";
     }
@@ -984,9 +1110,9 @@ function calcRun() {
   }
   out.innerHTML = h; CALC.res = res;
   var phR = num($("c_ph").value), po = $("phOut"), lo = num(cfg("phMin", sec)), hi = num(cfg("phMax", sec)), mid = (lo + hi) / 2;
-  if (phR == null) { po.innerHTML = "المستهدف " + f(lo, 1) + " – " + f(hi, 1) + (!atc && wt != null ? " · القراءة المتوقعة للهدف على جهازك عند " + f(wt, 1) + "°: <b class=\"num\">" + f(phAt(mid, wt), 2) + "</b>" : ""); return; }
+  if (phR == null) { po.innerHTML = "المستهدف " + f(lo, 1) + " – " + f(hi, 1) + (!atc && wt != null && Math.abs(phAt(mid, wt) - mid) >= .01 ? " · منتصف الهدف كما يظهر على جهازك عند " + f(wt, 1) + "°: <b class=\"num\">" + f(phAt(mid, wt), 2) + "</b>" : ""); return; }
   if (res) res.phRaw = phR;
-  var p25 = ph25(phR, wt), txt = (!atc && wt != null && Math.abs(p25 - phR) > .005 ? "pH المصحح إلى 25°: <b class=\"num\">" + f(p25, 2) + "</b> (تأثير الحرارة على pH صغير). " : "");
+  var p25 = ph25(phR, wt), txt = (!atc && wt != null && Math.abs(p25 - phR) > .005 ? "pH بعد تصحيح أثر الحرارة على القطب: <b class=\"num\">" + f(p25, 2) + "</b> (الفرق صغير في مدى 5.5–6.5). " : "");
   if (p25 > hi) { var rd = phRate(sec, "down"); txt += "pH أعلى من المستهدف، يلزم <b>خافض</b>. " + (rd.r && Vph ? "الكمية التقديرية من سجلاتكم: <b class=\"num\">" + fml(rd.r * Vph * (p25 - mid)) + "</b> مل. أضف 70% منها ثم قِس." : "سجّل 2–3 عمليات ضبط pH بالكميات لتظهر الكمية المقترحة تلقائياً."); }
   else if (p25 < lo) { var ru = phRate(sec, "up"); txt += "pH أقل من المستهدف، يلزم <b>رافع</b>. " + (ru.r && Vph ? "الكمية التقديرية: <b class=\"num\">" + fml(ru.r * Vph * (mid - p25)) + "</b> مل. أضف 70% منها ثم قِس." : "سجّل عمليات ضبط بالرافع لتظهر الكمية المقترحة."); }
   else txt += '<span class="pill ok">pH ضمن المستهدف</span> لا يحتاج ضبطاً.';
@@ -1002,7 +1128,9 @@ function openGallery() {
     var groups = {}, order = [];
     list.forEach(function (e) {
       var v = e.v || {}, b = v.batch ? sowBatches().filter(function (x) { return x.id === v.batch; })[0] : null;
-      var key = b ? "b:" + b.id : "l:" + (v.loc || "") + "|" + (v.lvl || ""), lab = b ? "دفعة " + (b.v.crop || "") + " · زُرعت " + fmtShort(b.date) : ((v.loc || "بدون مكان") + (v.lvl ? " · " + v.lvl : ""));
+      var sd = v.side ? " · " + v.side : "";
+      var key = (b ? "b:" + b.id : "l:" + (v.loc || "") + "|" + (v.lvl || "")) + "|" + (v.side || ""), lab = (b ? "دفعة " + (b.v.crop || "") + " · زُرعت " + fmtShort(b.date) : ((v.loc || (v.side ? "" : "بدون مكان")) + (v.lvl ? " · " + v.lvl : ""))) + sd;
+      lab = lab.replace(/^ · /, "");
       if (!groups[key]) { groups[key] = { lab: lab, b: b, items: [] }; order.push(key); }
       groups[key].items.push(e);
     });
@@ -1028,10 +1156,10 @@ function openSowPlan() {
   var rows = list.map(function (e) {
     var age = daysBetween(e.date, todayStr()), tp = transplanted(e.id), seeds = num(e.v.seeds) || 0, due = addDays(e.date, dt);
     var st = tp >= seeds && seeds ? '<span class="pill ok">نُقلت</span>' : tp ? '<span class="pill n">نُقل ' + f(tp) + "</span>" : age >= dt ? '<span class="pill warn">جاهزة للنقل</span>' : '<span class="pill n">في المشتل</span>';
-    return '<tr><td class="num">' + fmtShort(e.date) + " " + fmtTime(e.time) + "</td><td>" + esc(e.v.crop || "") + '</td><td class="num">' + f(seeds) + '</td><td class="num">' + f(num(e.v.trays)) + '</td><td class="num">' + age + '</td><td class="num">' + fmtShort(due) + "</td><td>" + st + "</td></tr>";
+    return '<tr><td class="num">' + fmtShort(e.date) + " " + fmtTime(e.time) + "</td><td>" + esc(e.v.side || "—") + "</td><td>" + esc(e.v.crop || "") + '</td><td class="num">' + f(seeds) + '</td><td class="num">' + f(num(e.v.trays)) + '</td><td class="num">' + age + '</td><td class="num">' + fmtShort(due) + "</td><td>" + st + "</td></tr>";
   }).join("");
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("جدول الزراعة", "n", "sow") +
-    (list.length ? '<div class="tbl-wrap"><table><thead><tr><th>تاريخ الزراعة</th><th>الصنف</th><th>البذور</th><th>الصواني</th><th>العمر (يوم)</th><th>النقل المتوقع</th><th>الحالة</th></tr></thead><tbody>' + rows + "</tbody></table></div>" : '<div class="empty">لا توجد دفعات زراعة مسجلة.</div>') +
+    (list.length ? '<div class="tbl-wrap"><table><thead><tr><th>تاريخ الزراعة</th><th>الجهة</th><th>الصنف</th><th>البذور</th><th>الصواني</th><th>العمر (يوم)</th><th>النقل المتوقع</th><th>الحالة</th></tr></thead><tbody>' + rows + "</tbody></table></div>" : '<div class="empty">لا توجد دفعات زراعة مسجلة.</div>') +
     '<p class="help">النقل المتوقع = تاريخ الزراعة + ' + dt + ' يوم (يُعدّل من إعدادات المشرف). الحالة تتحدث تلقائياً عند تسجيل "نقل الشتلات للأبراج".</p></div></div>');
 }
 
@@ -1085,7 +1213,7 @@ function daily(rows) {
     var mr = g("mix").concat(g("refill"));
     return { d: d, mix: mr.length, mlA: sum(mr.map(function (r) { return num(r.v.mlA); })), mlB: sum(mr.map(function (r) { return num(r.v.mlB); })), ec: avg(ecs), ph: avg(phs), wt: avg(wts),
       air: avg(g("temp").map(function (r) { return metric(r.v, "air"); })), rh: avg(g("temp").map(function (r) { return metric(r.v, "rh"); })), lux: avg(g("light").map(function (r) { return metric(r.v, "lux"); })),
-      irr: g("irr").length, lit: sum(g("irr").map(function (r) { return num(r.v.liters); })), seeds: sum(g("sow").map(function (r) { return num(r.v.seeds); })), kg: sum(g("harvest").map(function (r) { return num(r.v.weight); })),
+      irr: g("irr").length, lit: sum(g("irr").map(function (r) { return irrL(r.v); })), seeds: sum(g("sow").map(function (r) { return num(r.v.seeds); })), kg: sum(g("harvest").map(function (r) { return num(r.v.weight); })),
       notes: g("note").length, pend: a.filter(function (r) { return !r.review; }).length };
   });
 }
@@ -1095,13 +1223,37 @@ function ptsFor(rows, k) {
   if (k === "wt") return rows.filter(function (r) { return r.type !== "temp" && r.v && num(r.v.wt) != null; }).map(function (r) { return { t: t(r), y: num(r.v.wt), lab: lab(r) }; });
   return rows.filter(function (r) { return r.v && num(r.v[k]) != null; }).map(function (r) { var y = k === "ec" ? ec25(num(r.v.ec), num(r.v.wt)) : ph25(num(r.v.ph), num(r.v.wt)); return { t: t(r), y: y, lab: lab(r) }; });
 }
-function zoneTable(rows, m, dec, title) {
-  var ty = m === "lux" ? "light" : "temp", list = rows.filter(function (r) { return r.type === ty && metric(r.v, m) != null; }); if (!list.length) return "";
-  var cell = function (zi, li) { return avg(list.map(function (r) { return num(r.v[m + "_" + ZK[zi] + (li + 1)]); })); };
-  var h = "<h3>" + title + '</h3><div class="tbl-wrap" style="margin:6px 0 12px"><table class="minitable"><thead><tr><th></th>' + LEVELS.map(function (l) { return "<th>" + l + "</th>"; }).join("") + "<th>المنطقة</th></tr></thead><tbody>";
-  ZK.forEach(function (z, zi) { h += "<tr><td>" + ZONES[zi] + "</td>" + [0, 1, 2].map(function (li) { var v = cell(zi, li); return '<td class="' + (isBad(chk(m, v, "t")) ? "bad" : "") + '">' + f(v, dec) + "</td>"; }).join("") + "<td><b>" + f(avg([0, 1, 2].map(function (li) { return cell(zi, li); })), dec) + "</b></td></tr>"; });
-  h += "<tr><td>المستوى</td>" + [0, 1, 2].map(function (li) { return "<td><b>" + f(avg([0, 1, 2].map(function (zi) { return cell(zi, li); })), dec) + "</b></td>"; }).join("") + "<td><b>" + f(avg(list.map(function (r) { return metric(r.v, m); })), dec) + "</b></td></tr>";
+function zoneTable(rows, m, dec, title, D, sec) {
+  D = D || DIMS.t; sec = sec || "t";
+  var ty = m === "lux" ? "light" : "temp", list = rows.filter(function (r) { return r.type === ty && gridKeysD(m, D).some(function (k) { return num(r.v[k]) != null; }); }); if (!list.length) return "";
+  var cell = function (ri, ci) { return avg(list.map(function (r) { return num(r.v[gkey(m, D.rows[ri], D.cols[ci])]); })); };
+  var h = "<h3>" + title + '</h3><div class="tbl-wrap" style="margin:6px 0 12px"><table class="minitable"><thead><tr><th></th>' + D.colL.map(function (l) { return "<th>" + l + "</th>"; }).join("") + "<th>متوسط " + D.rowName + "</th></tr></thead><tbody>";
+  D.rows.forEach(function (r, ri) { h += "<tr><td>" + D.rowL[ri] + "</td>" + D.cols.map(function (c, ci) { var v = cell(ri, ci); return '<td class="' + (isBad(chk(m, v, sec)) ? "bad" : "") + '">' + f(v, dec) + "</td>"; }).join("") + "<td><b>" + f(avg(D.cols.map(function (c, ci) { return cell(ri, ci); })), dec) + "</b></td></tr>"; });
+  h += "<tr><td>متوسط " + D.colName + "</td>" + D.cols.map(function (c, ci) { return "<td><b>" + f(avg(D.rows.map(function (r, ri) { return cell(ri, ci); })), dec) + "</b></td>"; }).join("") + "<td><b>" + f(avg(list.map(function (r) { return avg(gridKeysD(m, D).map(function (k) { return num(r.v[k]); })); })), dec) + "</b></td></tr>";
   return h + "</tbody></table></div>";
+}
+function sideReport(rows) {
+  var T = rows.filter(function (r) { return r.type === "temp"; }), L = rows.filter(function (r) { return r.type === "light"; }), I = rows.filter(function (r) { return r.type === "irr"; });
+  var W = rows.filter(function (r) { return r.type === "sow"; }), P = rows.filter(function (r) { return r.type === "photo"; });
+  var sa = function (list, m, si) { return avg(list.map(function (r) { return sideAvg(r.v, m, si); })); };
+  var lines = [
+    ["حرارة الجو (°C)", function (si) { return sa(T, "air", si); }, 1, "air"],
+    ["الرطوبة (%)", function (si) { return sa(T, "rh", si); }, 0, "rh"],
+    ["الضوء (lux)", function (si) { return sa(L, "lux", si); }, 0, "lux"],
+    ["محلول الري (لتر)", function (si) { return sum(I.map(function (r) { return irrL(r.v, si); })); }, 1],
+    ["عدد الريات", function (si) { return I.filter(function (r) { return irrL(r.v, si) > 0; }).length; }, 0],
+    ["مدة الري (دقيقة)", function (si) { return sum(I.map(function (r) { return num(r.v["mins_" + SK[si]]); })); }, 0],
+    ["البذور المزروعة", function (si) { return sum(W.filter(function (r) { return sideIdx(r.v) === si; }).map(function (r) { return num(r.v.seeds); })); }, 0],
+    ["صور النمو", function (si) { return P.filter(function (r) { return sideIdx(r.v) === si; }).length; }, 0]
+  ];
+  var body = lines.map(function (L2) {
+    var a = L2[1](0), b = L2[1](1); if ((a == null || a === 0) && (b == null || b === 0)) return "";
+    var d = a != null && b != null ? a - b : null;
+    return "<tr><td>" + L2[0] + "</td>" + [a, b].map(function (x) { return '<td class="' + (L2[3] && isBad(chk(L2[3], x, "n")) ? "bad" : "") + '">' + f(x, L2[2]) + "</td>"; }).join("") + '<td class="muted">' + (d == null ? "—" : (d > 0 ? "+" : "") + f(d, L2[2])) + "</td></tr>";
+  }).join("");
+  if (!body) return "";
+  return '<section class="sec"><div class="card"><h2>اليمين واليسار</h2><div class="tbl-wrap" style="border:0;margin-top:6px"><table class="minitable"><thead><tr><th></th><th>اليمين</th><th>اليسار</th><th>الفرق</th></tr></thead><tbody>' + body + "</tbody></table></div>" +
+    zoneTable(rows, "air", 1, "حرارة الجو حسب الجهة والموقع (°C)", DIMS.n, "n") + zoneTable(rows, "rh", 0, "الرطوبة حسب الجهة والموقع (%)", DIMS.n, "n") + zoneTable(rows, "lux", 0, "الضوء حسب الجهة والموقع (lux)", DIMS.n, "n") + "</div></section>";
 }
 function repView() {
   var sec = S.sec;
@@ -1119,14 +1271,15 @@ function repView() {
     '<div class="stat"><span class="lab">خافض / رافع pH</span><span class="val num">' + f(C.down) + " / " + f(C.up) + " <small>مل</small></span></div>";
   if (sec === "n") {
     var irr = rows.filter(function (r) { return r.type === "irr"; });
-    h += '<div class="stat"><span class="lab">محلول الري</span><span class="val num">' + f(sum(irr.map(function (r) { return num(r.v.liters); }))) + ' <small>لتر</small></span><span class="sub">' + irr.length + " رية</span></div>" +
+    h += '<div class="stat"><span class="lab">محلول الري</span><span class="val num">' + f(sum(irr.map(function (r) { return irrL(r.v); }))) + ' <small>لتر</small></span><span class="sub">' + irr.length + " رية</span></div>" +
       '<div class="stat"><span class="lab">البذور المزروعة</span><span class="val num">' + f(sum(rows.filter(function (r) { return r.type === "sow"; }).map(function (r) { return num(r.v.seeds); }))) + "</span></div>";
   } else {
     h += '<div class="stat"><span class="lab">الماء المضاف للخزان</span><span class="val num">' + f(C.water) + " <small>لتر</small></span></div>" +
       '<div class="stat"><span class="lab">الحصاد</span><span class="val num">' + f(sum(rows.filter(function (r) { return r.type === "harvest"; }).map(function (r) { return num(r.v.weight); })), 1) + " <small>كغ</small></span></div>" +
       '<div class="stat"><span class="lab">الشتلات المنقولة</span><span class="val num">' + f(sum(rows.filter(function (r) { return r.type === "xplant"; }).map(function (r) { return num(r.v.count); }))) + "</span></div>";
   }
-  h += '<div class="stat"><span class="lab">ملاحظات النبات</span><span class="val num">' + rows.filter(function (r) { return r.type === "note"; }).length + "</span></div></div></section>";
+  h += '<div class="stat"><span class="lab">ملاحظات النبات</span><span class="val num">' + rows.filter(function (r) { return r.type === "note" && (r.v || {}).cat !== NOTE_NONE; }).length + "</span></div></div></section>";
+  if (sec === "n") h += sideReport(rows);
   var charts = [["ec", "الأملاح" + (cfg("atc") ? "" : " عند 25°") + " (µS/cm)"], ["ph", "pH"], ["wt", "حرارة ماء المحلول (°C)"], ["air", "حرارة الجو، متوسط (°C)"], ["rh", "الرطوبة، متوسط (%)"], ["lux", "متوسط الضوء (lux)"]];
   h += '<section class="sec">' + charts.map(function (c) { return "<h2>" + c[1] + '</h2><div class="card chart" data-chart="' + c[0] + '"></div>'; }).join("") + "</section>";
   if (sec === "t") { var zt = zoneTable(rows, "air", 1, "حرارة الجو حسب المنطقة والمستوى (°C)") + zoneTable(rows, "rh", 0, "الرطوبة حسب المنطقة والمستوى (%)") + zoneTable(rows, "lux", 0, "الضوء حسب المنطقة والمستوى (lux)"); if (zt) h += '<section class="sec"><div class="card">' + zt + "</div></section>"; }
@@ -1138,32 +1291,46 @@ function repView() {
   h += '<section class="sec"><div class="card"><h2>تصدير إلى Excel</h2><p class="muted" style="font-size:13.5px">ملف ' + SECS[sec].name + ' فيه ورقة لكل نوع تسجيل، والملخص اليومي، والمعدات، والوصفات، واستهلاك الأسمدة للفترة المختارة.</p><button class="btn pri block" data-act="export">تنزيل ملف Excel</button></div></section>';
   return h;
 }
+function sideSeries(rows, k) {
+  var ty = k === "lux" ? "light" : "temp", t = function (r) { return new Date(r.date + "T" + (r.time || "12:00") + ":00").getTime(); }, lab = function (r) { return r.date.slice(5) + " " + fmtTime(r.time); };
+  var list = rows.filter(function (r) { return r.type === ty; });
+  var out = [0, 1].map(function (si) { return { name: SIDES[si], pts: list.map(function (r) { return { t: t(r), y: sideAvg(r.v, k, si), lab: lab(r) }; }).filter(function (p) { return p.y != null; }) }; });
+  var old = list.filter(function (r) { return sideAvg(r.v, k, 0) == null && sideAvg(r.v, k, 1) == null && metric(r.v, k) != null; }).map(function (r) { return { t: t(r), y: metric(r.v, k), lab: lab(r) }; });
+  if (old.length) out.push({ name: "قبل التقسيم", pts: old });
+  return out;
+}
 function bindCharts() {
   var R = S.rep; if (!R || !R.all) return; var rows = R.all.filter(function (r) { return secOf(r) === S.sec; });
-  document.querySelectorAll("[data-chart]").forEach(function (el) { var k = el.getAttribute("data-chart"); drawChart(el, ptsFor(rows, k), k); });
+  document.querySelectorAll("[data-chart]").forEach(function (el) { var k = el.getAttribute("data-chart"); drawChart(el, S.sec === "n" && (k === "air" || k === "rh" || k === "lux") ? sideSeries(rows, k) : [{ pts: ptsFor(rows, k) }], k); });
 }
-function drawChart(el, pts, c) {
-  pts = pts.filter(function (p) { return p.y != null && isFinite(p.y); });
-  if (!pts.length) { el.innerHTML = '<div class="muted" style="font-size:13px;text-align:center;padding:16px">لا توجد قراءات</div>'; return; }
-  pts.sort(function (a, b) { return a.t - b.t; });
+function drawChart(el, series, c) {
+  var COL = ["var(--chart)", "var(--chart2)", "var(--muted)"];
+  series = series.map(function (sr, i) { return { name: sr.name || "", col: COL[i % 3], pts: sr.pts.filter(function (p) { return p.y != null && isFinite(p.y); }).sort(function (a, b) { return a.t - b.t; }) }; }).filter(function (sr) { return sr.pts.length; });
+  if (!series.length) { el.innerHTML = '<div class="muted" style="font-size:13px;text-align:center;padding:16px">لا توجد قراءات</div>'; return; }
+  var all = [].concat.apply([], series.map(function (sr) { return sr.pts; })).sort(function (a, b) { return a.t - b.t; });
   var W = 600, H = 190, L = 50, Rr = 12, T = 12, B = 26, lo = num(cfg(CHECK[c][0])), hi = num(cfg(CHECK[c][1]));
-  var ys = pts.map(function (p) { return p.y; }), ymin = Math.min.apply(null, ys.concat([lo])), ymax = Math.max.apply(null, ys.concat([hi])), padv = (ymax - ymin) * 0.12 || 1; ymin -= padv; ymax += padv;
-  var t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+  var ys = all.map(function (p) { return p.y; }), ymin = Math.min.apply(null, ys.concat([lo])), ymax = Math.max.apply(null, ys.concat([hi])), padv = (ymax - ymin) * 0.12 || 1; ymin -= padv; ymax += padv;
+  var t0 = all[0].t, t1 = all[all.length - 1].t;
   var X = function (t) { return L + (t1 === t0 ? (W - L - Rr) / 2 : (t - t0) / (t1 - t0) * (W - L - Rr)); }, Y = function (y) { return T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B); };
   var dec = c === "ph" ? 1 : 0, g = "";
   for (var i = 0; i <= 3; i++) { var v = ymin + (ymax - ymin) * i / 3; g += '<line class="gl" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/><text class="ax" x="' + (L - 6) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + f(v, dec) + "</text>"; }
   var band = '<rect x="' + L + '" width="' + (W - L - Rr) + '" y="' + Y(hi) + '" height="' + Math.max(0, Y(lo) - Y(hi)) + '" fill="var(--band)"/>';
-  var seen = {}, xl = [pts[0], pts[Math.floor(pts.length / 2)], pts[pts.length - 1]].filter(function (p) { var d = p.lab.slice(0, 5); if (seen[d]) return false; seen[d] = 1; return true; });
+  var seen = {}, xl = [all[0], all[Math.floor(all.length / 2)], all[all.length - 1]].filter(function (p) { var d = p.lab.slice(0, 5); if (seen[d]) return false; seen[d] = 1; return true; });
   var xs = xl.map(function (p) { return '<text class="ax" x="' + X(p.t) + '" y="' + (H - 6) + '" text-anchor="middle">' + p.lab.slice(0, 5) + "</text>"; }).join("");
-  var path = pts.map(function (p, i) { return (i ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.y).toFixed(1); }).join(" ");
-  var dots = pts.map(function (p) { var st = chk(c, p.y); return '<circle cx="' + X(p.t) + '" cy="' + Y(p.y) + '" r="' + (pts.length > 60 ? 2.2 : 3.5) + '" fill="' + (st === "ok" ? "var(--chart)" : "var(--bad)") + '" stroke="var(--surface)" stroke-width="1.5"/>'; }).join("");
-  el.innerHTML = '<svg viewBox="0 0 ' + W + " " + H + '" role="img">' + band + g + '<path d="' + path + '" fill="none" stroke="var(--chart)" stroke-width="2" stroke-linejoin="round"/>' + dots + xs + '<line class="hov" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/></svg><div class="tip" hidden></div>';
+  var lines = series.map(function (sr) {
+    var path = sr.pts.map(function (p, j) { return (j ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.y).toFixed(1); }).join(" ");
+    var dots = sr.pts.map(function (p) { var st = chk(c, p.y); return '<circle cx="' + X(p.t) + '" cy="' + Y(p.y) + '" r="' + (all.length > 60 ? 2.2 : 3.5) + '" fill="' + (st === "ok" ? sr.col : "var(--bad)") + '" stroke="var(--surface)" stroke-width="1.5"/>'; }).join("");
+    return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="2" stroke-linejoin="round"/>' + dots;
+  }).join("");
+  var legend = series.length > 1 ? '<div class="legend">' + series.map(function (sr) { return '<span><i style="background:' + sr.col + '"></i>' + esc(sr.name) + "</span>"; }).join("") + "</div>" : "";
+  el.innerHTML = legend + '<svg viewBox="0 0 ' + W + " " + H + '" role="img">' + band + g + lines + xs + '<line class="hov" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/></svg><div class="tip" hidden></div>';
   var svg = el.querySelector("svg"), tip = el.querySelector(".tip"), hv = svg.querySelector(".hov");
   function mv(ev) {
-    var r = svg.getBoundingClientRect(), cx = ev.touches ? ev.touches[0].clientX : ev.clientX, x = (cx - r.left) / r.width * W, best = pts[0], bd = 1e9;
-    pts.forEach(function (p) { var d = Math.abs(X(p.t) - x); if (d < bd) { bd = d; best = p; } });
-    hv.setAttribute("x1", X(best.t)); hv.setAttribute("x2", X(best.t)); hv.setAttribute("visibility", "visible");
-    tip.hidden = false; tip.textContent = best.lab + " · " + f(best.y, c === "ph" ? 2 : 0); tip.style.left = Math.max(60, Math.min(r.width - 60, X(best.t) / W * r.width)) + "px";
+    var r = svg.getBoundingClientRect(), cx = ev.touches ? ev.touches[0].clientX : ev.clientX, x = (cx - r.left) / r.width * W, best = null, bd = 1e9;
+    series.forEach(function (sr) { sr.pts.forEach(function (p) { var d = Math.abs(X(p.t) - x); if (d < bd) { bd = d; best = { p: p, n: sr.name }; } }); });
+    var near = series.map(function (sr) { var q = sr.pts.filter(function (p) { return p.t === best.p.t; })[0]; return q ? (sr.name ? sr.name + " " : "") + f(q.y, c === "ph" ? 2 : 0) : ""; }).filter(Boolean).join(" · ");
+    hv.setAttribute("x1", X(best.p.t)); hv.setAttribute("x2", X(best.p.t)); hv.setAttribute("visibility", "visible");
+    tip.hidden = false; tip.textContent = best.p.lab + " · " + near; tip.style.left = Math.max(80, Math.min(r.width - 80, X(best.p.t) / W * r.width)) + "px";
   }
   svg.addEventListener("mousemove", mv); svg.addEventListener("touchstart", mv, { passive: true }); svg.addEventListener("touchmove", mv, { passive: true });
   svg.addEventListener("mouseleave", function () { tip.hidden = true; hv.setAttribute("visibility", "hidden"); });
@@ -1175,26 +1342,30 @@ function exportXlsx(btn) {
     var sec = S.sec, rows = S.rep.all.filter(function (r) { return secOf(r) === sec; }), wb = XLSX.utils.book_new(); wb.Workbook = { Views: [{ RTL: true }] };
     var names = {}, add = function (name, aoa) { name = name.slice(0, 31); if (names[name]) name = name.slice(0, 28) + " " + (++names[name]); names[name] = 1; var ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = aoa[0].map(function (_, i) { return { wch: Math.min(40, Math.max.apply(null, [10].concat(aoa.map(function (r) { return String(r[i] == null ? "" : r[i]).length + 2; })))) }; }); XLSX.utils.book_append_sheet(wb, ws, name); };
     add("الملخص اليومي", [["التاريخ", "خلط/تعويض", "A مل", "B مل", "متوسط EC (25°)", "متوسط pH", "حرارة الماء", "حرارة الجو", "الرطوبة", "الضوء", "ريات", "لتر", "بذور", "حصاد كغ", "ملاحظات", "بانتظار المراجعة"]].concat(daily(rows).map(function (r) { return [r.d, r.mix, r.mlA, r.mlB, r.ec && Math.round(r.ec), r.ph && +r.ph.toFixed(2), r.wt && +r.wt.toFixed(1), r.air && +r.air.toFixed(1), r.rh && Math.round(r.rh), r.lux && Math.round(r.lux), r.irr, r.lit, r.seeds, r.kg, r.notes, r.pend]; })));
-    ORDER[sec].forEach(function (t) {
+    var types = ORDER[sec].slice(); rows.forEach(function (r) { if (types.indexOf(r.type) < 0 && r.type !== "selftest" && typeDef(r.type, sec) && !TYPES_G[r.type]) types.push(r.type); });
+    types.forEach(function (t) {
       var T = typeDef(t, sec), cols = [], head = ["التاريخ"];
       T.fields.forEach(function (x) {
-        if (x.t === "grid") { ZK.forEach(function (z, zi) { [1, 2, 3].forEach(function (l) { cols.push({ gk: x.k + "_" + z + l }); head.push(x.l + " - " + ZONES[zi] + "/" + LEVELS[l - 1]); }); }); cols.push({ gm: x.k }); head.push(x.l + " - المتوسط"); return; }
-        cols.push({ fd: x }); head.push((x.pg ? MNAME[x.pg] + " - " : "") + x.l + (unitOf(x) && unitOf(x) !== "pH" ? " (" + unitOf(x) + ")" : ""));
+        if (x.t === "grid") { var D = dimOf(x); D.rows.forEach(function (r, ri) { D.cols.forEach(function (c, ci) { cols.push({ gk: gkey(x.k, r, c) }); head.push(x.l + " - " + D.rowL[ri] + "/" + D.colL[ci]); }); cols.push({ gr: x.k, D: D, ri: ri }); head.push(x.l + " - متوسط " + D.rowL[ri]); }); cols.push({ gm: x.k }); head.push(x.l + " - المتوسط"); return; }
+        cols.push({ fd: x }); head.push((x.pg ? MNAME[x.pg] + " - " : "") + (x.cl || x.l) + (unitOf(x) && unitOf(x) !== "pH" ? " (" + unitOf(x) + ")" : ""));
         if (x.comp === "ec" && !cfg("atc")) { cols.push({ ec25: x.k }); head.push(x.l + " مصحح 25°"); }
       });
+      if (t === "irr") { cols.push({ irrT: 1 }); head.push("مجموع الري (لتر)"); }
       if (t === "note") head.push("الحالة"); head = head.concat(["المسجّل", "المراجعة", "ملاحظة المشرف"]);
       var data = rows.filter(function (r) { return r.type === t; }).map(function (r) {
         var v = r.v || {}, row = [r.date];
         cols.forEach(function (c) {
           if (c.gm) { var mm = metric(v, c.gm); row.push(mm == null ? "" : +mm.toFixed(1)); return; }
           if (c.gk) { row.push(num(v[c.gk])); return; }
+          if (c.gr) { var ra = rowAvg(v, c.gr, c.D, c.ri); row.push(ra == null ? "" : +ra.toFixed(1)); return; }
+          if (c.irrT) { row.push(irrL(v)); return; }
           if (c.ec25) { var e25 = ec25(num(v[c.ec25]), num(v.wt)); row.push(e25 == null ? "" : Math.round(e25)); return; }
           var x = c.fd, val = v[x.k];
           if (x.t === "t") row.push(fmtTime(val));
           else if (x.t === "batch") { var b = sowBatches().filter(function (s) { return s.id === val; })[0]; row.push(b ? b.date + " " + (b.v.crop || "") : ""); }
           else row.push(x.t === "n" ? num(val) : (val == null ? "" : val));
         });
-        if (t === "note") row.push(r.open ? "مفتوحة" : "تم الحل");
+        if (t === "note") row.push(v.cat === NOTE_NONE ? "—" : r.open ? "مفتوحة" : "تم الحل");
         return row.concat([nameOf(r.by), r.review ? (r.review.s === "ok" ? "معتمد" : "عليه ملاحظة") : "بانتظار", r.review && r.review.c || ""]);
       });
       if (data.length) add(T.label, [head].concat(data));
@@ -1221,8 +1392,8 @@ function supView() {
     else h += '<div class="stat ' + (o.pct < 15 ? "s-warn" : "") + '"><span class="lab">عبوة ' + tk + ' · المتبقي التقديري</span><span class="val num">' + f(Math.max(0, o.left)) + " <small>مل من " + f(recipeMl(o.rc)) + '</small></span><div class="bar" style="margin:4px 0"><i style="width:' + o.pct + '%"></i></div><span class="sub">حُضّرت في ' + esc(o.rc.date) + " · استُهلك " + f(o.used) + " مل</span></div>";
   });
   h += "</div></section>";
-  var stagesTxt = STAGES.map(function (s) { return "<tr><td>" + s[1] + '</td><td class="num">' + fml(num(F.fullA) * s[0]) + " + " + fml(num(F.fullB) * s[0]) + '</td><td class="num">' + f(num(F.ecRaw) + kf * num(F.fullA) * s[0]) + "</td></tr>"; }).join("");
-  h += '<section class="sec"><div class="card"><div class="sec-h"><h2>الخلطة والحاسبة</h2><button class="btn sm" data-act="editFormula">تعديل الخلطة</button></div>' +
+  var rt = doseRatio(), stagesTxt = doses().map(function (d) { return "<tr><td>" + doseName(d) + '</td><td class="num">' + fml(d) + " + " + fml(d * rt) + '</td><td class="num">' + f(num(F.ecRaw) + kf * d) + "</td></tr>"; }).join("");
+  h += '<section class="sec"><div class="card"><div class="sec-h"><h2>الخلطة والحاسبة</h2><span><button class="btn sm" data-act="editDoses">الجرعات</button> <button class="btn sm" data-act="editFormula">تعديل الخلطة</button></span></div>' +
     '<p style="margin:8px 0 4px"><b>' + esc(F.name) + '</b> <span class="muted">· معتمدة من <bdi dir="ltr" class="num" style="white-space:nowrap">' + esc(F.date) + "</bdi></span></p>" +
     '<div class="tbl-wrap"><table class="minitable"><thead><tr><th>الجرعة</th><th>A + B مل/لتر</th><th>EC المتوقع</th></tr></thead><tbody>' + stagesTxt + "</tbody></table></div>" +
     '<dl class="kv" style="margin-top:10px"><dt>معامل الخلطة</dt><dd class="num">' + f(kf, 1) + " µS/cm لكل 1 مل/لتر</dd><dt>المعامل من سجلاتكم</dt><dd>" + (L.n ? '<span class="num">' + f(L.k, 1) + "</span> (من " + L.n + " خلطات)" + (Math.abs(L.k - kf) / kf > .15 ? ' <span class="pill warn">يختلف أكثر من 15% عن الخلطة</span>' : "") : "لا توجد خلطات مسجلة بعد اعتماد هذه الخلطة") + "</dd><dt>المستخدم في الحاسبة</dt><dd><b>" + (ki.src === "learned" ? "من السجلات" : "من الخلطة") + "</b> (" + f(ki.k, 1) + ")</dd></dl>" +
@@ -1246,33 +1417,80 @@ function supView() {
   });
   if (!isOwner) h += '<p class="muted" style="font-size:12.5px">إضافة المستخدمين وتغيير صلاحياتهم متاحة لمالك التطبيق فقط.</p>';
   h += "</div></section>";
+  h += schedCard(sec);
   var sf = [["ecMin", "الأملاح الحد الأدنى", "µS/cm"], ["ecMax", "الأملاح الحد الأعلى", "µS/cm"], ["ecTarget", "الأملاح المستهدفة للحاسبة", "µS/cm"], ["phMin", "pH الأدنى", "pH"], ["phMax", "pH الأعلى", "pH"], ["wtMin", "حرارة الماء الدنيا", "°C"], ["wtMax", "حرارة الماء العليا", "°C"],
     ["airMin", "حرارة الجو الدنيا", "°C"], ["airMax", "حرارة الجو العليا", "°C"], ["rhMin", "الرطوبة الدنيا", "%"], ["rhMax", "الرطوبة العليا", "%"], ["luxMin", "الضوء الأدنى", "lux"], ["luxMax", "الضوء الأعلى", "lux"], ["tankL", sec === "t" ? "سعة خزان الأبراج" : "كمية ماء الخلطة المعتادة", "لتر"]];
-  if (sec === "n") sf = sf.concat([["pumpL", "سعة مضخة الري", "لتر"], ["nMix", "مرات الخلط يومياً", ""], ["nIrr", "مرات الري يومياً", ""]]);
-  else sf = sf.concat([["nRefill", "مرات تعويض الخزان يومياً", ""], ["nPump", "فحص المضخة يومياً", ""]]);
-  sf = sf.concat([["nEcph", "قراءات الأملاح وpH يومياً", ""], ["nTemp", "قراءات الجو يومياً", ""], ["nLight", "قراءات الضوء يومياً", ""], ["nPhoto", "صور النمو يومياً", ""]]);
-  h += '<section class="sec"><h2>الحدود المستهدفة · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2><form class="card fgrid" id="setSec" novalidate>' + sf.map(function (x) { return '<label class="f" for="ss_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" inputmode="decimal" id="ss_' + x[0] + '" value="' + esc(cfg(x[0], sec)) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
+  if (sec === "n") sf = sf.concat([["pumpL", "سعة مضخة الري", "لتر"], ["capR", "طاقة الجهة اليمنى شهرياً", "بذرة"], ["capL", "طاقة الجهة اليسرى شهرياً", "بذرة"]]);
+  sf = sf.concat(TASKS[sec].filter(function (x) { return !schedOf(sec, x[0]).length; }).map(function (x) { return [x[1], "عدد " + typeDef(x[0], sec).short + " يومياً", "مرة"]; }));
+  h += '<section class="sec"><h2>الحدود المستهدفة · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2><form class="card fgrid" id="setSec" novalidate>' + sf.map(function (x) { return '<label class="f" for="ss_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + KPA() + ' id="ss_' + x[0] + '" value="' + esc(cfg(x[0], sec)) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
     '<label class="f full" for="ss_zoneNote">تعريف المناطق (يظهر بخط صغير تحت القياسات)<input class="in" id="ss_zoneNote" value="' + esc(cfg("zoneNote", sec)) + '"></label>' +
     '<div class="full"><button class="btn pri block" type="button" data-act="saveSec">حفظ حدود ' + SECS[sec].name + "</button></div></form></section>";
-  var g = [["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["capacity", "الطاقة الإنتاجية الشهرية", "بذرة"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"]];
+  var g = [["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"]];
   h += '<section class="sec"><h2>إعدادات عامة</h2><form class="card fgrid" id="setGlob" novalidate>' +
     '<label class="f full" for="sg_atc">جهاز القياس يعوّض الحرارة تلقائياً (ATC)<select class="in" id="sg_atc"><option value="0"' + (!cfg("atc") ? " selected" : "") + '>لا · التطبيق يصحح القراءات إلى 25°</option><option value="1"' + (cfg("atc") ? " selected" : "") + ">نعم · لا حاجة للتصحيح</option></select></label>" +
-    '<p class="help full" style="margin:-4px 0 0">طريقة التأكد: قِس نفس الماء وهو بارد، ثم بعد تدفئته 8–10 درجات. إذا تغيّرت قراءة الأملاح أكثر من 10% فالجهاز بدون ATC، وإذا بقيت شبه ثابتة فالجهاز فيه ATC.</p>' +
+    '<div class="full"><button class="btn block" type="button" data-act="atcTest">اختبار جهاز القياس (ATC) وحساب معامل الحرارة</button><p class="help" style="margin:4px 0 0">' + (S.settings.atcChecked ? "آخر اختبار: " + esc(S.settings.atcChecked) + " · المعامل " + f(num(cfg("ecCoef")) * 100, 2) + "% لكل درجة" : "لم يُختبر الجهاز بعد.") + '</p></div>' +
     '<label class="f" for="sg_levelUnit">قياس مستوى خزان الأبراج<select class="in" id="sg_levelUnit"><option value="L"' + (cfg("levelUnit") !== "cm" ? " selected" : "") + '>باللتر</option><option value="cm"' + (cfg("levelUnit") === "cm" ? " selected" : "") + ">بالسنتيمتر</option></select></label>" +
     '<label class="f" for="sg_useLearned">معامل الحاسبة<select class="in" id="sg_useLearned"><option value="1"' + (cfg("useLearned") ? " selected" : "") + '>يتعلم من السجلات بعد 3 خلطات</option><option value="0"' + (!cfg("useLearned") ? " selected" : "") + ">من الخلطة فقط</option></select></label>" +
-    g.map(function (x) { return '<label class="f" for="sg_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" inputmode="decimal" id="sg_' + x[0] + '" value="' + esc(cfg(x[0])) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
+    g.map(function (x) { return '<label class="f" for="sg_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + KPA() + ' id="sg_' + x[0] + '" value="' + esc(cfg(x[0])) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
     '<div class="full"><button class="btn pri block" type="button" data-act="saveGlob">حفظ الإعدادات العامة</button></div></form></section>';
   return h;
+}
+function schedCard(sec) {
+  var h = '<section class="sec" id="schedSec"><div class="sec-h"><h2>مواعيد المهام · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2></div><div class="card">';
+  TASKS[sec].forEach(function (x) {
+    var times = schedOf(sec, x[0]);
+    h += '<div class="sch-row"><div class="sch-t"><b>' + typeDef(x[0], sec).label + '</b><span class="muted">' + (times.length ? (times.length === 1 ? "مرة واحدة" : times.length === 2 ? "مرتان" : times.length + (times.length <= 10 ? " مرات" : " مرة")) + " يومياً" : "بدون مواعيد · العدد اليومي " + f(num(cfg(x[1], sec)) || 0)) + '</span></div><div class="tchips">' +
+      times.map(function (t) { return '<button type="button" class="tchip edit" data-act="schDel" data-sec="' + sec + '" data-type="' + x[0] + '" data-t="' + t + '">' + fmtTime(t) + ' <span aria-hidden="true">✕</span></button>'; }).join("") +
+      '<button type="button" class="tchip add" data-act="schAdd" data-sec="' + sec + '" data-type="' + x[0] + '">+ وقت</button></div></div>';
+  });
+  return h + '<p class="help" style="margin:8px 0 0">عدد مهام اليوم = عدد المواعيد. المنبه يرن في الجوال عند كل موعد لم تُسجَّل مهمته بعد. المهمة بدون مواعيد تأخذ عددها من الحدود أدناه. اضغط ✕ لحذف موعد.</p></div></section>';
+}
+function saveSched(sec, type, arr) {
+  var sc = clone(S.settings.sched || DEF.sched); sc[sec] = sc[sec] || {};
+  var u = {}; sc[sec][type] = arr.filter(function (t) { if (u[t]) return false; u[t] = 1; return true; }).sort();
+  return S.db.collection("config").doc("settings").set(Object.assign({}, S.settings, { sched: sc }));
+}
+function openSchAdd(sec, type) {
+  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("موعد جديد · " + typeDef(type, sec).label, sec, "bell") +
+    '<div class="f full"><span>الوقت</span>' + timePicker("sch_tp", "08:00") + '</div><div class="sheet-actions"><button class="btn pri" type="button" data-act="schSave" data-sec="' + sec + '" data-type="' + type + '">إضافة الموعد</button></div></div></div>');
+}
+function openDoses(from) {
+  var DS = doses(), full = fullDose(), rt = doseRatio();
+  var row = function (d) { return '<div class="dose-row"><div class="unitwrap"><input class="in num" ' + KPA() + ' data-dose value="' + esc(d) + '" aria-label="جرعة A"><span class="u">مل/لتر</span></div><label class="dr-full"><input type="radio" name="fullDose" ' + (Math.abs(d - full) < 1e-9 ? "checked" : "") + '> الكاملة</label><button class="iconbtn" type="button" data-act="rmDose" aria-label="حذف">✕</button></div>'; };
+  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("جرعات الحاسبة", "n", "calc") +
+    '<p class="help" style="margin-top:0">اكتب جرعة A لكل لتر. جرعة B تُحسب تلقائياً بنسبة الخلطة (' + fml(rt) + ' مل B لكل 1 مل A). اختر الجرعة التي تعتبرها "الكاملة"، وباقي الجرعات تظهر كنسبة منها.</p><div id="doseList">' + DS.map(row).join("") + "</div>" +
+    '<button class="btn sm" type="button" data-act="addDose">+ إضافة جرعة</button><div class="sheet-actions"><button class="btn pri" type="button" data-act="saveDoses" data-from="' + (from || "") + '">حفظ الجرعات</button></div></div></div>');
+}
+function doseRowHTML() { return '<div class="dose-row"><div class="unitwrap"><input class="in num" ' + KPA() + ' data-dose value="" aria-label="جرعة A"><span class="u">مل/لتر</span></div><label class="dr-full"><input type="radio" name="fullDose"> الكاملة</label><button class="iconbtn" type="button" data-act="rmDose" aria-label="حذف">✕</button></div>'; }
+function openAtcTest() {
+  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("اختبار جهاز القياس", null, "cal") +
+    '<ol class="cal-steps" style="margin-top:0"><li>خذ كوباً من محلول الري، وبرّده (ماء بارد أو ثلاجة) حتى تقل حرارته عن 20°.</li><li>ضع المجس، حرّكه، وانتظر حتى تثبت القراءة. سجّل <b>الأملاح والحرارة</b> كما تظهر على الشاشة.</li><li>دفّئ نفس الكوب (في الشمس أو داخل ماء دافئ) حتى ترتفع الحرارة 8 درجات أو أكثر، ثم قِس مرة أخرى.</li></ol>' +
+    '<form class="fgrid" id="atcForm" novalidate><div class="grp-h">القراءة الباردة</div>' +
+    '<label class="f" for="at_e1">الأملاح<div class="unitwrap"><input class="in num" id="at_e1" ' + KPA() + '><span class="u">µS/cm</span></div></label><label class="f" for="at_t1">الحرارة<div class="unitwrap"><input class="in num" id="at_t1" ' + KPA() + '><span class="u">°C</span></div></label>' +
+    '<div class="grp-h">القراءة الدافئة</div><label class="f" for="at_e2">الأملاح<div class="unitwrap"><input class="in num" id="at_e2" ' + KPA() + '><span class="u">µS/cm</span></div></label><label class="f" for="at_t2">الحرارة<div class="unitwrap"><input class="in num" id="at_t2" ' + KPA() + '><span class="u">°C</span></div></label></form>' +
+    '<div id="atcOut" style="margin-top:12px"></div><div class="sheet-actions"><button class="btn pri" type="button" data-act="saveAtc" id="atcSave" disabled>اعتماد النتيجة</button></div></div></div>');
+  $("atcForm").addEventListener("input", atcRun); atcRun();
+}
+var ATC_RES = null;
+function atcRun() {
+  var e1 = num($("at_e1").value), t1 = num($("at_t1").value), e2 = num($("at_e2").value), t2 = num($("at_t2").value), o = $("atcOut"), b = $("atcSave"); ATC_RES = null; b.disabled = true;
+  if (e1 == null || t1 == null || e2 == null || t2 == null) { o.innerHTML = '<p class="help">اكتب القراءتين.</p>'; return; }
+  if (Math.abs(t2 - t1) < 5 || e1 <= 0) { o.innerHTML = '<div class="banner warn">الفرق في الحرارة يجب أن يكون 5 درجات أو أكثر ليكون الاختبار دقيقاً.</div>'; return; }
+  var a = atcAlpha(e1, t1, e2, t2), ch = (e2 / e1 - 1) * 100, pct = f(a * 100, 2);
+  if (Math.abs(a) < 0.006) { ATC_RES = { atc: true }; o.innerHTML = '<div class="banner ok"><span><b>الجهاز يعوّض الحرارة تلقائياً (ATC).</b> تغيّرت القراءة ' + f(ch, 1) + "% فقط مع فرق " + f(Math.abs(t2 - t1), 1) + " درجة. عند الاعتماد يتوقف التطبيق عن تصحيح الأملاح وpH لأن الجهاز يصححها.</span></div>"; }
+  else if (a >= 0.012 && a <= 0.03) { ATC_RES = { atc: false, coef: Math.round(a * 10000) / 10000 }; o.innerHTML = '<div class="banner ok"><span><b>الجهاز بدون تعويض حرارة.</b> القراءة تتغير ' + pct + "% لكل درجة في محلولكم (المعتاد 1.9–2%). عند الاعتماد يستخدم التطبيق هذا المعامل المقاس في تحويل كل القراءات إلى 25° وفي الحاسبة.</span></div>"; }
+  else { o.innerHTML = '<div class="banner warn">النتيجة غير منطقية (' + pct + "% لكل درجة). أعد القياس: نفس الكوب، حرّك المجس، وانتظر ثبات القراءة والحرارة على الشاشة.</div>"; }
+  b.disabled = !ATC_RES;
 }
 function openFormula() {
   var F = formula();
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("الخلطة المعتمدة للحاسبة", null, "calc") +
-    '<p class="help" style="margin-top:0">أدخل الجرعة الكاملة من وصفتك والأملاح الناتجة عنها. تحسب الحاسبة كل الجرعات والكميات من هذه الأرقام. عند تعديل التركيبة أو نسبة A و B حدّثها هنا.</p><form class="fgrid" id="foForm" novalidate>' +
+    '<p class="help" style="margin-top:0">أدخل جرعة جرّبتموها فعلاً وقستم الأملاح الناتجة عنها (مثال: 10 مل A + 10 مل B لكل لتر أعطت 1330). منها يُحسب أثر كل 1 مل/لتر، ثم تُحسب كل الجرعات بما فيها الجرعة الكاملة. عند تغيير التركيبة أو نسبة A و B حدّثها هنا. قائمة الجرعات تُعدّل من زر "الجرعات".</p><form class="fgrid" id="foForm" novalidate>' +
     '<label class="f full" for="fo_name">اسم الخلطة<input class="in" id="fo_name" value="' + esc(F.name) + '"></label>' +
-    '<label class="f" for="fo_fullA">A للجرعة الكاملة<div class="unitwrap"><input class="in num" inputmode="decimal" id="fo_fullA" value="' + esc(F.fullA) + '"><span class="u">مل/لتر</span></div></label>' +
-    '<label class="f" for="fo_fullB">B للجرعة الكاملة<div class="unitwrap"><input class="in num" inputmode="decimal" id="fo_fullB" value="' + esc(F.fullB) + '"><span class="u">مل/لتر</span></div></label>' +
-    '<label class="f" for="fo_ecRaw">أملاح ماء المصدر<div class="unitwrap"><input class="in num" inputmode="decimal" id="fo_ecRaw" value="' + esc(F.ecRaw) + '"><span class="u">µS/cm</span></div></label>' +
-    '<label class="f" for="fo_ecFull">الأملاح عند الجرعة الكاملة<div class="unitwrap"><input class="in num" inputmode="decimal" id="fo_ecFull" value="' + esc(F.ecFull) + '"><span class="u">µS/cm</span></div><span class="hint">شاملة ماء المصدر، عند 25°</span></label>' +
+    '<label class="f" for="fo_fullA">جرعة A المقاسة<div class="unitwrap"><input class="in num" ' + KPA() + ' id="fo_fullA" value="' + esc(F.fullA) + '"><span class="u">مل/لتر</span></div></label>' +
+    '<label class="f" for="fo_fullB">جرعة B المقاسة<div class="unitwrap"><input class="in num" ' + KPA() + ' id="fo_fullB" value="' + esc(F.fullB) + '"><span class="u">مل/لتر</span></div></label>' +
+    '<label class="f" for="fo_ecRaw">أملاح ماء المصدر<div class="unitwrap"><input class="in num" ' + KPA() + ' id="fo_ecRaw" value="' + esc(F.ecRaw) + '"><span class="u">µS/cm</span></div></label>' +
+    '<label class="f" for="fo_ecFull">الأملاح الناتجة عنها<div class="unitwrap"><input class="in num" ' + KPA() + ' id="fo_ecFull" value="' + esc(F.ecFull) + '"><span class="u">µS/cm</span></div><span class="hint">شاملة ماء المصدر، عند 25°</span></label>' +
     '<label class="f full" for="fo_date">تاريخ اعتماد الخلطة<input class="in num" type="date" id="fo_date" value="' + esc(todayStr()) + '"></label>' +
     '<p class="help full" id="fo_k"></p></form><div class="sheet-actions"><button class="btn pri" type="button" data-act="saveFormula">اعتماد الخلطة</button></div></div></div>');
   var upd = function () { var a = num($("fo_fullA").value), e1 = num($("fo_ecFull").value), e0 = num($("fo_ecRaw").value); $("fo_k").textContent = a && e1 != null && e0 != null ? "كل 1 مل A (مع B) لكل لتر يرفع الأملاح ≈ " + f((e1 - e0) / a, 1) + " µS/cm · نسبة B إلى A = " + f(num($("fo_fullB").value) / a, 2) : ""; };
@@ -1284,12 +1502,12 @@ function openRecipe(r) {
     '<form class="fgrid" id="recForm" novalidate>' +
     '<label class="f" for="r_date">تاريخ التحضير<input class="in num" type="date" id="r_date" value="' + esc(r ? r.date : todayStr()) + '"></label>' +
     '<label class="f" for="r_tank">العبوة<select class="in" id="r_tank"><option' + (r && r.tank === "A" ? " selected" : "") + ">A</option><option" + (r && r.tank === "B" ? " selected" : "") + ">B</option></select></label>" +
-    '<label class="f full" for="r_vol">حجم المحلول المركز <span class="req">*</span><div class="unitwrap"><input class="in num" inputmode="decimal" id="r_vol" value="' + esc(r ? recipeMl(r) : "") + '"><span class="u">مل</span></div></label>' +
+    '<label class="f full" for="r_vol">حجم المحلول المركز <span class="req">*</span><div class="unitwrap"><input class="in num" ' + KPA() + ' id="r_vol" value="' + esc(r ? recipeMl(r) : "") + '"><span class="u">مل</span></div></label>' +
     '<div class="full"><h3 style="margin-bottom:8px">المواد وكمياتها</h3><datalist id="ferts">' + FERTS.map(function (x) { return '<option value="' + x + '">'; }).join("") + '</datalist><div id="riList">' + items.map(riRow).join("") + '</div><button class="btn sm" type="button" data-act="addRi">+ إضافة مادة</button></div>' +
     '<label class="f full" for="r_notes">ملاحظات (التركيز بالعناصر ppm، المورد، رقم التشغيلة…)<textarea class="in" id="r_notes">' + esc(r ? r.notes : "") + "</textarea></label>" +
     '</form><div class="sheet-actions">' + (r ? '<button class="btn danger" type="button" data-act="delRecipe" data-id="' + r.id + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="saveRecipe" data-id="' + (r ? r.id : "") + '">حفظ الوصفة</button></div></div></div>');
 }
-function riRow(it) { return '<div class="ri"><input class="in" list="ferts" aria-label="اسم المادة" placeholder="اسم المادة" data-ri="name" value="' + esc(it.name) + '"><input class="in num" inputmode="decimal" aria-label="الكمية" placeholder="الكمية" data-ri="qty" value="' + esc(it.qty) + '"><select class="in" aria-label="الوحدة" data-ri="unit">' + ["غ", "كغ", "مل", "لتر"].map(function (u) { return "<option" + (it.unit === u ? " selected" : "") + ">" + u + "</option>"; }).join("") + '</select><button class="iconbtn" type="button" data-act="rmRi" aria-label="حذف السطر">✕</button></div>'; }
+function riRow(it) { return '<div class="ri"><input class="in" list="ferts" aria-label="اسم المادة" placeholder="اسم المادة" data-ri="name" value="' + esc(it.name) + '"><input class="in num" ' + KPA() + ' aria-label="الكمية" placeholder="الكمية" data-ri="qty" value="' + esc(it.qty) + '"><select class="in" aria-label="الوحدة" data-ri="unit">' + ["غ", "كغ", "مل", "لتر"].map(function (u) { return "<option" + (it.unit === u ? " selected" : "") + ">" + u + "</option>"; }).join("") + '</select><button class="iconbtn" type="button" data-act="rmRi" aria-label="حذف السطر">✕</button></div>'; }
 function openNewUser() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("مستخدم جديد") + '<form class="fgrid" id="userForm" novalidate>' +
     '<label class="f full" for="u_name">الاسم<input class="in" id="u_name"></label>' +
@@ -1321,8 +1539,155 @@ function openAccount() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("حسابي") +
     '<div class="card"><dl class="kv"><dt>الاسم</dt><dd>' + esc(nameOf(S.uid)) + '</dd><dt>الدخول</dt><dd class="num">' + esc(showLogin(S.user.email)) + "</dd><dt>الصلاحية</dt><dd>" + (isSup() ? "مشرف" : "عامل") + "</dd></dl></div>" +
     '<form class="fgrid" id="pwForm" style="margin-top:14px" novalidate><label class="f full" for="p_new">تغيير كلمة المرور<input class="in" id="p_new" type="password" dir="ltr" autocomplete="new-password" placeholder="كلمة المرور الجديدة"></label><button class="btn full" type="button" data-act="changePw">حفظ كلمة المرور</button></form>' +
+    '<div class="f full" style="margin-top:14px"><span>لوحة الأرقام في خانات القياس</span><div class="seg" id="kp_on" role="group"><button type="button" data-v="1" aria-pressed="' + kpOn() + '">لوحة GREEN SIDE الكبيرة</button><button type="button" data-v="0" aria-pressed="' + !kpOn() + '">لوحة الجوال</button></div></div>' +
+    '<button class="btn block" style="margin-top:12px;width:100%" type="button" data-act="alarmSet">' + ico("bell", 18) + "&nbsp;منبه مواعيد المهام</button>" +
     (S.installEvt ? '<button class="btn pri block" style="margin-top:14px" type="button" data-act="install">تثبيت التطبيق على الجوال</button>' : '<p class="muted" style="font-size:13px;margin-top:14px">لتثبيت التطبيق: من قائمة المتصفح (⋮) اختر "تثبيت التطبيق".</p>') +
     '<div class="sheet-actions"><button class="btn danger" type="button" data-act="logout">تسجيل الخروج</button></div><p class="muted" style="font-size:12px;text-align:center">GREEN SIDE · الإصدار ' + APP_VERSION + "</p></div></div>");
+}
+
+/* ================= number pad ================= */
+/* A large on-screen number pad for numeric fields: the same on every phone, with a big clear decimal point.
+   Each phone can switch back to its own keyboard from "حسابي". */
+function kpOn() { return lsGet("gs_kp") !== "0"; }
+function KPA() { return 'inputmode="' + (kpOn() ? "none" : "decimal") + '" enterkeyhint="next" data-kp="1"'; }
+var KP = { el: null, inp: null };
+function kpBuild() {
+  if (KP.el) return KP.el;
+  var d = document.createElement("div"); d.className = "kp"; d.id = "kp"; d.hidden = true;
+  var keys = [["1"], ["2"], ["3"], ["bk", "⌫", "kp-act"], ["4"], ["5"], ["6"], ["clr", "مسح", "kp-act"], ["7"], ["8"], ["9"], ["next", "التالي", "kp-next"], [".", "", "kp-dot"], ["0"], ["done", "إخفاء", "kp-act"]];
+  d.innerHTML = '<div class="kp-h"><span id="kpL"></span><b class="num" id="kpV"></b></div><div class="kp-g">' + keys.map(function (k) { return '<button type="button" tabindex="-1" class="kp-k ' + (k[2] || "") + '" data-k="' + k[0] + '" aria-label="' + (k[0] === "." ? "فاصلة عشرية" : (k[1] || k[0])) + '">' + (k[0] === "." ? '<span class="dot"></span><small>فاصلة</small>' : (k[1] || k[0])) + "</button>"; }).join("") + "</div>";
+  d.addEventListener("pointerdown", function (ev) { ev.preventDefault(); var b = ev.target.closest("[data-k]"); if (!b) return; b.classList.add("on"); setTimeout(function () { b.classList.remove("on"); }, 120); kpKey(b.getAttribute("data-k")); });
+  d.addEventListener("mousedown", function (ev) { ev.preventDefault(); });
+  d.addEventListener("click", function (ev) { ev.preventDefault(); });
+  document.body.appendChild(d); KP.el = d; return d;
+}
+function kpShow(el) {
+  kpBuild(); KP.inp = el; el.setAttribute("inputmode", "none");
+  var lab = el.closest("label"), t = el.getAttribute("aria-label") || "";
+  if (!t && lab) { var n0 = lab.firstChild; t = n0 && n0.nodeType === 3 ? n0.textContent : ((lab.querySelector(":scope > span") || {}).textContent || ""); }
+  var u = el.parentNode.querySelector(".u"); KP.unit = u ? u.textContent : "";
+  $("kpL").textContent = t.replace("*", "").trim(); kpVal();
+  KP.el.hidden = false; document.documentElement.classList.add("kp-open");
+  setTimeout(function () { if (KP.inp !== el) return; try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (x) { el.scrollIntoView(); } }, 80);
+}
+function kpVal() { if (KP.inp) $("kpV").textContent = (KP.inp.value || "—") + (KP.inp.value && KP.unit ? " " + KP.unit : ""); }
+function kpHide() { if (!KP.el || KP.el.hidden) return; KP.el.hidden = true; KP.inp = null; document.documentElement.classList.remove("kp-open"); }
+function kpKey(k) {
+  var el = KP.inp; if (!el || !document.body.contains(el)) { kpHide(); return; }
+  if (k === "next") { focusNext(el); return; }
+  if (k === "done") { el.blur(); kpHide(); return; }
+  var v = el.value, a = el.selectionStart, b = el.selectionEnd; if (a == null) a = b = v.length;
+  if (k === "bk") { if (a === b && a > 0) a--; v = v.slice(0, a) + v.slice(b); b = a; }
+  else if (k === "clr") { v = ""; a = b = 0; }
+  else { if (k === "." && v.replace(/[٫,]/g, ".").indexOf(".") >= 0) return; var ins = k === "." && a === 0 ? "0." : k; v = v.slice(0, a) + ins + v.slice(b); a = b = a + ins.length; }
+  el.value = v; try { el.setSelectionRange(a, a); } catch (x) {}
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  kpVal(); try { if (navigator.vibrate) navigator.vibrate(6); } catch (x) {}
+}
+/* "next" on the pad or the phone keyboard moves to the next field; after the last one it closes the pad (and shows the calculator result) */
+function focusNext(el) {
+  var root = el.closest(".sheet") || el.closest("form") || $("view");
+  var list = Array.prototype.filter.call(root.querySelectorAll("input.in, textarea.in"), function (x) { return !x.disabled && ["hidden", "date", "checkbox", "radio", "file"].indexOf(x.type) < 0 && x.offsetParent !== null; });
+  var nx = list[list.indexOf(el) + 1];
+  if (nx) { nx.focus(); if (nx.matches("[data-kp]") && kpOn()) kpShow(nx); else kpHide(); return true; }
+  el.blur(); kpHide();
+  var out = $("calcOut"); if (out && root.contains(out)) setTimeout(function () { out.scrollIntoView({ behavior: "smooth", block: "start" }); }, 60);
+  return false;
+}
+function caretEnd(t) { setTimeout(function () { try { var n = t.value.length; t.setSelectionRange(n, n); } catch (x) {} }, 0); }
+var FOCUS_T = 0;
+document.addEventListener("pointerdown", function (ev) { var t = ev.target.closest && ev.target.closest("[data-kp]"); if (t) t.setAttribute("inputmode", kpOn() ? "none" : "decimal"); }, true);
+document.addEventListener("focusin", function (ev) {
+  var t = ev.target; if (!t || !t.matches) return;
+  if (t.matches("input.in, textarea.in")) { FOCUS_T = Date.now(); caretEnd(t); }
+  if (t.matches("[data-kp]") && kpOn()) kpShow(t); else if (KP.inp && KP.inp !== t) kpHide();
+});
+document.addEventListener("focusout", function () { setTimeout(function () { if (KP.inp && document.activeElement !== KP.inp) kpHide(); }, 0); });
+/* typing starts at the end of the text wherever the field is tapped */
+document.addEventListener("click", function (ev) { var t = ev.target; if (t && t.matches && t.matches("input.in, textarea.in") && Date.now() - FOCUS_T < 700) caretEnd(t); }, true);
+
+/* ================= task alarm ================= */
+/* At each task time the phone rings (repeating beeps + vibration) until "stop", if that task is not recorded yet.
+   Works while the app is open. When the app is in the background a notification is shown if allowed. */
+var ALARM = { ctx: null, on: false, items: [], timer: null, vib: null, stopAt: null };
+function alarmOn() { return lsGet("gs_alarm") !== "0"; }
+function audioUnlock() { try { if (!ALARM.ctx) { var AC = window.AudioContext || window.webkitAudioContext; if (AC) ALARM.ctx = new AC(); } if (ALARM.ctx && ALARM.ctx.state === "suspended") ALARM.ctx.resume(); } catch (e) {} }
+document.addEventListener("pointerdown", audioUnlock, true);
+function beep() {
+  var c = ALARM.ctx; if (!c) return;
+  try { var t0 = c.currentTime + 0.02; [0, 0.22, 0.44, 0.66].forEach(function (dt, i) { var o = c.createOscillator(), g = c.createGain(); o.type = "square"; o.frequency.value = i % 2 ? 1046 : 880; g.gain.setValueAtTime(0.0001, t0 + dt); g.gain.exponentialRampToValueAtTime(0.3, t0 + dt + 0.015); g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.18); o.connect(g); g.connect(c.destination); o.start(t0 + dt); o.stop(t0 + dt + 0.2); }); } catch (e) {}
+}
+function vib() { try { if (navigator.vibrate) navigator.vibrate([700, 300, 700]); } catch (e) {} }
+function fireAlarm(items) {
+  if (ALARM.on) stopAlarm();
+  ALARM.on = true; ALARM.items = items;
+  var test = items[0] && items[0].test, by = {};
+  items.forEach(function (it) { if (!it.test) (by[it.sec] = by[it.sec] || []).push(typeDef(it.type, it.sec).label); });
+  var list = test ? "<li>هذه تجربة لصوت المنبه. إذا لم تسمع الصوت ارفع صوت الوسائط في الجوال.</li>" : Object.keys(by).map(function (sc) { return "<li><b>" + SECS[sc].icon + " " + SECS[sc].name + ":</b> " + by[sc].join("، ") + "</li>"; }).join("");
+  var d = document.createElement("div"); d.className = "alarm"; d.id = "alarm"; d.setAttribute("role", "alertdialog");
+  d.innerHTML = '<div class="alarm-in"><div class="alarm-ic">' + ico("bell", 46) + "</div><h2>" + (test ? "تجربة المنبه" : "حان وقت المهام") + '</h2><div class="alarm-t num">' + fmtTime(items[0].t) + "</div><ul>" + list + "</ul>" +
+    (test ? "" : '<button class="btn pri block" type="button" data-act="alarmGo">إيقاف المنبه والتسجيل الآن</button>') + '<button class="btn block" type="button" data-act="alarmStop">إيقاف المنبه</button></div>';
+  document.body.appendChild(d);
+  audioUnlock(); beep(); vib();
+  ALARM.timer = setInterval(beep, 1300); ALARM.vib = setInterval(vib, 2200); ALARM.stopAt = setTimeout(stopAlarm, 10 * 60 * 1000);
+  if (!test && document.hidden) notifyAlarm(items);
+}
+function stopAlarm() {
+  clearInterval(ALARM.timer); clearInterval(ALARM.vib); clearTimeout(ALARM.stopAt); ALARM.on = false;
+  try { if (navigator.vibrate) navigator.vibrate(0); } catch (e) {}
+  var a = $("alarm"); if (a) a.remove();
+  try { if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.ready.then(function (r) { return r.getNotifications({ tag: "gs-alarm" }); }).then(function (ns) { (ns || []).forEach(function (n) { n.close(); }); }).catch(function () {}); } catch (e) {}
+}
+function notifyAlarm(items) {
+  try {
+    if (!("Notification" in window) || Notification.permission !== "granted" || !navigator.serviceWorker) return;
+    var body = items.map(function (it) { return SECS[it.sec].name + ": " + typeDef(it.type, it.sec).label; }).join("\n");
+    navigator.serviceWorker.ready.then(function (reg) { return reg.showNotification("GREEN SIDE · حان وقت المهام " + fmtTime(items[0].t), { body: body, tag: "gs-alarm", renotify: true, requireInteraction: true, vibrate: [700, 300, 700, 300, 700], icon: "icons/icon-192.png", badge: "icons/icon-192.png", dir: "rtl", lang: "ar" }); }).catch(function () {});
+  } catch (e) {}
+}
+function firedKey() { return "gs_fired_" + todayStr(); }
+function checkAlarms() {
+  if (!S.role || !alarmOn() || ALARM.on) return;
+  var nm = nowMin(), today = todayStr(), fired, due = [];
+  try { fired = JSON.parse(lsGet(firedKey()) || "[]"); } catch (e) { fired = []; }
+  ["n", "t"].forEach(function (sec) {
+    var E = S.date === today ? secEntries(S.entries, sec) : null;
+    TASKS[sec].forEach(function (x) {
+      var done = E ? doneOf(E, x[0]) : 0;
+      schedOf(sec, x[0]).forEach(function (t, i) {
+        var m = tMin(t), key = sec + "|" + x[0] + "|" + t;
+        if (nm < m || nm > m + 20 || fired.indexOf(key) >= 0 || (E && i < done)) return;
+        due.push({ sec: sec, type: x[0], t: t, key: key });
+      });
+    });
+  });
+  if (!due.length) return;
+  lsSet(firedKey(), JSON.stringify(fired.concat(due.map(function (d) { return d.key; }))));
+  fireAlarm(due);
+}
+function alarmClean() { try { for (var i = localStorage.length - 1; i >= 0; i--) { var k = localStorage.key(i); if (k && k.indexOf("gs_fired_") === 0 && k !== firedKey()) localStorage.removeItem(k); } } catch (e) {} }
+var WAKE = null;
+function wakeOn() { return lsGet("gs_wake") === "1"; }
+function wakeApply() {
+  try {
+    if (wakeOn() && "wakeLock" in navigator && document.visibilityState === "visible") { if (!WAKE) navigator.wakeLock.request("screen").then(function (w) { WAKE = w; w.addEventListener("release", function () { WAKE = null; }); }).catch(function () {}); }
+    else if (WAKE) { WAKE.release(); WAKE = null; }
+  } catch (e) {}
+}
+document.addEventListener("visibilitychange", function () { wakeApply(); if (!document.hidden) checkAlarms(); });
+setInterval(checkAlarms, 15000);
+function openAlarmSet() {
+  var perm = "Notification" in window ? Notification.permission : "na";
+  var list = ["n", "t"].map(function (sec) { var rows = TASKS[sec].map(function (x) { var t = schedOf(sec, x[0]); return t.length ? "<li>" + typeDef(x[0], sec).label + ': <span class="num">' + t.map(fmtTime).join(" · ") + "</span></li>" : ""; }).join(""); return rows ? "<h3>" + SECS[sec].icon + " " + SECS[sec].name + '</h3><ul class="help" style="margin:4px 0 10px;padding-right:18px">' + rows + "</ul>" : ""; }).join("");
+  var seg = function (id, on, a, b) { return '<div class="seg" id="' + id + '" role="group"><button type="button" data-v="1" aria-pressed="' + on + '">' + a + '</button><button type="button" data-v="0" aria-pressed="' + !on + '">' + b + "</button></div>"; };
+  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("منبه مواعيد المهام", null, "bell") +
+    '<div class="f full"><span>المنبه على هذا الجوال</span>' + seg("al_on", alarmOn(), "تشغيل", "إيقاف") + "</div>" +
+    ('wakeLock' in navigator ? '<div class="f full" style="margin-top:12px"><span>إبقاء الشاشة مضاءة والتطبيق مفتوح (لجوال العمل)</span>' + seg("al_wake", wakeOn(), "نعم", "لا") + "</div>" : "") +
+    '<div style="margin-top:12px">' + (perm === "granted" ? '<span class="pill ok">✓ الإشعارات مسموحة</span>' : perm === "denied" ? '<div class="banner warn">الإشعارات محظورة لهذا التطبيق. من إعدادات الجوال ← التطبيقات ← Chrome (أو GREEN SIDE) ← الإشعارات: اسمح بها.</div>' : perm === "na" ? "" : '<button class="btn block" style="width:100%" type="button" data-act="notifAsk">السماح بالإشعارات</button>') + "</div>" +
+    '<button class="btn block" style="margin-top:10px;width:100%" type="button" data-act="alarmTest">تجربة صوت المنبه</button>' +
+    '<div class="card" style="margin-top:12px">' + (list || '<p class="help">لا توجد مواعيد محددة.</p>') + "</div>" +
+    '<p class="help">يرن المنبه بصوت متكرر واهتزاز عند كل موعد لم تُسجَّل مهمته بعد، حتى تضغط "إيقاف". يعمل والتطبيق مفتوح. إذا أُغلق التطبيق أو قُفلت الشاشة طويلاً يتوقف الجوال عن تشغيله، لذلك على جوال العمل: فعّل "إبقاء الشاشة مضاءة" واشحنه، أو اضبط منبه الجوال على نفس الأوقات احتياطاً. ارفع صوت الوسائط.</p>' +
+    (isSup() ? '<div class="sheet-actions"><button class="btn" type="button" data-act="goSched">تعديل المواعيد</button></div>' : '<div style="height:12px"></div>') + "</div></div>");
 }
 
 /* ================= system check (owner) ================= */
@@ -1394,8 +1759,13 @@ async function runSelfTest() {
     if (!near(ecTo25(868, 20.3, 0.019), 953.1, 0.5)) errs.push("تصحيح حرارة الأملاح");
     if (!near(phTo25(6, 15), 5.965, 0.002)) errs.push("تصحيح حرارة pH");
     if (fmtTime("13:05") !== "1:05 م" || fmtTime("00:30") !== "12:30 ص") errs.push("نظام 12 ساعة");
+    var sv = { air_r1: 30, air_r2: 32, air_r3: 34, air_l1: 28 }; if (!near(sideAvg(sv, "air", 0), 32, .001) || !near(sideAvg(sv, "air", 1), 28, .001) || !near(metric(sv, "air"), 31, .001)) errs.push("متوسط اليمين واليسار");
+    if (!near(irrL({ liters_r: 20, liters_l: 18 }), 38, .001) || !near(irrL({ liters: 20 }), 20, .001)) errs.push("كمية الري");
+    if (!near(atcAlpha(1000 * (1 + 0.019 * (15 - 25)), 15, 1000 * (1 + 0.019 * (30 - 25)), 30), 0.019, 0.0001) || Math.abs(atcAlpha(1000, 15, 1000, 30)) > 1e-9) errs.push("اختبار ATC");
+    if (["irr", "temp", "light", "note", "photo"].map(function (t) { return DEF.sched.n[t].length; }).join(",") !== "3,5,5,1,1") errs.push("مواعيد المهام");
+    if (!near(freshMath(400, 400 + 93 * 12.5, 20, 93, 1).mlA, 250, .01)) errs.push("الجرعة الكاملة 12.5");
     if (errs.length) throw new Error("خطأ في: " + errs.join("، "));
-    return "8 حسابات مطابقة للقيم المتوقعة";
+    return "13 حساباً مطابقاً للقيم المتوقعة";
   });
   draw();
   var ok = res.filter(function (r) { return r.ok; }).length, sm = $("stSum");
@@ -1408,6 +1778,8 @@ function armDelete(b, id) { if (delArm === id) { delArm = null; return true; } d
 document.addEventListener("click", function (ev) {
   var tp = ev.target.closest(".tp [data-ap]");
   if (tp) { var w = tp.closest(".tp"); w.setAttribute("data-ap", tp.getAttribute("data-ap")); w.querySelectorAll("button[data-ap]").forEach(function (x) { x.setAttribute("aria-pressed", x === tp); }); updForm(); return; }
+  var sg = ev.target.closest("#kp_on [data-v], #al_on [data-v], #al_wake [data-v]");
+  if (sg) { var gid = sg.parentNode.id, gv = sg.getAttribute("data-v"); sg.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === sg); }); if (gid === "kp_on") lsSet("gs_kp", gv); else if (gid === "al_on") lsSet("gs_alarm", gv); else { lsSet("gs_wake", gv); wakeApply(); } return; }
   var ur = ev.target.closest("#u_role [data-r]");
   if (ur) { ur.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === ur); }); return; }
   var bg = ev.target.closest("[data-close]"); if (bg && ev.target === bg) { closeSheet(); return; }
@@ -1427,10 +1799,30 @@ document.addEventListener("click", function (ev) {
     case "switchSec": switchSec(b.getAttribute("data-s")); break;
     case "goTasks": var ts = $("tasksSec"); if (ts) window.scrollTo({ top: ts.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); break;
     case "goTab": setTab(b.getAttribute("data-t")); break;
+    case "alarmSet": openAlarmSet(); break;
+    case "alarmStop": stopAlarm(); break;
+    case "alarmGo": var it0 = ALARM.items[0]; stopAlarm(); if (NAV.sheet) closeSheet(); if (it0 && it0.sec && it0.sec !== S.sec) switchSec(it0.sec); if (S.date !== todayStr()) { S.date = todayStr(); $("datePick").value = S.date; subDay(); } setTab("add"); break;
+    case "alarmTest": closeSheet(); fireAlarm([{ test: 1, t: nowTime() }]); break;
+    case "notifAsk": if ("Notification" in window) Notification.requestPermission().then(function () { openAlarmSet(); }); break;
+    case "goSched": closeSheet(); if (S.tab !== "sup") setTab("sup"); setTimeout(function () { var el = $("schedSec"); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); }, 80); break;
+    case "schDel": var sd1 = b.getAttribute("data-sec"), ty1 = b.getAttribute("data-type"), tt1 = b.getAttribute("data-t"); saveSched(sd1, ty1, schedOf(sd1, ty1).filter(function (x) { return x !== tt1; })).catch(fail); toast("حُذف موعد " + fmtTime(tt1)); break;
+    case "schAdd": openSchAdd(b.getAttribute("data-sec"), b.getAttribute("data-type")); break;
+    case "schSave": var sd2 = b.getAttribute("data-sec"), ty2 = b.getAttribute("data-type"), tt2 = readTime("sch_tp"); saveSched(sd2, ty2, schedOf(sd2, ty2).concat([tt2])).catch(fail); closeSheet(); toast("أُضيف موعد " + fmtTime(tt2)); break;
+    case "editDoses": openDoses(b.getAttribute("data-from")); break;
+    case "addDose": $("doseList").insertAdjacentHTML("beforeend", doseRowHTML()); break;
+    case "rmDose": b.closest(".dose-row").remove(); break;
+    case "saveDoses":
+      var rowsD = Array.prototype.map.call(document.querySelectorAll("#doseList .dose-row"), function (r) { return { d: num(r.querySelector("[data-dose]").value), full: r.querySelector('input[type="radio"]').checked }; }).filter(function (x) { return x.d > 0; });
+      if (!rowsD.length) { toast("أضف جرعة واحدة على الأقل"); return; }
+      var fullD = (rowsD.filter(function (x) { return x.full; })[0] || rowsD.slice().sort(function (x, y) { return y.d - x.d; })[0]).d, fromD = b.getAttribute("data-from");
+      db.collection("config").doc("settings").set(Object.assign({}, S.settings, { doses: rowsD.map(function (x) { return x.d; }).sort(function (x, y) { return x - y; }), fullDose: fullD })).catch(fail);
+      toast("حُفظت الجرعات · الكاملة " + fml(fullD) + " مل/لتر"); setTimeout(function () { if (fromD === "calc") openCalc(); else closeSheet(); }, 60); break;
+    case "atcTest": openAtcTest(); break;
+    case "saveAtc": if (!ATC_RES) return; var oa = { atc: ATC_RES.atc, atcChecked: todayStr() }; if (!ATC_RES.atc) oa.ecCoef = ATC_RES.coef; db.collection("config").doc("settings").set(Object.assign({}, S.settings, oa)).catch(fail); closeSheet(); toast(ATC_RES.atc ? "اعتُمد: الجهاز يعوّض الحرارة (ATC)" : "اعتُمد معامل الحرارة " + f(ATC_RES.coef * 100, 2) + "% لكل درجة"); break;
     case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); render(true); break;
     case "calc": openCalc(); break;
     case "cmode": CALC.mode = b.getAttribute("data-m"); b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); break;
-    case "cstage": var sv = b.getAttribute("data-s"); CALC.stage = sv === "ec" ? "ec" : +sv; b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); break;
+    case "cstage": var sv = b.getAttribute("data-s"); CALC.stage = sv === "ec" || sv === "custom" ? sv : +sv; b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); if (sv === "custom") setTimeout(function () { var cd = $("c_dose"); if (cd) cd.focus(); }, 30); break;
     case "calcToForm":
       var r = CALC.res; if (!r) { toast("أكمل بيانات الحاسبة أولاً"); return; }
       var blank = function (x) { return x == null ? "" : x; };
@@ -1495,6 +1887,10 @@ document.addEventListener("click", function (ev) {
       db.collection("config").doc("settings").set(Object.assign({}, S.settings, og)).then(function () { toast("حُفظت الإعدادات"); }).catch(fail); break;
   }
 });
-document.addEventListener("keydown", function (e) { if (e.key === "Escape" && NAV.sheet) closeSheet(); });
+document.addEventListener("keydown", function (e) {
+  if (e.key === "Escape" && NAV.sheet) closeSheet();
+  if (e.key === "Enter" && e.target && e.target.matches && e.target.matches("input.in") && !e.target.closest("#authForm")) { e.preventDefault(); focusNext(e.target); }
+});
+alarmClean();
 if ("serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
 boot();
