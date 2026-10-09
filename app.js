@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.1.1";
+var APP_VERSION = "2.2.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -58,7 +58,8 @@ var IC = {
   rep: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
   sup: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
-  cam: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>'
+  cam: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
+  sens: '<path d="M11 13.8V5a2 2 0 0 0-4 0v8.8a3.6 3.6 0 1 0 4 0z"/><path d="M9 9v6"/><path d="M15 8.5a4.5 4.5 0 0 1 0 7M18 6a8 8 0 0 1 0 12"/>'
 };
 function ico(k, w) { w = w || 24; return '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (IC[k] || IC.note) + "</svg>"; }
 
@@ -540,6 +541,7 @@ function renderTop() {
 function renderTabs() {
   var tabs = [["today", "اليوم", "today"]];
   if (canAdd()) tabs.push(["add", "تسجيل", "add"]);
+  if (window.SENS) tabs.push(["sens", "الحساسات", "sens"]);
   if (isSup()) { tabs.push(["rep", "التقارير", "rep"]); tabs.push(["sup", "المشرف", "sup"]); }
   $("tabs").innerHTML = tabs.map(function (x) { return '<button class="tab" type="button" data-tab="' + x[0] + '" ' + (S.tab === x[0] ? 'aria-current="page"' : "") + ">" + ico(x[2]) + "<span>" + x[1] + "</span></button>"; }).join("");
 }
@@ -555,6 +557,7 @@ function render(force) {
   if (S.tab === "add" && canAdd()) v.innerHTML = addView();
   else if (S.tab === "rep" && isSup()) { v.innerHTML = repView(); bindCharts(); }
   else if (S.tab === "sup" && isSup()) v.innerHTML = supView();
+  else if (S.tab === "sens" && window.SENS) { v.innerHTML = SENS.view(); SENS.bind(v); }
   else { S.tab = "today"; v.innerHTML = todayView(); }
   loadPhotos(v);
 }

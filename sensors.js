@@ -1,0 +1,552 @@
+/* GREEN SIDE — صفحة الحساسات (الإصدار 2.2.0)
+   العامل: حالة الأجواء الآن، القراءات الحالية، ورسم اليوم. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
+   خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
+   تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
+   قاعدة بيانات التطبيق الأساسية لا تُلمس: الحساسات لها حصتها وقواعدها الخاصة، والتطبيق يقرأ فقط.
+   البيانات:
+     sensors/{deviceId}        بطاقة الحساس: name, sec ("t,n")، loc, manual (الموقع مثل "t:b n:1"), measures{code:{label,unit}}, last{code:{v,at}}, lastSeen
+     sensorDays/{date}_{id}    يوم واحد لحساس واحد: p{code:[{t: ثانية من منتصف الليل (توقيت الرياض), v}]}, s{code:{min,max,sum,n}}
+     sensorMeta/status         حالة الجامع: lastRun, ok, error
+   القيم في هذا الملف ليست سرية (مثل config.js)؛ الحماية في قواعد مشروع الحساسات: القراءة لأي مسجّل، والكتابة للجامع وحده. */
+var SENS = (function () {
+  "use strict";
+  var CFG = {
+    apiKey: "AIzaSyAa_UWcautOYN2_sYGIHfzdTrMbKeqA1H8",
+    authDomain: "green-side-sensors.firebaseapp.com",
+    projectId: "green-side-sensors",
+    storageBucket: "green-side-sensors.firebasestorage.app",
+    messagingSenderId: "808348037215",
+    appId: "1:808348037215:web:9d8485d8211e1a945e6bea"
+  };
+  var TZ_MS = 3 * 3600 * 1000; // توقيت الرياض ثابت (+03:00) بلا توقيت صيفي
+  /* أنواع القياس: c = مفتاح حدود التطبيق في CHECK (حرارة الجو، الرطوبة، الضوء) */
+  var KINDS = {
+    temp: { l: "الحرارة", u: "°C", d: 1, c: "air" },
+    hum: { l: "رطوبة الهواء", u: "%", d: 0, c: "rh" },
+    soil: { l: "رطوبة التربة", u: "%", d: 0 },
+    lux: { l: "الإضاءة", u: "lux", d: 0, c: "lux" },
+    co2: { l: "CO₂", u: "ppm", d: 0 },
+    batt: { l: "البطارية", u: "%", d: 0 }
+  };
+  var ORDER = ["temp", "hum", "soil", "lux", "co2"];
+  var CODE_KIND = {
+    va_temperature: "temp", temp_current: "temp", temp_value: "temp", temp_indoor: "temp",
+    va_humidity: "hum", humidity_value: "hum", humidity_indoor: "hum",
+    humidity: "soil", soil_moisture: "soil",
+    bright_value: "lux", illuminance_value: "lux",
+    co2_value: "co2",
+    va_battery: "batt", battery_percentage: "batt", battery: "batt"
+  };
+  var PAL = ["#2E7A55", "#D9480F", "#1C7ED6", "#AE3EC9", "#B07B00", "#0C8599", "#D6336C", "#5C940D", "#7048E8", "#868E96"];
+  var STALE_H = 3;
+  /* حدود الحساسات (تُعدَّل من زر "إعدادات الحساسات" وتُحفظ في config/settings.sens). القيم المبدئية للخس الورقي (لولو بيوندا). */
+  var SDEF = {
+    vpdMin: 0.5, vpdMax: 1.2, heat: 27, rhRisk: 90, dewGap: 2, gradMax: 4, dliMin: 12, dliMax: 17, luxPpfd: 0.0185,
+    msgHot: "الحرارة مرتفعة", msgCold: "الحرارة منخفضة", msgHumid: "الرطوبة مرتفعة: خطر أمراض فطرية", msgDry: "الجو جاف",
+    msgOff: "حساس لا يرسل قراءات أو بطاريته ضعيفة: بلّغ المشرف"
+  };
+  function sc(k) { var o = (window.S && S.settings && S.settings.sens) || {}; var v = o[k]; return v != null && v !== "" ? v : SDEF[k]; }
+  function scn(k) { var v = sc(k); return typeof num === "function" ? num(v) : +v; }
+  function isSupU() { return typeof isSup === "function" && isSup(); }
+  function P() { return isSupU() ? X.period : 1; } // العامل يرى اليوم المختار فقط
+  var POS = { t: ["b", "m", "e"], n: ["1", "2", "3"] };
+
+  var X = {
+    started: false, app: null, auth: null, db: null, user: null, err: "",
+    sensors: {}, status: null, days: null, key: "", loading: "",
+    period: 1, kind: lsG("gs_sens_kind") || "temp", off: {}
+  };
+  try { X.off = JSON.parse(lsG("gs_sens_off") || "{}") || {}; } catch (e) { X.off = {}; }
+  var p0 = +lsG("gs_sens_period"); if (p0 === 7 || p0 === 30) X.period = p0;
+
+  function lsG(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsS(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+  function E(v) { return typeof esc === "function" ? esc(v) : String(v == null ? "" : v); }
+  function F(n, d) { return typeof f === "function" ? f(n, d) : (n == null ? "—" : Number(n).toFixed(d || 0)); }
+  function ms(x) { if (!x) return null; if (typeof x.toMillis === "function") return x.toMillis(); if (typeof x === "number") return x; var t = Date.parse(x); return isNaN(t) ? null : t; }
+  function p2(n) { return (n < 10 ? "0" : "") + n; }
+  function riy(ts) { return new Date(ts + TZ_MS); } // استخدم دوال UTC على الناتج
+  function hm(ts) { var d = riy(ts); return p2(d.getUTCHours()) + ":" + p2(d.getUTCMinutes()); }
+  function dkey(ts) { var d = riy(ts); return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate()); }
+  function dayStart(ds) { return Date.parse(ds + "T00:00:00+03:00"); }
+  function tLabel(ts) { return typeof fmtTime === "function" ? fmtTime(hm(ts)) : hm(ts); }
+  function ago(ts) {
+    if (!ts) return "—"; var m = Math.round((Date.now() - ts) / 60000);
+    if (m < 1) return "الآن"; if (m < 60) return "منذ " + m + " دقيقة";
+    var h = Math.round(m / 60); if (h < 48) return "منذ " + h + " ساعة"; return "منذ " + Math.round(h / 24) + " يوم";
+  }
+  function rr() { if (window.S && S.tab === "sens" && typeof render === "function") render(); }
+
+  /* ================= الاتصال ================= */
+  function start() {
+    if (X.started) return; X.started = true;
+    try {
+      X.app = firebase.initializeApp(CFG, "sensors");
+      X.auth = X.app.auth(); X.db = X.app.firestore();
+    } catch (e) { X.err = "تعذّر تشغيل اتصال الحساسات."; console.warn(e); return; }
+    X.auth.onAuthStateChanged(function (u) {
+      if (!u) {
+        X.auth.signInAnonymously().catch(function (e) {
+          console.warn(e);
+          X.err = e && e.code === "auth/operation-not-allowed" ? "الدخول المجهول (Anonymous) غير مفعّل في مشروع الحساسات." :
+            e && e.code === "auth/network-request-failed" ? "لا يوجد اتصال بالإنترنت." : "تعذّر الاتصال بقاعدة الحساسات.";
+          rr();
+        });
+        return;
+      }
+      if (X.user) return;
+      X.user = u; X.err = ""; subscribe(); rr();
+    });
+  }
+  function subscribe() {
+    X.db.collection("sensors").onSnapshot(function (q) {
+      var m = {}; q.forEach(function (d) { m[d.id] = Object.assign({ id: d.id }, d.data()); }); X.sensors = m; rr();
+    }, onErr);
+    X.db.collection("sensorMeta").doc("status").onSnapshot(function (s) {
+      var old = X.status && ms(X.status.lastRun); X.status = s.exists ? s.data() : null;
+      var nw = X.status && ms(X.status.lastRun);
+      if (old && nw && nw !== old && X.days && rangeOf().to >= dkey(old)) X.key = ""; // وصلت قراءات جديدة: أعد تحميل الفترة إن كانت تشمل اليوم
+      rr();
+    }, onErr);
+  }
+  function onErr(e) { console.warn(e); X.err = e && e.code === "permission-denied" ? "لا توجد صلاحية قراءة في مشروع الحساسات (راجع قواعد الحماية)." : "تعذّر قراءة بيانات الحساسات."; rr(); }
+
+  function rangeOf() {
+    var to = (window.S && S.date) || dkey(Date.now());
+    return { from: typeof addDays === "function" ? addDays(to, -(P() - 1)) : to, to: to };
+  }
+  function loadDays(force) {
+    if (!X.user) return;
+    var R = rangeOf(), key = R.from + "|" + R.to;
+    if (!force && (X.key === key || X.loading === key)) return;
+    X.loading = key;
+    X.db.collection("sensorDays").where("date", ">=", R.from).where("date", "<=", R.to).get().then(function (q) {
+      if (X.loading !== key) return;
+      X.days = q.docs.map(function (d) { return d.data(); }); X.key = key; X.loading = ""; rr();
+    }).catch(function (e) { if (X.loading === key) X.loading = ""; onErr(e); });
+  }
+
+  /* ================= أدوات البيانات ================= */
+  function kindOf(code) { return CODE_KIND[code] || code; }
+  function kindInfo(k, s) {
+    if (KINDS[k]) return KINDS[k];
+    var m = s && s.measures && s.measures[k];
+    return { l: (m && m.label) || k, u: (m && m.unit) || "", d: 1 };
+  }
+  /* القسم: نص مثل "t" أو "t,n" (الحساس يخدم القسمين). الفارغ يظهر في كل الأقسام حتى يُحدَّد */
+  function secs(sec) { return String(sec || "").split(/[\s,،+]+/).filter(Boolean); }
+  function secOk(sec) { var a = secs(sec); return !a.length || a.indexOf("g") >= 0 || a.indexOf(S.sec) >= 0; }
+  /* الموقع في شبكة Green Side: "t:b n:1" = الأبراج البداية، والمشتل البداية. ويُقبل الشكل القديم r2 للمشتل */
+  function posMap(s) {
+    var m = {}, raw = String((s && s.manual) || "").toLowerCase();
+    raw.replace(/([tn])\s*[:=]\s*([a-z0-9]+)/g, function (_, k, v) { m[k] = v; return ""; });
+    if (!m.n && /^[rl][123]$/.test(raw.trim())) m.n = raw.trim();
+    return m;
+  }
+  function posOf(s, sec) { return posMap(s)[sec || S.sec] || ""; }
+  function posRank(s) { var p = posOf(s); if (!p) return 9; var a = POS[S.sec] || []; var i = a.indexOf(p.slice(-1)); if (i < 0) i = a.indexOf(p); return i < 0 ? 8 : i; }
+  function posLabel(s) {
+    var p = posOf(s); if (!p) return "";
+    var Z = typeof ZONES !== "undefined" ? ZONES : ["البداية", "الوسط", "النهاية"];
+    if (S.sec === "t") { var i = POS.t.indexOf(p.charAt(0)); return i < 0 ? p : Z[i] + (i === 0 ? " (جهة الخلايا)" : i === 2 ? " (جهة المراوح)" : ""); }
+    var j = POS.n.indexOf(p.slice(-1)), side = /^[rl]/.test(p) ? (p.charAt(0) === "r" ? "اليمين · " : "اليسار · ") : "";
+    return j < 0 ? p : side + Z[j];
+  }
+  /* الاسم الظاهر: الاسم الذي كتبته في ورقة Devices، وإلا موقع الحساس (البداية/الوسط/النهاية)، وإلا اسمه في Tuya */
+  function nm(s) { if (!s) return "حساس"; if (s.name && s.name !== s.tuyaName) return s.name; var pl = posLabel(s); return pl ? pl.replace(/ \(.*\)$/, "") : (s.name || s.tuyaName || "حساس"); }
+  function sensorList() {
+    return Object.keys(X.sensors).map(function (id) { return X.sensors[id]; })
+      .filter(function (s) { return s.enabled !== false && secOk(s.sec); })
+      .sort(function (a, b) { return (secs(a.sec).length ? 0 : 1) - (secs(b.sec).length ? 0 : 1) || posRank(a) - posRank(b) || String(a.name || "").localeCompare(String(b.name || ""), "ar"); });
+  }
+  function colorOf(s) {
+    var ids = Object.keys(X.sensors).sort(); var i = ids.indexOf(s.id);
+    return PAL[(i < 0 ? 0 : i) % PAL.length];
+  }
+  function codesFor(s, k) { return Object.keys((s && s.measures) || {}).filter(function (c) { return kindOf(c) === k; }); }
+  function kindsAvail(list) {
+    var seen = {};
+    list.forEach(function (s) { Object.keys(s.measures || {}).forEach(function (c) { seen[kindOf(c)] = 1; }); });
+    var ks = ORDER.filter(function (k) { return seen[k]; });
+    Object.keys(seen).forEach(function (k) { if (ks.indexOf(k) < 0 && k !== "batt") ks.push(k); });
+    if (seen.batt) ks.push("batt");
+    return ks;
+  }
+  function stOf(k, v, sec) {
+    var c = KINDS[k] && KINDS[k].c; if (!c || v == null || typeof chk !== "function") return null;
+    return chk(c, v, S.sec);
+  }
+  function bad(st) { return st === "lo" || st === "hi"; }
+  /* يوم الحساس صالح للقسم الحالي: نعتمد موقع الحساس في ذلك اليوم إن حُفظ، وإلا موقعه الحالي */
+  function dayDocs(s) {
+    return (X.days || []).filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); });
+  }
+  function seriesFor(s, k) {
+    var codes = codesFor(s, k), pts = [];
+    dayDocs(s).forEach(function (d) {
+      var t0 = dayStart(d.date);
+      codes.forEach(function (c) { ((d.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) pts.push({ t: t0 + p.t * 1000, y: +p.v }); }); });
+    });
+    pts.sort(function (a, b) { return a.t - b.t; });
+    return pts;
+  }
+  /* القراءات اليدوية لنفس الموقع (يوم واحد): أبراج b = متوسط air_b1..b3، مشتل 1 = متوسط air_r1 و air_l1، و r2 = air_r2 */
+  function manualKeys(s, k) {
+    var p = posOf(s), pre = k === "temp" ? "air_" : "rh_"; if (!p) return [];
+    if (S.sec === "t") return POS.t.indexOf(p.charAt(0)) < 0 ? [] : (p.length > 1 ? [pre + p] : ["1", "2", "3"].map(function (l) { return pre + p.charAt(0) + l; }));
+    return /^[rl][123]$/.test(p) ? [pre + p] : POS.n.indexOf(p) < 0 ? [] : [pre + "r" + p, pre + "l" + p];
+  }
+  function manualFor(s, k) {
+    if (P() !== 1 || (k !== "temp" && k !== "hum") || !window.S || !S.entries) return [];
+    var keys = manualKeys(s, k); if (!keys.length) return [];
+    return S.entries.filter(function (e) { return e.type === "temp" && e.v && (e.sec || "n") === S.sec; })
+      .map(function (e) { var vals = keys.map(function (q) { return typeof num === "function" ? num(e.v[q]) : +e.v[q]; }).filter(function (x) { return x != null && isFinite(x); });
+        return { t: Date.parse(e.date + "T" + (e.time || "12:00") + ":00+03:00"), y: vals.length ? vals.reduce(function (a, b) { return a + b; }, 0) / vals.length : null }; })
+      .filter(function (p) { return p.y != null && isFinite(p.y); });
+  }
+
+  /* ================= تحليل البيئة ================= */
+  function vpdOf(T, RH) { return 0.6108 * Math.exp(17.27 * T / (T + 237.3)) * (1 - RH / 100); } // kPa
+  function dewOf(T, RH) { var a = 17.27, b = 237.7, g = a * T / (b + T) + Math.log(Math.max(1, RH) / 100); return b * g / (a - g); }
+  var STEP = 300, HOLD = 3600; // نأخذ عينة كل 5 دقائق، وتبقى آخر قراءة صالحة حتى ساعة
+  function ptsOf(doc, s, k) {
+    var out = []; codesFor(s, k).forEach(function (c) { ((doc.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) out.push({ t: +p.t, v: +p.v }); }); });
+    return out.sort(function (a, b) { return a.t - b.t; });
+  }
+  function sampler(pts) {
+    var i = 0; return function (t) { if (!pts.length) return null; while (i + 1 < pts.length && pts[i + 1].t <= t) i++; var q = pts[i]; return q.t > t || t - q.t > HOLD ? null : q.v; };
+  }
+  function dayEnd(date) { return typeof todayStr === "function" && date === todayStr() ? Math.max(0, Math.min(86400, Math.floor((Date.now() - dayStart(date)) / 1000))) : 86400; }
+  function dayMetrics(doc, s) {
+    var T = sampler(ptsOf(doc, s, "temp")), H = sampler(ptsOf(doc, s, "hum")), Lx = sampler(ptsOf(doc, s, "lux"));
+    var lo = num(cfg("airMin")), hi = num(cfg("airMax")), rlo = num(cfg("rhMin")), rhi = num(cfg("rhMax"));
+    var vmin = scn("vpdMin"), vmax = scn("vpdMax"), heat = scn("heat"), risk = scn("rhRisk"), gap = scn("dewGap"), k = scn("luxPpfd"), h = STEP / 3600;
+    var m = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, vCov: 0, inV: 0, risk: 0, dS: 0, dN: 0, dMax: null, nS: 0, nN: 0, nMin: null, vS: 0, vN: 0, lCov: 0, dli: 0, hasLux: codesFor(s, "lux").length > 0 };
+    for (var t = 0, end = dayEnd(doc.date); t < end; t += STEP) {
+      var tv = T(t), hv = H(t), lv = Lx(t), day = t >= 21600 && t < 64800;
+      if (tv != null) {
+        m.cov += h; if (tv >= lo && tv <= hi) m.inT += h; if (tv > heat) m.heat += h;
+        if (day) { m.dS += tv; m.dN++; m.dMax = m.dMax == null ? tv : Math.max(m.dMax, tv); } else { m.nS += tv; m.nN++; m.nMin = m.nMin == null ? tv : Math.min(m.nMin, tv); }
+      }
+      if (hv != null) { m.hCov += h; if (hv >= rlo && hv <= rhi) m.inH += h; }
+      if (tv != null && hv != null) {
+        var v = vpdOf(tv, hv); m.vCov += h; if (v >= vmin && v <= vmax) m.inV += h; if (day) { m.vS += v; m.vN++; }
+        if (hv >= risk || tv - dewOf(tv, hv) <= gap) m.risk += h;
+      } else if (hv != null && hv >= risk) m.risk += h;
+      if (lv != null) { m.lCov += h; m.dli += lv * k * STEP / 1e6; }
+    }
+    m.tDay = m.dN ? m.dS / m.dN : null; m.tNight = m.nN ? m.nS / m.nN : null; m.vDay = m.vN ? m.vS / m.vN : null;
+    return m;
+  }
+  function metricsFor(s) { // متوسط يومي على الفترة (أو اليوم نفسه)
+    var ds = dayDocs(s).map(function (d) { return dayMetrics(d, s); }).filter(function (m) { return m.cov > 0 || m.hCov > 0 || m.lCov > 0; });
+    if (!ds.length) return null;
+    var avgOf = function (k) { var a = ds.map(function (m) { return m[k]; }).filter(function (x) { return x != null; }); return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
+    var r = { n: ds.length, hasLux: ds[0].hasLux };
+    ["cov", "inT", "heat", "hCov", "inH", "vCov", "inV", "risk", "tDay", "tNight", "vDay", "lCov", "dli"].forEach(function (k) { r[k] = avgOf(k); });
+    r.dMax = Math.max.apply(null, ds.map(function (m) { return m.dMax == null ? -1e9 : m.dMax; })); if (r.dMax < -1e8) r.dMax = null;
+    r.nMin = Math.min.apply(null, ds.map(function (m) { return m.nMin == null ? 1e9 : m.nMin; })); if (r.nMin > 1e8) r.nMin = null;
+    return r;
+  }
+
+  /* ================= الصفحة ================= */
+  function view() {
+    start();
+    var list = sensorList(), sup = isSupU();
+    var h = '<section class="sec"><div class="sec-h"><h2>الحساسات · ' + (SECS[S.sec] ? SECS[S.sec].icon + " " + SECS[S.sec].name : "") + '</h2><button class="btn sm" type="button" data-sact="refresh">تحديث</button></div>' + statusHTML() + "</section>";
+    if (X.err && !X.user) return h;
+    if (!X.user) return h + '<div class="empty">جارٍ الاتصال بالحساسات…</div>';
+    if (!Object.keys(X.sensors).length) return h + '<div class="empty">لم تصل بيانات حساسات بعد.</div>';
+    if (!list.length) return h + '<div class="empty">لا توجد حساسات في ' + SECS[S.sec].name + '. حدّد قسم كل حساس من ورقة Devices في جدول Tuya Sensors.</div>';
+
+    h += '<section class="sec">' + alertsHTML(list) + '<div class="grid2">' + list.map(cardHTML).join("") + "</div></section>";
+
+    var kinds = kindsAvail(list); if (kinds.indexOf(X.kind) < 0) X.kind = kinds[0];
+    var R = rangeOf(), isToday = typeof todayStr === "function" && R.to === todayStr();
+    var dayLab = isToday ? "اليوم" : (typeof fmtShort === "function" ? fmtShort(R.to) : R.to);
+    h += '<section class="sec"><h2>' + (sup ? "السجل" : "قراءات " + E(dayLab)) + "</h2>" +
+      (sup ? '<div class="seg" role="group" aria-label="الفترة">' + [[1, dayLab], [7, "7 أيام"], [30, "30 يوم"]].map(function (p) { return '<button type="button" data-sact="period" data-n="' + p[0] + '" aria-pressed="' + (P() === p[0]) + '">' + E(p[1]) + "</button>"; }).join("") + "</div>" : "") +
+      '<div class="seg wrap" role="group" aria-label="القياس">' + kinds.map(function (k) { return '<button type="button" data-sact="kind" data-k="' + E(k) + '" aria-pressed="' + (X.kind === k) + '">' + E(kindInfo(k, list[0]).l) + "</button>"; }).join("") + "</div>";
+    var withK = list.filter(function (s) { return codesFor(s, X.kind).length; });
+    if (withK.length > 1) h += '<div class="sn-pick">' + withK.map(function (s) { var on = !X.off[s.id]; return '<button type="button" class="sn-chip" data-sact="toggle" data-id="' + E(s.id) + '" aria-pressed="' + on + '"><i style="background:' + colorOf(s) + '"></i><bdi>' + E(nm(s)) + "</bdi></button>"; }).join("") + "</div>";
+    loadDays(false);
+    if (!X.days || X.key !== R.from + "|" + R.to) return h + '<div class="card"><div class="empty" style="border:0">جارٍ تحميل القراءات…</div></div></section>';
+    var ki = kindInfo(X.kind, withK[0]);
+    h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة بالضبط.' + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
+    if (sup && P() === 1) h += rawHTML(withK.filter(function (s) { return !X.off[s.id]; }), ki, R.to);
+    h += "</section>";
+    if (!sup) return h;
+    h += analysisHTML(list, R) + coolingHTML(list, R) + summaryHTML(withK, ki, R);
+    h += '<section class="sec"><button class="btn block" type="button" data-sact="export">تنزيل قراءات الفترة (Excel)</button><button class="btn block" type="button" data-sact="set">إعدادات الحساسات وحدود التحليل</button></section>';
+    h += '<p class="muted sn-foot">لتغيير اسم الحساس أو قسمه أو موقعه: ورقة <b>Devices</b> في جدول Tuya Sensors. يظهر التغيير مع القراءة التالية.</p>';
+    return h;
+  }
+
+  /* ================= حالة الأجواء الآن (للجميع) ================= */
+  function alertsHTML(list) {
+    var lo = num(cfg("airMin")), hi = num(cfg("airMax")), rlo = num(cfg("rhMin")), rhi = num(cfg("rhMax")), heat = scn("heat"), risk = scn("rhRisk");
+    var g = { hot: [], cold: [], humid: [], dry: [], off: [] }, fresh = 0;
+    list.forEach(function (s) {
+      var seen = ms(s.lastSeen), stale = !seen || Date.now() - seen > STALE_H * 3600e3, sn = nm(s), last = s.last || {}, batt = null;
+      Object.keys(last).forEach(function (c) { if (kindOf(c) === "batt" && last[c]) batt = last[c].v; });
+      if (stale || (batt != null && batt < 20)) { g.off.push(sn); if (stale) return; }
+      fresh++;
+      Object.keys(last).forEach(function (c) {
+        var k = kindOf(c), v = last[c] && last[c].v; if (v == null) return;
+        if (k === "temp") { if (v > hi || v > heat) g.hot.push(sn + " " + F(v, 1) + "°"); else if (v < lo) g.cold.push(sn + " " + F(v, 1) + "°"); }
+        if (k === "hum") { if (v >= risk || v > rhi) g.humid.push(sn + " " + F(v) + "%"); else if (v < rlo) g.dry.push(sn + " " + F(v) + "%"); }
+      });
+    });
+    var out = [["hot", "bad", "msgHot"], ["humid", "warn", "msgHumid"], ["cold", "warn", "msgCold"], ["dry", "warn", "msgDry"], ["off", "warn", "msgOff"]].filter(function (x) { return g[x[0]].length; })
+      .map(function (x) { return '<div class="alert ' + x[1] + ' sn-alert"><span class="tx"><b>' + E(sc(x[2])) + '</b><small><bdi>' + g[x[0]].map(E).join("</bdi> · <bdi>") + "</bdi></small></span></div>"; });
+    if (!out.length && fresh) return '<div class="banner ok sn-ok"><span>✓ الأجواء ضمن الحدود في كل الحساسات</span></div>';
+    return out.length ? '<div class="alerts">' + out.join("") + "</div>" : "";
+  }
+
+  /* ================= تحليل البيئة (للمشرف) ================= */
+  function rng(a, b, u, d) { return '<bdi dir="ltr" class="num">' + F(a, d || 0) + "–" + F(b, d || 0) + (u || "") + "</bdi>"; }
+  function colHead(s) { return '<th><i class="sn-sw" style="background:' + colorOf(s) + '"></i><bdi>' + E(nm(s)) + "</bdi></th>"; }
+  function hrs(x, of) { return x == null ? "—" : '<b class="num">' + F(x, 1) + "</b> س" + (of ? ' <small class="muted num">' + F(of ? x / of * 100 : 0) + "%</small>" : ""); }
+  function analysisHTML(list, R) {
+    var ss = list.filter(function (s) { return codesFor(s, "temp").length || codesFor(s, "hum").length || codesFor(s, "lux").length; });
+    var M = ss.map(metricsFor); if (!M.some(Boolean)) return "";
+    var lo = num(cfg("airMin")), hi = num(cfg("airMax")), rlo = num(cfg("rhMin")), rhi = num(cfg("rhMax")), vmin = scn("vpdMin"), vmax = scn("vpdMax"), per = P() > 1;
+    var cl = function (bad, warn) { return bad ? "sn-bad" : warn ? "sn-warn" : ""; };
+    var rows = [
+      ["حرارة النهار <small>6ص–6م · متوسط / أعلى</small>", function (m) { return m.tDay == null ? "—" : '<b class="num">' + F(m.tDay, 1) + '</b> / <b class="num ' + cl(m.dMax > hi) + '">' + F(m.dMax, 1) + "</b>°"; }],
+      ["حرارة الليل <small>متوسط / أدنى</small>", function (m) { return m.tNight == null ? "—" : '<b class="num">' + F(m.tNight, 1) + '</b> / <b class="num ' + cl(m.nMin < lo) + '">' + F(m.nMin, 1) + "</b>°"; }],
+      ["الحرارة ضمن الحد <small>" + rng(lo, hi, "°") + "</small>", function (m) { return m.cov ? hrs(m.inT, m.cov) : "—"; }],
+      ["ساعات الإجهاد الحراري <small class=\"num\">فوق " + F(scn("heat")) + "°</small>", function (m) { return m.cov ? '<span class="' + cl(m.heat >= 3, m.heat > 0.4) + '">' + hrs(m.heat) + "</span>" : "—"; }],
+      ["الرطوبة ضمن الحد <small>" + rng(rlo, rhi, "%") + "</small>", function (m) { return m.hCov ? hrs(m.inH, m.hCov) : "—"; }],
+      ["VPD نهاراً <small>kPa · المثالي " + rng(vmin, vmax, "", 1) + "</small>", function (m) { return m.vDay == null ? "—" : '<b class="num ' + cl(m.vDay < vmin - 0.2 || m.vDay > vmax + 0.3, m.vDay < vmin || m.vDay > vmax) + '">' + F(m.vDay, 2) + "</b>"; }],
+      ["ساعات VPD ضمن المثالي", function (m) { return m.vCov ? hrs(m.inV, m.vCov) : "—"; }],
+      ["ساعات خطر الأمراض الفطرية <small>رطوبة ≥ " + F(scn("rhRisk")) + "% أو قرب نقطة الندى</small>", function (m) { return m.hCov ? '<span class="' + cl(m.risk >= 6, m.risk >= 2) + '">' + hrs(m.risk) + "</span>" : "—"; }]
+    ];
+    if (M.some(function (m) { return m && m.hasLux; })) rows.push(["DLI <small>mol/m²/يوم · تقريبي من lux</small>", function (m) { if (!m.hasLux || !m.lCov) return "—"; var full = m.lCov >= 20 || per; return '<b class="num ' + (full ? cl(m.dli < scn("dliMin") * 0.75, m.dli < scn("dliMin") || m.dli > scn("dliMax")) : "") + '">' + F(m.dli, 1) + "</b>" + (full ? "" : ' <small class="muted">حتى الآن</small>'); }]);
+    rows.push(["تغطية البيانات <small>ساعات فيها قراءات</small>", function (m) { return '<span class="muted">' + hrs(Math.max(m.cov || 0, m.hCov || 0, m.lCov || 0)) + "</span>"; }]);
+    return '<section class="sec"><h2>تحليل البيئة · ' + (per ? "متوسط يومي لآخر " + P() + " يوم" : (R.to === todayStr() ? "اليوم حتى الآن" : E(fmtShort(R.to)))) + '</h2>' +
+      '<div class="tbl-wrap"><table class="sn-tbl sn-an"><thead><tr><th>المؤشر</th>' + ss.map(colHead).join("") + "</tr></thead><tbody>" +
+      rows.map(function (r) { return "<tr><td>" + r[0] + "</td>" + M.map(function (m) { return "<td>" + (m ? r[1](m) : "—") + "</td>"; }).join("") + "</tr>"; }).join("") +
+      '</tbody></table></div><p class="help sn-hint">VPD: أقل من المثالي = جو رطب (نتح ضعيف وخطر أمراض)، وأعلى منه = جو جاف يجهد النبات. الساعات محسوبة من قراءات فعلية كل 5 دقائق.</p></section>';
+  }
+
+  /* ================= التبريد وتجانس البيت: من أول البيت (الخلايا) إلى آخره ================= */
+  function coolingHTML(list, R) {
+    var ps = list.filter(function (s) { return posOf(s) && codesFor(s, "temp").length; }).sort(function (a, b) { return posRank(a) - posRank(b); });
+    if (ps.length < 2) return "";
+    var A = ps[0], Z = ps[ps.length - 1], gmax = scn("gradMax");
+    var lastT = function (s) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c) === "temp" && l[c] && ms(l[c].at) && Date.now() - ms(l[c].at) < STALE_H * 3600e3) v = l[c].v; }); return v; };
+    var chain = ps.map(function (s) { var v = lastT(s); return '<span class="sn-step"><small>' + E(posLabel(s) || nm(s)) + '</small><b class="num">' + (v == null ? "—" : F(v, 1) + "°") + "</b></span>"; }).join('<span class="sn-arr">←</span>');
+    var a0 = lastT(A), z0 = lastT(Z), now = a0 != null && z0 != null ? z0 - a0 : null;
+    var byDate = {}; (X.days || []).forEach(function (d) { byDate[d.date + "|" + d.deviceId] = d; });
+    var days = [], d = R.to; for (var i = 0; i < P(); i++) { days.push(d); d = addDays(d, -1); }
+    var rows = days.map(function (dt) {
+      var da = byDate[dt + "|" + A.id], dz = byDate[dt + "|" + Z.id]; if (!da || !dz) return null;
+      var fa = sampler(ptsOf(da, A, "temp")), fz = sampler(ptsOf(dz, Z, "temp")), pk = 0, pn = 0, mx = null, mxT = 0;
+      for (var t = 0, end = dayEnd(dt); t < end; t += STEP) { var va = fa(t), vz = fz(t); if (va == null || vz == null) continue; var df = vz - va; if (t >= 43200 && t < 57600) { pk += df; pn++; } if (mx == null || df > mx) { mx = df; mxT = t; } }
+      return mx == null ? null : { d: dt, peak: pn ? pk / pn : null, max: mx, at: dayStart(dt) + mxT * 1000 };
+    }).filter(Boolean);
+    var sg = function (x) { return x == null ? "—" : '<bdi dir="ltr">' + (x > 0 ? "+" : "") + F(x, 1) + "°</bdi>"; };
+    var h = '<section class="sec"><h2>التبريد وتجانس ' + (S.sec === "t" ? "البيت" : "المشتل") + '</h2><div class="card"><div class="sn-chain">' + chain + "</div>" +
+      '<div class="grid2 sn-cool"><div class="stat' + (now != null && now > gmax ? " s-warn" : "") + '"><span class="lab">الفرق الآن بين الأول والآخر</span><span class="val num">' + sg(now) + "</span></div>";
+    if (P() === 1 && rows[0]) h += '<div class="stat' + (rows[0].peak > gmax ? " s-warn" : "") + '"><span class="lab">متوسط الفرق وقت الذروة <small>12–4م</small></span><span class="val num">' + sg(rows[0].peak) + '</span><span class="sub">أعلى فرق ' + sg(rows[0].max) + " الساعة " + tLabel(rows[0].at) + "</span></div>";
+    h += "</div>";
+    if (P() > 1 && rows.length) h += '<div class="tbl-wrap" style="margin-top:10px"><table class="sn-tbl"><thead><tr><th>التاريخ</th><th>متوسط فرق الذروة</th><th>أعلى فرق</th></tr></thead><tbody>' + rows.map(function (r) { return '<tr><td class="num">' + E(fmtShort(r.d)) + '</td><td class="num ' + (r.peak > gmax ? "sn-warn" : "") + '">' + sg(r.peak) + '</td><td class="num">' + sg(r.max) + ' <small class="muted">' + tLabel(r.at) + "</small></td></tr>"; }).join("") + "</tbody></table></div>";
+    return h + '<p class="help sn-hint" style="margin-top:8px">الفرق = حرارة آخر نقطة (جهة المراوح) ناقص أول نقطة (جهة الخلايا). ارتفاعه عن ' + F(gmax, 1) + "° أو زيادته يوماً بعد يوم مؤشر يستحق فحص الخلايا وتدفق الماء والمراوح.</p></div></section>";
+  }
+
+  /* ================= جدول القراءات المفصّل (يوم واحد، مغلق افتراضياً) ================= */
+  function rawHTML(list, ki, date) {
+    var by = {}; (X.days || []).forEach(function (d) { if (d.date === date) by[d.deviceId] = d; });
+    var B = 900, rows = {}, n = 0;
+    list.forEach(function (s, si) { var doc = by[s.id]; if (!doc) return; ptsOf(doc, s, X.kind).forEach(function (p) { var b = Math.floor(p.t / B); rows[b] = rows[b] || {}; rows[b][si] = p; n++; }); });
+    if (!n) return "";
+    var h = '<button type="button" class="otherbar sn-rawbtn" data-sact="raw" aria-expanded="' + !!X.raw + '"><span>' + (X.raw ? "▾ إخفاء" : "▸ عرض") + " كل قراءات " + E(ki.l) + ' <small class="muted num">(' + n + ")</small></span></button>";
+    if (!X.raw) return h;
+    var keys = Object.keys(rows).map(Number).sort(function (a, b) { return b - a; }), t0 = dayStart(date);
+    return h + '<div class="tbl-wrap sn-raw"><table class="sn-tbl"><thead><tr><th>الوقت</th>' + list.map(colHead).join("") + "</tr></thead><tbody>" +
+      keys.map(function (b) { return '<tr><td class="num">' + tLabel(t0 + b * B * 1000) + "</td>" + list.map(function (s, si) { var p = rows[b][si]; if (!p) return '<td class="muted">—</td>'; var st = stOf(X.kind, p.v, s.sec); return '<td class="num ' + (bad(st) ? "sn-bad" : "") + '" title="' + hm(t0 + p.t * 1000) + '">' + F(p.v, ki.d) + "</td>"; }).join("") + "</tr>"; }).join("") +
+      '</tbody></table></div><p class="help sn-hint">سطر لكل ربع ساعة؛ الوقت الدقيق لكل قراءة يظهر عند لمسها في الرسم.</p>';
+  }
+
+  /* ================= إعدادات الحساسات (للمشرف) ================= */
+  function openSet() {
+    var kpa = typeof KPA === "function" ? KPA() : 'inputmode="decimal"';
+    var nf = [["vpdMin", "VPD الأدنى المثالي", "kPa"], ["vpdMax", "VPD الأعلى المثالي", "kPa"], ["heat", "حد الإجهاد الحراري", "°C"], ["rhRisk", "رطوبة خطر الأمراض", "%"], ["dewGap", "الاقتراب من نقطة الندى", "°C"], ["gradMax", "أقصى فرق مقبول بين أول البيت وآخره", "°C"], ["dliMin", "DLI الأدنى", "mol"], ["dliMax", "DLI الأعلى", "mol"]];
+    var tf = [["msgHot", "رسالة الحرارة المرتفعة"], ["msgCold", "رسالة الحرارة المنخفضة"], ["msgHumid", "رسالة الرطوبة المرتفعة"], ["msgDry", "رسالة الجو الجاف"], ["msgOff", "رسالة الحساس المنقطع أو البطارية"]];
+    openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("إعدادات الحساسات") +
+      '<form class="fgrid" id="snSet" novalidate><p class="help full" style="margin:0">حدود الحرارة والرطوبة نفسها تُؤخذ من "الحدود المستهدفة" لكل قسم في صفحة المشرف. هذه الحدود إضافية للتحليل، والقيم المبدئية للخس الورقي.</p>' +
+      nf.map(function (x) { return '<label class="f" for="sn_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + kpa + ' id="sn_' + x[0] + '" value="' + E(sc(x[0])) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
+      '<div class="grp-h full">رسائل الحالة التي يراها العامل (اكتب الإجراء المطلوب)</div>' +
+      tf.map(function (x) { return '<label class="f full" for="sn_' + x[0] + '">' + x[1] + '<input class="in" id="sn_' + x[0] + '" value="' + E(sc(x[0])) + '"></label>'; }).join("") +
+      '</form><div class="sheet-actions"><button class="btn" type="button" data-sact="setDef">القيم المبدئية</button><button class="btn pri" type="button" data-sact="saveSet">حفظ</button></div></div></div>');
+  }
+  function saveSet(b) {
+    var o = {};
+    document.querySelectorAll("#snSet [id^=sn_]").forEach(function (el) { var k = el.id.slice(3); if (/^msg/.test(k)) o[k] = el.value.trim(); else { var n = num(el.value); if (n != null) o[k] = n; } });
+    if (o.vpdMin != null && o.vpdMax != null && o.vpdMin >= o.vpdMax) { toast("VPD الأدنى يجب أن يكون أقل من الأعلى"); return; }
+    b.disabled = true;
+    S.db.collection("config").doc("settings").set(Object.assign({}, S.settings, { sens: Object.assign({}, S.settings.sens || {}, o) }))
+      .then(function () { toast("حُفظت إعدادات الحساسات"); closeSheet(); }).catch(function (e) { b.disabled = false; toast(typeof errMsg === "function" ? errMsg(e) : "تعذّر الحفظ"); });
+  }
+
+  function statusHTML() {
+    if (X.err) return '<div class="banner warn"><span>' + E(X.err) + "</span></div>";
+    var st = X.status; if (!st) return "";
+    var t = ms(st.lastRun), late = t && Date.now() - t > 45 * 60000;
+    if (st.ok === false && st.error) return '<div class="banner warn"><span><b>تنبيه من الجامع:</b> ' + E(String(st.error).slice(0, 160)) + " · آخر محاولة " + ago(t) + "</span></div>";
+    if (late) return '<div class="banner warn"><span>لم تصل قراءات جديدة ' + ago(t) + ". تأكد أن الجامع يعمل واشتراك Tuya مفعّل.</span></div>";
+    return '<p class="muted sn-status"><span class="sn-dot"></span>التحديث تلقائي كل 15 دقيقة · آخر تحديث ' + ago(t) + "</p>";
+  }
+
+  function cardHTML(s) {
+    var last = s.last || {}, codes = Object.keys(last), seen = ms(s.lastSeen), stale = seen && Date.now() - seen > STALE_H * 3600e3;
+    var anyBad = false, batt = null, vals = [];
+    codes.sort(function (a, b) { var ka = ORDER.indexOf(kindOf(a)), kb = ORDER.indexOf(kindOf(b)); return (ka < 0 ? 99 : ka) - (kb < 0 ? 99 : kb); }).forEach(function (c) {
+      var k = kindOf(c), v = last[c] && last[c].v; if (v == null) return;
+      if (k === "batt") { batt = v; return; }
+      var ki = kindInfo(k, s), st = stOf(k, v, s.sec); if (bad(st)) anyBad = true;
+      vals.push('<span class="sn-v' + (bad(st) ? " bad" : "") + '"><b class="num">' + F(v, ki.d) + "</b><small>" + E(ki.u) + "</small><i>" + E(ki.l) + "</i></span>");
+    });
+    var pl = posLabel(s), where = s.loc || (pl && pl !== nm(s) ? pl : "") || (secs(s.sec).length ? secs(s.sec).map(function (x) { return x === "g" ? "المعدات" : SECS[x] ? SECS[x].name : x; }).join(" + ") : "");
+    return '<div class="stat sn-card' + (anyBad ? " s-bad" : stale ? " s-warn" : "") + '">' +
+      '<div class="sn-h"><i style="background:' + colorOf(s) + '"></i><b dir="auto">' + E(nm(s)) + "</b></div>" +
+      '<span class="sub">' + (where ? E(where) : '<span class="pill n">لم يُحدَّد الموقع</span>') + "</span>" +
+      '<div class="sn-vals">' + (vals.join("") || '<span class="muted">لا قراءات</span>') + "</div>" +
+      '<span class="sub' + (stale ? " sn-stale" : "") + '">' + (seen ? (stale ? "آخر قراءة " : "") + ago(seen) : "—") +
+      (batt != null ? ' · <span class="' + (batt < 20 ? "sn-low" : "") + '">🔋 ' + F(batt) + "%</span>" : "") + "</span></div>";
+  }
+
+  function summaryHTML(list, ki, R) {
+    var dates = [], d = R.to; for (var i = 0; i < P(); i++) { dates.push(d); d = typeof addDays === "function" ? addDays(d, -1) : d; }
+    var by = {}; (X.days || []).forEach(function (doc) { by[doc.date + "|" + doc.deviceId] = doc; });
+    var cell = function (s, date) {
+      var doc = by[date + "|" + s.id]; if (!doc || !secOk(doc.sec != null && doc.sec !== "" ? doc.sec : s.sec)) return '<td class="muted">—</td>';
+      var mn = null, mx = null, sm = 0, n = 0;
+      codesFor(s, X.kind).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
+      if (!n) return '<td class="muted">—</td>';
+      var b1 = bad(stOf(X.kind, mn, s.sec)), b2 = bad(stOf(X.kind, mx, s.sec));
+      return '<td><span class="num"><span class="' + (b1 ? "sn-bad" : "") + '">' + F(mn, ki.d) + '</span> – <span class="' + (b2 ? "sn-bad" : "") + '">' + F(mx, ki.d) + '</span></span><small class="sn-avg">متوسط <b class="num">' + F(sm / n, ki.d) + "</b> · " + n + " قراءة</small></td>";
+    };
+    var rows = dates.filter(function (dt) { return list.some(function (s) { return by[dt + "|" + s.id]; }); });
+    if (!rows.length) return '<section class="sec"><div class="empty">لا توجد قراءات ' + E(ki.l) + " في هذه الفترة.</div></section>";
+    return '<section class="sec"><h2>الملخص اليومي · ' + E(ki.l) + (ki.u ? " (" + E(ki.u) + ")" : "") + '</h2><p class="muted sn-hint">الأدنى – الأعلى، والمتوسط وعدد القراءات لكل يوم.</p><div class="tbl-wrap"><table class="sn-tbl"><thead><tr><th>التاريخ</th>' +
+      list.map(colHead).join("") + "</tr></thead><tbody>" +
+      rows.map(function (dt) { return '<tr><td class="num">' + E(typeof fmtShort === "function" ? fmtShort(dt) : dt) + "</td>" + list.map(function (s) { return cell(s, dt); }).join("") + "</tr>"; }).join("") +
+      "</tbody></table></div></section>";
+  }
+
+  /* ================= الرسم ================= */
+  function bind(root) {
+    var el = root && root.querySelector("#snChart"); if (!el) return;
+    var list = sensorList().filter(function (s) { return codesFor(s, X.kind).length && !X.off[s.id]; });
+    var ki = kindInfo(X.kind, list[0]);
+    var series = list.map(function (s) { return { s: s, name: nm(s), col: colorOf(s), pts: seriesFor(s, X.kind), man: manualFor(s, X.kind) }; })
+      .filter(function (sr) { return sr.pts.length || sr.man.length; });
+    drawChart(el, series, ki);
+  }
+  function drawChart(el, series, ki) {
+    if (!series.length) { el.innerHTML = '<div class="muted" style="font-size:13px;text-align:center;padding:16px">لا توجد قراءات في هذه الفترة' + (Object.keys(X.off).length ? " (أو كل الحساسات مخفية)" : "") + "</div>"; return; }
+    var R = rangeOf(), t0 = dayStart(R.from), t1 = dayStart(R.to) + 864e5;
+    var W = 420, H = 250, L = 34, Rr = 8, T = 10, B = 26;
+    var all = []; series.forEach(function (sr) { all = all.concat(sr.pts, sr.man); });
+    var ys = all.map(function (p) { return p.y; }), lo = null, hi = null, c = KINDS[X.kind] && KINDS[X.kind].c;
+    if (c && typeof cfg === "function" && CHECK[c]) { lo = num(cfg(CHECK[c][0])); hi = num(cfg(CHECK[c][1])); }
+    var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
+    // نُظهر نطاق الحدود فقط إن كان قريباً من القراءات، كي لا تنضغط الخطوط
+    var span0 = Math.max(1, ymax - ymin);
+    if (lo != null && lo > ymin - span0 * 1.5) ymin = Math.min(ymin, lo);
+    if (hi != null && hi < ymax + span0 * 1.5) ymax = Math.max(ymax, hi);
+    var padv = (ymax - ymin) * 0.12 || 1; ymin -= padv; ymax += padv; if (Math.min.apply(null, ys) >= 0 && ymin < 0) ymin = 0;
+    var X_ = function (t) { return L + (t - t0) / (t1 - t0) * (W - L - Rr); }, Y = function (y) { return T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B); };
+    var g = "", dec = ki.d;
+    for (var i = 0; i <= 4; i++) { var v = ymin + (ymax - ymin) * i / 4; g += '<line class="gl" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '"/><text class="ax" x="' + (L - 6) + '" y="' + (Y(v) + 4).toFixed(1) + '" text-anchor="end">' + F(v, (ymax - ymin) < 6 ? 1 : 0) + "</text>"; }
+    var band = "";
+    if (lo != null && hi != null) { var yb1 = Math.max(T, Y(Math.min(hi, ymax))), yb2 = Math.min(H - B, Y(Math.max(lo, ymin))); if (yb2 > yb1) band = '<rect x="' + L + '" width="' + (W - L - Rr) + '" y="' + yb1.toFixed(1) + '" height="' + (yb2 - yb1).toFixed(1) + '" fill="var(--band)"/>'; }
+    // محور الوقت
+    var xs = "", ticks = [];
+    if (P() === 1) { for (var hh = 0; hh <= 24; hh += 3) ticks.push([t0 + hh * 3600e3, hh % 6 ? "" : p2(hh) + ":00"]); }
+    else { var step = P() <= 7 ? 1 : 5; for (var dd = 0; dd <= P(); dd += step) { var tt = t0 + dd * 864e5, dk = dkey(tt); ticks.push([tt, dk.slice(8, 10) + "/" + dk.slice(5, 7)]); } }
+    ticks.forEach(function (k, i) { var x = X_(k[0]), an = i === 0 ? "start" : i === ticks.length - 1 ? "end" : "middle"; xs += '<line class="gl" x1="' + x.toFixed(1) + '" x2="' + x.toFixed(1) + '" y1="' + T + '" y2="' + (H - B) + '" stroke-dasharray="2 4"/><text class="ax" x="' + x.toFixed(1) + '" y="' + (H - 9) + '" text-anchor="' + an + '">' + k[1] + "</text>"; });
+    var now = Date.now(), nowL = now > t0 && now < t1 ? '<line x1="' + X_(now).toFixed(1) + '" x2="' + X_(now).toFixed(1) + '" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--muted)" stroke-width="1" opacity=".5"/>' : "";
+    var GAP = P() === 1 ? 3 * 3600e3 : 6 * 3600e3, many = all.length > 160;
+    var lines = series.map(function (sr) {
+      var path = "", prev = null;
+      sr.pts.forEach(function (p) { path += (prev && p.t - prev.t <= GAP ? "L" : "M") + X_(p.t).toFixed(1) + " " + Y(p.y).toFixed(1) + " "; prev = p; });
+      var dots = many ? "" : sr.pts.map(function (p) { return '<circle cx="' + X_(p.t).toFixed(1) + '" cy="' + Y(p.y).toFixed(1) + '" r="2.6" fill="' + (bad(stOf(X.kind, p.y, sr.s.sec)) ? "var(--bad)" : sr.col) + '"/>'; }).join("");
+      var man = sr.man.map(function (p) { return '<rect x="' + (X_(p.t) - 4).toFixed(1) + '" y="' + (Y(p.y) - 4).toFixed(1) + '" width="8" height="8" fill="var(--surface)" stroke="' + sr.col + '" stroke-width="2"/>'; }).join("");
+      return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="' + (many ? 1.6 : 2) + '" stroke-linejoin="round" stroke-linecap="round"/>' + dots + man;
+    }).join("");
+    var legend = '<div class="legend sn-legend">' + series.map(function (sr) { return '<span><i style="background:' + sr.col + '"></i><bdi>' + E(sr.name) + "</bdi></span>"; }).join("") + "</div>";
+    el.innerHTML = legend + '<div class="sn-plot"><svg viewBox="0 0 ' + W + " " + H + '" role="img" aria-label="' + E(ki.l) + '">' + band + g + xs + nowL + lines +
+      '<line class="hov" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--ink)" stroke-width="1" visibility="hidden"/><g class="hovd"></g></svg><div class="sn-tip" hidden></div></div>';
+    var svg = el.querySelector("svg"), tip = el.querySelector(".sn-tip"), hv = svg.querySelector(".hov"), hd = svg.querySelector(".hovd");
+    function near(pts, t) { // أقرب قراءة (بحث ثنائي)
+      var a = 0, b = pts.length - 1; if (b < 0) return null;
+      while (b - a > 1) { var m = (a + b) >> 1; if (pts[m].t < t) a = m; else b = m; }
+      var q = Math.abs(pts[a].t - t) <= Math.abs(pts[b].t - t) ? pts[a] : pts[b];
+      return Math.abs(q.t - t) <= GAP ? q : null;
+    }
+    function mv(ev) {
+      var r = svg.getBoundingClientRect(), cx = ev.touches ? ev.touches[0].clientX : ev.clientX;
+      var x = Math.max(L, Math.min(W - Rr, (cx - r.left) / r.width * W)), t = t0 + (x - L) / (W - L - Rr) * (t1 - t0);
+      var best = null, rows = [], dots = "";
+      series.forEach(function (sr) { var q = near(sr.pts, t); if (q && (!best || Math.abs(q.t - t) < Math.abs(best.t - t))) best = q; });
+      if (!best) { tip.hidden = true; hv.setAttribute("visibility", "hidden"); hd.innerHTML = ""; return; }
+      series.forEach(function (sr) {
+        var q = near(sr.pts, best.t); if (!q) return;
+        var st = stOf(X.kind, q.y, sr.s.sec);
+        rows.push('<div><i style="background:' + sr.col + '"></i><bdi>' + E(sr.name) + '</bdi> <b class="num' + (bad(st) ? " sn-bad" : "") + '">' + F(q.y, ki.d) + "</b><bdi>" + E(ki.u) + "</bdi>" + (Math.abs(q.t - best.t) > 5 * 60000 ? ' <small class="num">' + tLabel(q.t) + "</small>" : "") + "</div>");
+        dots += '<circle cx="' + X_(q.t).toFixed(1) + '" cy="' + Y(q.y).toFixed(1) + '" r="5" fill="' + sr.col + '" stroke="var(--surface)" stroke-width="2"/>';
+      });
+      hv.setAttribute("x1", X_(best.t)); hv.setAttribute("x2", X_(best.t)); hv.setAttribute("visibility", "visible"); hd.innerHTML = dots;
+      tip.innerHTML = '<div class="sn-tt">' + (P() === 1 ? "" : E(typeof fmtShort === "function" ? fmtShort(dkey(best.t)) : dkey(best.t)) + " · ") + '<span class="num">' + tLabel(best.t) + "</span></div>" + rows.join("");
+      tip.hidden = false;
+      var px = X_(best.t) / W * r.width, tw = tip.offsetWidth || 160;
+      tip.style.left = Math.max(4, Math.min(r.width - tw - 4, px - tw / 2)) + "px";
+    }
+    svg.addEventListener("mousemove", mv);
+    svg.addEventListener("touchstart", mv, { passive: true });
+    svg.addEventListener("touchmove", mv, { passive: true });
+    svg.addEventListener("mouseleave", function () { tip.hidden = true; hv.setAttribute("visibility", "hidden"); hd.innerHTML = ""; });
+  }
+
+  /* ================= التصدير ================= */
+  function exportX(btn) {
+    if (!window.XLSX || !X.days) { if (typeof toast === "function") toast("التصدير غير متاح الآن، تحقق من الإنترنت"); return; }
+    var R = rangeOf(), raw = [["التاريخ", "الوقت", "الحساس", "القسم", "الموقع", "القياس", "القيمة", "الوحدة"]], sumr = [["التاريخ", "الحساس", "القياس", "الأدنى", "المتوسط", "الأعلى", "عدد القراءات", "الوحدة"]];
+    var rows = [];
+    X.days.forEach(function (d) {
+      var s = X.sensors[d.deviceId] || { id: d.deviceId, name: d.deviceId, measures: {} }, sec = d.sec != null && d.sec !== "" ? d.sec : s.sec;
+      if (s.enabled === false || !secOk(sec)) return;
+      var secName = secs(sec).map(function (x) { return x === "g" ? "المعدات" : SECS[x] ? SECS[x].name : x; }).join(" + "), loc = d.loc != null && d.loc !== "" ? d.loc : (s.loc || posLabel(s) || ""), t0 = dayStart(d.date);
+      Object.keys(d.p || {}).forEach(function (c) {
+        var ki = kindInfo(kindOf(c), s), u = (s.measures && s.measures[c] && s.measures[c].unit) || ki.u;
+        (d.p[c] || []).forEach(function (p) { rows.push([t0 + p.t * 1000, d.date, hm(t0 + p.t * 1000), nm(s), secName, loc, ki.l, p.v, u]); });
+        var q = (d.s || {})[c]; if (q && q.n) sumr.push([d.date, nm(s), ki.l, q.min, Math.round(q.sum / q.n * 100) / 100, q.max, q.n, u]);
+      });
+    });
+    rows.sort(function (a, b) { return a[0] - b[0]; }).forEach(function (r) { raw.push(r.slice(1)); });
+    var wb = XLSX.utils.book_new(); wb.Workbook = { Views: [{ RTL: true }] };
+    [["القراءات", raw], ["الملخص اليومي", sumr]].forEach(function (x) { var ws = XLSX.utils.aoa_to_sheet(x[1]); ws["!cols"] = x[1][0].map(function () { return { wch: 16 }; }); XLSX.utils.book_append_sheet(wb, ws, x[0]); });
+    XLSX.writeFile(wb, "GREEN-SIDE-SENSORS-" + (S.sec === "t" ? "TOWERS" : "NURSERY") + "-" + R.from + "-" + R.to + ".xlsx");
+  }
+
+  /* ================= الأزرار ================= */
+  document.addEventListener("click", function (ev) {
+    var b = ev.target.closest && ev.target.closest("[data-sact]"); if (!b) return;
+    var a = b.getAttribute("data-sact");
+    if (a === "period") { X.period = +b.getAttribute("data-n") || 1; lsS("gs_sens_period", X.period); }
+    else if (a === "kind") { X.kind = b.getAttribute("data-k"); lsS("gs_sens_kind", X.kind); }
+    else if (a === "toggle") { var id = b.getAttribute("data-id"); if (X.off[id]) delete X.off[id]; else X.off[id] = 1; lsS("gs_sens_off", JSON.stringify(X.off)); }
+    else if (a === "refresh") { X.key = ""; loadDays(true); if (typeof toast === "function") toast("جارٍ تحديث القراءات"); }
+    else if (a === "export") { exportX(b); return; }
+    else if (a === "raw") { X.raw = !X.raw; }
+    else if (a === "set") { openSet(); return; }
+    else if (a === "saveSet") { saveSet(b); return; }
+    else if (a === "setDef") { Object.keys(SDEF).forEach(function (k) { var el = document.getElementById("sn_" + k); if (el) el.value = SDEF[k]; }); return; }
+    if (typeof render === "function") render(true);
+  });
+
+  return { view: view, bind: bind, start: start, _x: X };
+})();
