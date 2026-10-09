@@ -415,3 +415,18 @@ html.kp-open .wrap{padding-bottom:320px}
 .sn-raw thead th{position:sticky;top:0}
 .sn-an td:first-child,.sn-an th:first-child{position:sticky;right:0;background:var(--surface);z-index:1;box-shadow:-1px 0 0 var(--line)}
 .sn-an th:first-child{background:var(--surface-2)}
+.sn-raw td.sn-real{font-weight:700}
+.sn-carry{color:var(--muted);opacity:.6;font-weight:400}
+.sn-notes{list-style:none;margin:0;padding:0;font-size:13px}
+.sn-notes li{display:flex;flex-wrap:wrap;align-items:baseline;gap:3px;padding:3px 0}
+.sn-notes li i{width:9px;height:9px;border-radius:2px;display:inline-block;margin-left:3px}
+.sn-heat{max-height:520px;overflow:auto;margin-top:8px}
+.sn-heat thead th{position:sticky;top:0;z-index:1}
+.sn-heat td.sn-hc{text-align:center;font-weight:600;color:var(--ink)}
+.sn-heat td.sn-hbad{box-shadow:inset 0 0 0 2px var(--bad)}
+
+/* ===== v2.4.0 ===== */
+/* خطوط الرسوم في التقارير: ألوان واضحة على الخلفية الفاتحة والداكنة */
+:root{--ln1:#1C7ED6;--ln2:#E8590C;--ln3:#7048E8}
+@media (prefers-color-scheme: dark){:root{--ln1:#4DABF7;--ln2:#FFA94D;--ln3:#B197FC}}
+.tx-warn{color:var(--warn)}

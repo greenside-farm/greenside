@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.2.0";
+var APP_VERSION = "2.4.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -13,6 +13,7 @@ var DEF = {
   nMix: 1, nEcph: 3, nTemp: 5, nLight: 5, nIrr: 3, nPhoto: 1, nNote: 1, pumpL: 20, tankL: 25, zoneNote: "",
   atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, capR: 3000, capL: 3000, daysToTransplant: 21,
   levelUnit: "L", lPerCm: 10, useLearned: true, noteCats: [], atcChecked: "",
+  caFirst: 7, caEvery: 7, caUntil: 42, insEvery: 0, fungEvery: 0,
   doses: [2.5, 5, 7.5, 10, 12.5], fullDose: 12.5,
   sched: { n: { mix: ["08:00"], irr: ["08:00", "12:00", "16:00"], temp: ["08:00", "10:00", "12:00", "14:00", "16:00"], light: ["08:00", "10:00", "12:00", "14:00", "16:00"], note: ["16:00"], photo: ["16:00"] }, t: {} },
   formula: { name: "خس ليما — مرحلة N (المشتل)", fullA: 10, fullB: 10, ecFull: 1330, ecRaw: 400, date: "2026-10-07" }
@@ -59,7 +60,8 @@ var IC = {
   sup: '<path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   bell: '<path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 20a2 2 0 0 0 4 0"/>',
   cam: '<path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/>',
-  sens: '<path d="M11 13.8V5a2 2 0 0 0-4 0v8.8a3.6 3.6 0 1 0 4 0z"/><path d="M9 9v6"/><path d="M15 8.5a4.5 4.5 0 0 1 0 7M18 6a8 8 0 0 1 0 12"/>'
+  sens: '<path d="M11 13.8V5a2 2 0 0 0-4 0v8.8a3.6 3.6 0 1 0 4 0z"/><path d="M9 9v6"/><path d="M15 8.5a4.5 4.5 0 0 1 0 7M18 6a8 8 0 0 1 0 12"/>',
+  spray: '<path d="M9 8h6v12a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1z"/><path d="M10 8V5h4v3"/><path d="M14 5h3l2-2"/><path d="M19 7h2M19 10l1.5 1M19 4.5l1.5-1"/>'
 };
 function ico(k, w) { w = w || 24; return '<svg width="' + w + '" height="' + w + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (IC[k] || IC.note) + "</svg>"; }
 
@@ -99,6 +101,21 @@ function noteCats() { var c = (S.settings.noteCats || []).filter(function (x) { 
 function noteHas(v) { return v.cat !== NOTE_NONE; }
 function noteOther(v) { return v.cat === NOTE_OTHER; }
 var NSIDE_LOC = ["كل المشتل"].concat(SIDES);
+/* الرش: تغذية ورقية بالكالسيوم أو مبيد وقائي/علاجي. فترة الأمان (PHI) تمنع الحصاد قبل انقضائها */
+var SPRAY_K = ["رش كالسيوم (تغذية ورقية)", "مبيد حشري وقائي", "مبيد فطري وقائي", "مبيد علاجي (حشري أو فطري)"];
+function isPest(v) { return (v || {}).kind && v.kind !== SPRAY_K[0]; }
+function sprayFields(zones) {
+  return [
+    { k: "time", l: "وقت الرش", t: "t", req: 1, w: "full" },
+    { k: "kind", l: "نوع الرش", t: "s", o: SPRAY_K, req: 1, w: "full" },
+    { k: "product", l: "اسم المنتج", t: "x", req: 1, w: "full" },
+    { k: "ai", l: "المادة الفعالة", t: "x", w: "full", show: isPest },
+    { k: "dose", l: "الجرعة", t: "x", w: "full", ph: "مثال: 2 مل لكل لتر" },
+    { k: "vol", l: "كمية المحلول المرشوش", t: "n", u: "لتر" },
+    { k: "zone", l: "المكان", t: "s", o: zones },
+    { k: "phi", l: "فترة الأمان قبل الحصاد", t: "n", u: "يوم", show: isPest },
+    MEMO];
+}
 /* split: 1 → a new record shows the right and left sides on one screen and saves one record per filled side (fields marked ps).
    edit: 1 → field shown only when editing a saved record. blk → fields drawn together in one box. */
 var TYPES_N = {
@@ -142,6 +159,7 @@ var TYPES_N = {
     { k: "crop", l: "الصنف / رقم الصواني", t: "x", show: noteHas },
     { k: "text", l: "وصف الملاحظة", t: "ta", req: 1, w: "full", show: noteHas },
     { k: "action", l: "الإجراء المتخذ (اسم المبيد والجرعة إن وجد)", t: "ta", w: "full", show: noteHas }] },
+  spray: { label: "الرش والوقاية", short: "الرش", desc: "كالسيوم ورقي، مبيد حشري أو فطري وقائي، أو علاجي", fields: sprayFields(NSIDE_LOC) },
   photo: { label: "التصوير اليومي", short: "التصوير", desc: "صورة لكل جهة في شاشة واحدة", target: "nPhoto", photo: "req", split: 1, fields: [
     { k: "time", l: "الوقت", t: "t", req: 1, w: "full" },
     { k: "side", l: "الجهة", t: "s", o: SIDES, req: 1, w: "full", edit: 1 },
@@ -215,7 +233,8 @@ var TYPES_T = {
     { k: "sev", l: "الشدة", t: "s", o: ["خفيفة", "متوسطة", "شديدة"], show: noteHas },
     { k: "crop", l: "الصنف / رقم البرج", t: "x", show: noteHas },
     { k: "text", l: "وصف الملاحظة", t: "ta", req: 1, w: "full", show: noteHas },
-    { k: "action", l: "الإجراء المتخذ (اسم المبيد والجرعة إن وجد)", t: "ta", w: "full", show: noteHas }] }
+    { k: "action", l: "الإجراء المتخذ (اسم المبيد والجرعة إن وجد)", t: "ta", w: "full", show: noteHas }] },
+  spray: { label: "الرش والوقاية", short: "الرش", desc: "كالسيوم ورقي، مبيد حشري أو فطري وقائي، أو علاجي", fields: sprayFields(ZONE_T) }
 };
 var TYPES_G = {
   batt: { label: "شحن بطارية مضخة الري", short: "شحن البطارية", fields: [
@@ -230,7 +249,7 @@ var TYPES_G = {
     { k: "result", l: "النتيجة", t: "s", o: ["ناجحة", "تحتاج إعادة", "الجهاز يحتاج صيانة أو استبدال"], req: 1, w: "full" },
     MEMO] }
 };
-var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "note", "photo"], t: ["refill", "ecph", "temp", "light", "pump", "photo", "note", "xplant", "harvest", "mix"] };
+var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "note", "spray", "photo"], t: ["refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
 var TASKS = { n: [["mix", "nMix"], ["temp", "nTemp"], ["irr", "nIrr"], ["light", "nLight"], ["note", "nNote"], ["photo", "nPhoto"]],
   t: [["refill", "nRefill"], ["ecph", "nEcph"], ["temp", "nTemp"], ["light", "nLight"], ["pump", "nPump"], ["photo", "nPhoto"]] };
 var SHARED = ["mix", "ecph", "note", "photo"];
@@ -481,7 +500,7 @@ function onRole() {
     unsubAll.push(db.collection("recipes").orderBy("ts", "desc").limit(300).onSnapshot(function (q) { S.recipes = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); render(); }, logErr));
     unsubAll.push(db.collection("entries").where("type", "==", "note").where("open", "==", true).onSnapshot(function (q) { S.openNotes = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); render(); }, logErr));
     subWindowed(["mix", "refill"], function (q) { S.hist = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
-    subWindowed(["sow", "xplant", "batt", "cal", "harvest"], function (q) { S.meta = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
+    subWindowed(["sow", "xplant", "batt", "cal", "harvest", "spray"], function (q) { S.meta = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
     subDay();
   }
   render();
@@ -518,7 +537,7 @@ function signoffOf(sec) { return S.signoff[sec] || (sec === "n" ? S.signoff.n0 :
 /* ================= top bar & tabs ================= */
 function bindTop() {
   var dp = $("datePick"); dp.value = S.date;
-  function go(d) { S.date = d; dp.value = d; subDay(); render(true); }
+  function go(d) { S.date = d; dp.value = d; subDay(); if (S.tab === "rep") loadReport(); render(true); }
   dp.addEventListener("change", function () { if (dp.value) go(dp.value); });
   $("prevDay").onclick = function () { go(addDays(S.date, -1)); };
   $("nextDay").onclick = function () { go(addDays(S.date, 1)); };
@@ -590,7 +609,7 @@ function todayView() {
   var sec = S.sec, E = viewEntries(), SE = secEntries(S.entries, sec), isToday = S.date === todayStr(), h = "";
   var mt = tasksFor(sec, S.entries), mp = mt.need ? Math.min(100, mt.done / mt.need * 100) : 100;
   if (mt.need) h += '<section class="sec"><button class="mybar" type="button" data-act="goTasks"><span class="mb-t">' + SECS[sec].icon + " مهام " + SECS[sec].name + ': <b class="num">' + mt.done + " / " + mt.need + "</b>" + (mt.left ? " · متبقي <b class=\"num\">" + mt.left + "</b>" : " · اكتملت ✓") + '</span><span class="muted">التفاصيل ‹</span><span class="bar"><i class="' + (mp >= 100 ? "full" : "") + '" style="width:' + mp + '%"></i></span></button></section>';
-  var alerts = equipAlerts();
+  var alerts = equipAlerts().concat(sprayAlerts(sec));
   if (alerts.length) h += '<section class="sec alerts">' + alerts.join("") + "</section>";
   var ecE = lastOf(SE, function (e) { return e.v && num(e.v.ec) != null; }), phE = lastOf(SE, function (e) { return e.v && num(e.v.ph) != null; }), wtE = lastOf(SE, function (e) { return e.v && num(e.v.wt) != null && e.type !== "temp"; });
   var airE = lastOf(SE, function (e) { return e.type === "temp" && metric(e.v, "air") != null; }), lE = lastOf(SE, function (e) { return e.type === "light" && metric(e.v, "lux") != null; });
@@ -617,6 +636,7 @@ function todayView() {
     h += '<div class="chk-row"><span>' + typeDef(x[0], sec).label + '</span><span class="num" style="font-size:13px">' + done + " / " + need + "</span>" + (chips ? '<div class="tchips">' + chips + "</div>" : "") + '<div class="bar"><i class="' + (p >= 100 ? "full" : "") + '" style="width:' + p + '%"></i></div></div>';
   });
   h += "</div></section>";
+  h += sprayCard(sec);
   h += equipCard();
   h += '<section class="sec"><button class="btn block" type="button" data-act="gallery">' + ico("gallery", 18) + "&nbsp; صور النمو · " + SECS[sec].name + "</button></section>";
   var so = signoffOf(sec), pend = SE.filter(function (e) { return !e.review; }).length, flags = SE.filter(function (e) { return e.review && e.review.s === "flag"; }).length;
@@ -697,6 +717,51 @@ function equipAlerts() {
   var st = computeStock();
   ["A", "B"].forEach(function (tk) { var o = st[tk]; if (o && o.pct < 15) out.push('<div class="alert warn"><span class="tx"><b>عبوة ' + tk + " المركزة قاربت على النفاد:</b> المتبقي تقريباً " + f(Math.max(0, o.left)) + " مل.</span></div>"); });
   return out;
+}
+/* ---------- الرش: مواعيد الكالسيوم بعد النقل للأبراج، والرش الوقائي، وفترة الأمان ---------- */
+function sprays(sec, ki) { return S.meta.filter(function (e) { return e.type === "spray" && secOf(e) === sec && (ki == null || (e.v || {}).kind === SPRAY_K[ki]); }); }
+function sprayPlan(sec) {
+  var today = todayStr(), out = { ca: null, prev: [], phi: [] };
+  if (sec === "t") {
+    var caF = num(cfg("caFirst")) || 0, caE = num(cfg("caEvery")) || 0, caU = num(cfg("caUntil")) || 0, lastCa = lastOf(sprays("t", 0), function () { return true; });
+    var batches = S.meta.filter(function (e) { return e.type === "xplant" && daysBetween(e.date, today) >= 0 && (!caU || daysBetween(e.date, today) <= caU); });
+    if (caE > 0 && batches.length) {
+      var due = null, list = [];
+      batches.forEach(function (b) {
+        var d = lastCa && lastCa.date >= b.date ? addDays(lastCa.date, caE) : addDays(b.date, caF);
+        if (!due || d < due) due = d; if (d <= today) list.push(b);
+      });
+      out.ca = { due: due, list: list, last: lastCa };
+    }
+  }
+  [[1, "insEvery", "الرش الوقائي الحشري"], [2, "fungEvery", "الرش الوقائي الفطري"]].forEach(function (x) {
+    var ev = num(cfg(x[1])) || 0; if (!ev) return;
+    var last = lastOf(sprays(sec, x[0]), function () { return true; });
+    out.prev.push({ k: x[0], name: x[2], every: ev, last: last, due: last ? addDays(last.date, ev) : today });
+  });
+  if (sec === "t") sprays("t").forEach(function (e) { var p = num((e.v || {}).phi); if (isPest(e.v) && p > 0 && addDays(e.date, p) > today) out.phi.push({ e: e, until: addDays(e.date, p) }); });
+  return out;
+}
+function sprayAlerts(sec) {
+  var P = sprayPlan(sec), today = todayStr(), out = [], btn = canAdd() ? '<button class="btn sm pri" data-act="new" data-type="spray">تسجيل الرش</button>' : "";
+  if (P.ca && P.ca.list.length) out.push('<div class="alert warn">' + ico("spray", 20) + '<span class="tx"><b>حان موعد رش الكالسيوم للأبراج</b> · ' + P.ca.list.map(function (b) { return "نقل " + fmtShort(b.date) + " (منذ " + daysBetween(b.date, today) + " يوم" + (b.v && b.v.zone ? "، " + esc(b.v.zone) : "") + ")"; }).join(" · ") + "</span>" + btn + "</div>");
+  P.prev.forEach(function (x) { if (x.due <= today) out.push('<div class="alert warn">' + ico("spray", 20) + '<span class="tx"><b>حان موعد ' + x.name + "</b> · " + (x.last ? "آخر رش قبل " + daysBetween(x.last.date, today) + " يوم (" + esc(x.last.v.product || "") + ")" : "لم يُسجَّل رش بعد") + "</span>" + btn + "</div>"); });
+  P.phi.forEach(function (x) { out.push('<div class="alert bad">' + ico("spray", 20) + '<span class="tx"><b>فترة أمان: لا تحصد قبل ' + fmtShort(x.until) + "</b> · " + esc(x.e.v.product || "") + " رُش " + fmtShort(x.e.date) + (x.e.v.zone ? " · " + esc(x.e.v.zone) : "") + "</span></div>"); });
+  return out;
+}
+function sprayCard(sec) {
+  var P = sprayPlan(sec), today = todayStr(), rows = [];
+  var when = function (d) { var n = daysBetween(today, d); return n <= 0 ? '<b class="tx-warn">مستحق الآن</b>' : "بعد " + n + " يوم (" + fmtShort(d) + ")"; };
+  if (sec === "t") {
+    var ca = P.ca, lastCa = lastOf(sprays("t", 0), function () { return true; });
+    rows.push(["رش الكالسيوم", (lastCa ? "آخر رش " + fmtShort(lastCa.date) + " · " : "") + (ca ? "القادم " + when(ca.due) : "لا توجد دفعات منقولة خلال " + f(num(cfg("caUntil"))) + " يوماً") + " · أول رش بعد النقل بـ " + f(num(cfg("caFirst"))) + " يوم ثم كل " + f(num(cfg("caEvery"))) + " يوم"]);
+  }
+  P.prev.forEach(function (x) { rows.push([x.name, (x.last ? "آخر رش " + fmtShort(x.last.date) + " (" + esc(x.last.v.product || "") + ") · " : "") + "القادم " + when(x.due) + " · كل " + x.every + " يوم"]); });
+  if (!rows.length && !isSup()) return "";
+  var h = '<section class="sec"><div class="card"><div class="sec-h"><h3>الرش والوقاية</h3>' + (canAdd() ? '<button class="btn sm" data-act="new" data-type="spray">تسجيل رش</button>' : "") + "</div>";
+  h += rows.map(function (r) { return '<div class="eq-row"><span class="e-ic">' + ico("spray", 19) + '</span><span class="tx"><b>' + r[0] + "</b><span>" + r[1] + "</span></span></div>"; }).join("");
+  if (!P.prev.length && isSup()) h += '<p class="help" style="margin:6px 0 0">لتفعيل تذكير الرش الوقائي الحشري أو الفطري، حدّد عدد الأيام في "إعدادات عامة" بصفحة المشرف حسب توصية المنتج والمختص.</p>';
+  return h + "</div></section>";
 }
 function equipCard() {
   var bi = battInfo(), c = lastCal(), h = '<section class="sec"><div class="card"><h3>المعدات</h3>', bt, bb;
@@ -1198,9 +1263,9 @@ function openFlag(id) {
 /* ================= reports ================= */
 function loadReport() {
   S.rep = { loading: true }; if (S.tab === "rep") render(true);
-  var start = S.repDays === 1 ? todayStr() : addDays(todayStr(), -(S.repDays - 1));
-  S.db.collection("entries").where("date", ">=", start).get().then(function (q) {
-    S.rep = { start: start, all: q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.date + a.time).localeCompare(b.date + b.time); }) };
+  var end = S.date, start = addDays(end, -(S.repDays - 1));
+  S.db.collection("entries").where("date", ">=", start).where("date", "<=", end).get().then(function (q) {
+    S.rep = { start: start, end: end, all: q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.date + a.time).localeCompare(b.date + b.time); }) };
     render(true);
   }).catch(function () { S.rep = { err: 1 }; render(true); });
 }
@@ -1282,7 +1347,7 @@ function sideReport(rows) {
 function repView() {
   var sec = S.sec;
   var h = '<section class="sec"><div class="sec-h"><h2>التقارير · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2><button class="btn sm" data-act="refreshRep">تحديث</button></div>' +
-    '<div class="seg" role="group" aria-label="الفترة">' + [[1, "اليوم"], [7, "7 أيام"], [30, "30 يوم"], [90, "90 يوم"]].map(function (p) { return '<button type="button" data-act="repDays" data-n="' + p[0] + '" aria-pressed="' + (S.repDays === p[0]) + '">' + p[1] + "</button>"; }).join("") + "</div></section>";
+    '<div class="seg" role="group" aria-label="الفترة">' + [[1, S.date === todayStr() ? "اليوم" : fmtShort(S.date)], [7, "7 أيام"], [30, "30 يوم"], [90, "90 يوم"]].map(function (p) { return '<button type="button" data-act="repDays" data-n="' + p[0] + '" aria-pressed="' + (S.repDays === p[0]) + '">' + p[1] + "</button>"; }).join("") + '</div><p class="muted" style="margin:0;font-size:12.5px">الفترة: ' + (S.repDays === 1 ? fmtDate(S.date) : fmtShort(addDays(S.date, -(S.repDays - 1))) + " – " + fmtShort(S.date)) + " · لاختيار يوم أو فترة سابقة غيّر التاريخ في الأعلى</p></section>";
   var R = S.rep;
   if (!R || R.loading) return h + '<div class="empty">جارٍ تجهيز التقرير…</div>';
   if (R.err) return h + '<div class="empty">تعذّر تحميل التقرير. اضغط تحديث.</div>';
@@ -1328,7 +1393,7 @@ function bindCharts() {
   document.querySelectorAll("[data-chart]").forEach(function (el) { var k = el.getAttribute("data-chart"); drawChart(el, S.sec === "n" && (k === "air" || k === "rh" || k === "lux") ? sideSeries(rows, k) : [{ pts: ptsFor(rows, k) }], k); });
 }
 function drawChart(el, series, c) {
-  var COL = ["var(--chart)", "var(--chart2)", "var(--muted)"];
+  var COL = ["var(--ln1)", "var(--ln2)", "var(--ln3)"];
   series = series.map(function (sr, i) { return { name: sr.name || "", col: COL[i % 3], pts: sr.pts.filter(function (p) { return p.y != null && isFinite(p.y); }).sort(function (a, b) { return a.t - b.t; }) }; }).filter(function (sr) { return sr.pts.length; });
   if (!series.length) { el.innerHTML = '<div class="muted" style="font-size:13px;text-align:center;padding:16px">لا توجد قراءات</div>'; return; }
   var all = [].concat.apply([], series.map(function (sr) { return sr.pts; })).sort(function (a, b) { return a.t - b.t; });
@@ -1343,8 +1408,8 @@ function drawChart(el, series, c) {
   var xs = xl.map(function (p) { return '<text class="ax" x="' + X(p.t) + '" y="' + (H - 6) + '" text-anchor="middle">' + p.lab.slice(0, 5) + "</text>"; }).join("");
   var lines = series.map(function (sr) {
     var path = sr.pts.map(function (p, j) { return (j ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.y).toFixed(1); }).join(" ");
-    var dots = sr.pts.map(function (p) { var st = chk(c, p.y); return '<circle cx="' + X(p.t) + '" cy="' + Y(p.y) + '" r="' + (all.length > 60 ? 2.2 : 3.5) + '" fill="' + (st === "ok" ? sr.col : "var(--bad)") + '" stroke="var(--surface)" stroke-width="1.5"/>'; }).join("");
-    return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="2" stroke-linejoin="round"/>' + dots;
+    var dots = sr.pts.map(function (p) { var st = chk(c, p.y); return '<circle cx="' + X(p.t) + '" cy="' + Y(p.y) + '" r="' + (all.length > 60 ? 2.6 : 4) + '" fill="' + (st === "ok" ? sr.col : "var(--bad)") + '" stroke="var(--surface)" stroke-width="1.5"/>'; }).join("");
+    return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>' + dots;
   }).join("");
   var legend = series.length > 1 ? '<div class="legend">' + series.map(function (sr) { return '<span><i style="background:' + sr.col + '"></i>' + esc(sr.name) + "</span>"; }).join("") + "</div>" : "";
   el.innerHTML = legend + '<svg viewBox="0 0 ' + W + " " + H + '" role="img">' + band + g + lines + xs + '<line class="hov" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/></svg><div class="tip" hidden></div>';
@@ -1399,7 +1464,7 @@ function exportXlsx(btn) {
     add("وصفات العبوات المركزة", [["التاريخ", "العبوة", "حجم المحلول المركز (مل)", "المادة", "الكمية", "الوحدة", "ملاحظات", "المشرف"]].concat(S.recipes.reduce(function (acc, r) { return acc.concat((r.items || [{}]).map(function (it) { return [r.date, r.tank, recipeMl(r), it.name || "", num(it.qty), it.unit || "", r.notes || "", nameOf(r.by)]; })); }, [])));
     var C = consumption(rows);
     add("استهلاك الأسمدة", [["البند", "الكمية", "الوحدة"]].concat(Object.keys(C.per).map(function (k) { var n = k.split("|"); return [n[0], +C.per[k].toFixed(3), n[1]]; })).concat([[], ["محلول A", C.mlA, "مل"], ["محلول B", C.mlB, "مل"], ["خافض pH", C.down, "مل"], ["رافع pH", C.up, "مل"]]));
-    XLSX.writeFile(wb, "GREEN-SIDE-" + (sec === "t" ? "TOWERS" : "NURSERY") + "-" + S.rep.start + "-" + todayStr() + ".xlsx");
+    XLSX.writeFile(wb, "GREEN-SIDE-" + (sec === "t" ? "TOWERS" : "NURSERY") + "-" + S.rep.start + "-" + (S.rep.end || todayStr()) + ".xlsx");
     toast("تم تنزيل الملف");
   } catch (e) { console.warn(e); toast("تعذّر إنشاء الملف"); }
   btn.disabled = false;
@@ -1449,7 +1514,8 @@ function supView() {
   h += '<section class="sec"><h2>الحدود المستهدفة · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2><form class="card fgrid" id="setSec" novalidate>' + sf.map(function (x) { return '<label class="f" for="ss_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + KPA() + ' id="ss_' + x[0] + '" value="' + esc(cfg(x[0], sec)) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
     '<label class="f full" for="ss_zoneNote">تعريف المناطق (يظهر بخط صغير تحت القياسات)<input class="in" id="ss_zoneNote" value="' + esc(cfg("zoneNote", sec)) + '"></label>' +
     '<div class="full"><button class="btn pri block" type="button" data-act="saveSec">حفظ حدود ' + SECS[sec].name + "</button></div></form></section>";
-  var g = [["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"]];
+  var g = [["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"],
+    ["caFirst", "أول رش كالسيوم بعد النقل للأبراج", "يوم"], ["caEvery", "تكرار رش الكالسيوم كل", "يوم"], ["caUntil", "التوقف عن تذكير الكالسيوم بعد النقل بـ", "يوم"], ["insEvery", "الرش الوقائي الحشري كل (0 = بدون تذكير)", "يوم"], ["fungEvery", "الرش الوقائي الفطري كل (0 = بدون تذكير)", "يوم"]];
   h += '<section class="sec"><h2>إعدادات عامة</h2><form class="card fgrid" id="setGlob" novalidate>' +
     '<label class="f full" for="sg_atc">جهاز القياس يعوّض الحرارة تلقائياً (ATC)<select class="in" id="sg_atc"><option value="0"' + (!cfg("atc") ? " selected" : "") + '>لا · التطبيق يصحح القراءات إلى 25°</option><option value="1"' + (cfg("atc") ? " selected" : "") + ">نعم · لا حاجة للتصحيح</option></select></label>" +
     '<div class="full"><button class="btn block" type="button" data-act="atcTest">اختبار جهاز القياس (ATC) وحساب معامل الحرارة</button><p class="help" style="margin:4px 0 0">' + (S.settings.atcChecked ? "آخر اختبار: " + esc(S.settings.atcChecked) + " · المعامل " + f(num(cfg("ecCoef")) * 100, 2) + "% لكل درجة" : "لم يُختبر الجهاز بعد.") + '</p></div>' +
@@ -1682,6 +1748,12 @@ async function runSelfTest() {
     await step("العامل لا يعدّل الوصفات", function () { return expectDenied(wdb.collection("recipes").add({ x: 1, ts: 1 })); });
     await step("العامل لا يسجّل باسم شخص آخر", function () { return expectDenied(wdb.collection("entries").add({ type: "selftest", sec: "n", date: today, by: uid, v: {} })); });
     await step("العامل يحذف تسجيله قبل المراجعة", async function () { await wref.delete(); wref = null; return "مسموح"; });
+    await step("العامل ينهي شحن بطارية بدأها غيره", async function () {
+      var br = db.collection("entries").doc(); await br.set({ type: "batt", sec: "g", date: today, time: nowTime(), ts: Date.now(), by: uid, v: { start: Date.now(), end: null } });
+      try { var bs = (await wdb.collection("entries").doc(br.id).get({ source: "server" })).data(); await wdb.collection("entries").doc(br.id).update({ v: Object.assign({}, bs.v, { end: Date.now(), endBy: wuid }) }); }
+      catch (e) { await br.delete(); if (e && e.code === "permission-denied") { var er = new Error("مُنع: انشر ملف firestore.rules الجديد في Firebase"); er.code = "rules"; throw er; } throw e; }
+      await br.delete(); return "مسموح";
+    });
     await step("إيقاف الحساب يمنع الوصول فوراً", async function () { await db.collection("users").doc(wuid).update({ role: "disabled" }); return expectDenied(wdb.collection("entries").limit(1).get({ source: "server" })); });
   }
   await step("تنظيف بيانات الاختبار", async function () {
@@ -1695,6 +1767,7 @@ async function runSelfTest() {
     try { await db.collection("entries").where("type", "in", ["mix", "refill"]).where("date", ">=", windowStart()).limit(1).get({ source: "server" }); return "موجود · يقرأ آخر " + WINDOW_DAYS + " يوماً فقط"; }
     catch (e) { if (onIndexErr(e)) { var er = new Error("الفهرس غير موجود بعد. أنشئه من الزر في قسم المشرف"); er.code = "index"; throw er; } throw e; }
   });
+  if (window.SENS && SENS.selfTest) await SENS.selfTest(step);
   await step("صحة الحسابات", async function () {
     var k = (1330 - 400) / 10, errs = [];
     if (!near(k, 93, .001)) errs.push("معامل الخلطة");
@@ -1760,7 +1833,7 @@ document.addEventListener("click", function (ev) {
       toast("حُفظت الجرعات"); setTimeout(function () { if (fromD === "calc") openCalc(); else closeSheet(); }, 60); break;
     case "atcTest": openAtcTest(); break;
     case "saveAtc": if (!ATC_RES) return; var oa = { atc: ATC_RES.atc, atcChecked: todayStr() }; if (!ATC_RES.atc) oa.ecCoef = ATC_RES.coef; db.collection("config").doc("settings").set(Object.assign({}, S.settings, oa)).catch(fail); closeSheet(); toast(ATC_RES.atc ? "اعتُمد: الجهاز يعوّض الحرارة (ATC)" : "اعتُمد معامل الحرارة " + f(ATC_RES.coef * 100, 2) + "% لكل درجة"); break;
-    case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); render(true); break;
+    case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); if (S.tab === "rep") loadReport(); render(true); break;
     case "calc": openCalc(); break;
     case "cmode": CALC.mode = b.getAttribute("data-m"); b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); break;
     case "cstage": var sv = b.getAttribute("data-s"); CALC.stage = sv === "ec" || sv === "custom" ? sv : +sv; b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); if (sv === "custom") setTimeout(function () { var cd = $("c_dose"); if (cd) cd.focus(); }, 30); break;
@@ -1788,8 +1861,8 @@ document.addEventListener("click", function (ev) {
       var now = Date.now(), nt = nowTime();
       db.collection("entries").add({ type: "batt", sec: "g", date: todayStr(), time: nt, ts: now, by: S.uid, v: { time: nt, start: now, end: null } }).catch(fail);
       toast("سُجّل بدء شحن البطارية"); break;
-    case "battEnd": var be = findEntry(id) || lastBatt(); if (!be) return; var nv = Object.assign({}, be.v || {}, { end: Date.now() });
-      db.collection("entries").doc(be.id).update({ v: nv }).then(function () { toast("سُجّل انتهاء الشحن"); }).catch(function (err) { console.warn(err); toast("يمكن لمن بدأ الشحن أو للمشرف تسجيل انتهائه"); }); break;
+    case "battEnd": var be = findEntry(id) || lastBatt(); if (!be) return; var nv = Object.assign({}, be.v || {}, { end: Date.now(), endBy: S.uid });
+      db.collection("entries").doc(be.id).update({ v: nv }).then(function () { toast("سُجّل انتهاء الشحن"); }).catch(function (err) { console.warn(err); toast(err && err.code === "permission-denied" ? "قواعد الحماية لم تُحدَّث بعد: انشر firestore.rules الجديد" : errMsg(err)); }); break;
     case "gallery": openGallery(); break;
     case "lightbox": var pid = b.getAttribute("data-pid"); if (pid) openLightbox(pid, b.getAttribute("data-cap")); break;
     case "sowPlan": openSowPlan(); break;

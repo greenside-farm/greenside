@@ -40,7 +40,13 @@ service cloud.firestore {
                         && !('review' in resource.data) && !('review' in request.resource.data)
                         && request.resource.data.by == resource.data.by
                         && request.resource.data.date == resource.data.date
-                        && request.resource.data.type == resource.data.type);
+                        && request.resource.data.type == resource.data.type)
+                    // أي عامل يسجّل انتهاء شحن البطارية حتى لو بدأه عامل آخر: يُسمح بإضافة وقت الانتهاء فقط
+                    || (isWorker() && resource.data.type == 'batt'
+                        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v'])
+                        && request.resource.data.v.start == resource.data.v.start
+                        && request.resource.data.v.end is number
+                        && request.resource.data.v.endBy == request.auth.uid);
       allow delete: if isSup()
                     || (isWorker() && resource.data.by == request.auth.uid && !('review' in resource.data));
     }
