@@ -1,5 +1,5 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 2.3.0)
-   العامل: حالة الأجواء الآن، القراءات الحالية، ورسم اليوم. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
+/* GREEN SIDE — صفحة الحساسات (الإصدار 2.5.1)
+   العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
    قاعدة بيانات التطبيق الأساسية لا تُلمس: الحساسات لها حصتها وقواعدها الخاصة، والتطبيق يقرأ فقط.
@@ -48,12 +48,12 @@ var SENS = (function () {
   function sc(k) { var o = (window.S && S.settings && S.settings.sens) || {}; var v = o[k]; return v != null && v !== "" ? v : SDEF[k]; }
   function scn(k) { var v = sc(k); return typeof num === "function" ? num(v) : +v; }
   function isSupU() { return typeof isSup === "function" && isSup(); }
-  function P() { return isSupU() ? X.period : 1; } // العامل يرى اليوم المختار فقط
+  function P() { return isSupU() ? X.period : (X.period > 1 ? 7 : 1); } // العامل: اليوم أو آخر 7 أيام، والمشرف حتى 30 يوماً
   var POS = { t: ["b", "m", "e"], n: ["1", "2", "3"] };
 
   var X = {
     started: false, app: null, auth: null, db: null, user: null, err: "",
-    sensors: {}, status: null, days: null, key: "", loading: "",
+    sensors: {}, status: null, days: null, all: null, key: "", loading: "",
     period: 1, kind: lsG("gs_sens_kind") || "temp", off: {}
   };
   try { X.off = JSON.parse(lsG("gs_sens_off") || "{}") || {}; } catch (e) { X.off = {}; }
@@ -105,7 +105,7 @@ var SENS = (function () {
     X.db.collection("sensorMeta").doc("status").onSnapshot(function (s) {
       var old = X.status && ms(X.status.lastRun); X.status = s.exists ? s.data() : null;
       var nw = X.status && ms(X.status.lastRun);
-      if (old && nw && nw !== old && X.days && rangeOf().to >= dkey(old)) X.key = ""; // وصلت قراءات جديدة: أعد تحميل الفترة إن كانت تشمل اليوم
+      if (old && nw && nw !== old && X.days && rangeOf().to >= dkey(old)) refreshToday(); // وصلت قراءات جديدة: نقرأ اليوم الحالي فقط بدل الفترة كلها
       rr();
     }, onErr);
   }
@@ -120,10 +120,24 @@ var SENS = (function () {
     var R = rangeOf(), key = R.from + "|" + R.to;
     if (!force && (X.key === key || X.loading === key)) return;
     X.loading = key;
-    X.db.collection("sensorDays").where("date", ">=", R.from).where("date", "<=", R.to).get().then(function (q) {
+    // يوم إضافي قبل الفترة لملخص الليلة الماضية والمقارنة مع أمس؛ X.days تبقى للفترة نفسها فقط
+    var from0 = typeof addDays === "function" ? addDays(R.from, -1) : R.from;
+    X.db.collection("sensorDays").where("date", ">=", from0).where("date", "<=", R.to).get().then(function (q) {
       if (X.loading !== key) return;
-      X.days = q.docs.map(function (d) { return d.data(); }); X.key = key; X.loading = ""; rr();
+      X.all = q.docs.map(function (d) { return d.data(); });
+      X.days = X.all.filter(function (d) { return d.date >= R.from; }); X.key = key; X.loading = ""; rr();
     }).catch(function (e) { if (X.loading === key) X.loading = ""; onErr(e); });
+  }
+
+  /* كل تشغيل للجامع (كل 15 دقيقة) يحدّث وثائق اليوم فقط، فلا داعي لإعادة قراءة 7 أو 30 يوماً */
+  function refreshToday() {
+    var td = dkey(Date.now()), R = rangeOf(), key = X.key;
+    if (!X.user || !X.all || !key || td > R.to) return;
+    X.db.collection("sensorDays").where("date", "==", td).get().then(function (q) {
+      if (X.key !== key || !X.all) return; // تغيّرت الفترة أثناء القراءة
+      X.all = X.all.filter(function (d) { return d.date !== td; }).concat(q.docs.map(function (d) { return d.data(); }));
+      X.days = X.all.filter(function (d) { return d.date >= R.from; }); rr();
+    }).catch(onErr);
   }
 
   /* ================= أدوات البيانات ================= */
@@ -259,19 +273,21 @@ var SENS = (function () {
     if (!Object.keys(X.sensors).length) return h + '<div class="empty">لم تصل بيانات حساسات بعد.</div>';
     if (!list.length) return h + '<div class="empty">لا توجد حساسات في ' + SECS[S.sec].name + '. حدّد قسم كل حساس من ورقة Devices في جدول Tuya Sensors.</div>';
 
-    h += '<section class="sec">' + alertsHTML(list) + '<div class="grid2">' + list.map(cardHTML).join("") + "</div></section>";
+    h += '<section class="sec">' + alertsHTML(list) + '<div class="grid2">' + list.map(cardHTML).join("") + "</div></section><!--sn-night-->";
 
     var kinds = kindsAvail(list); if (kinds.indexOf(X.kind) < 0) X.kind = kinds[0];
     var R = rangeOf(), isToday = typeof todayStr === "function" && R.to === todayStr();
     var dayLab = isToday ? "اليوم" : (typeof fmtShort === "function" ? fmtShort(R.to) : R.to);
-    h += '<section class="sec"><h2>' + (sup ? "السجل" : "قراءات " + E(dayLab)) + "</h2>" +
-      (sup ? '<div class="seg" role="group" aria-label="الفترة">' + [[1, dayLab], [7, "7 أيام"], [30, "30 يوم"]].map(function (p) { return '<button type="button" data-sact="period" data-n="' + p[0] + '" aria-pressed="' + (P() === p[0]) + '">' + E(p[1]) + "</button>"; }).join("") + "</div>" : "") +
+    var periods = sup ? [[1, dayLab], [7, "7 أيام"], [30, "30 يوم"]] : [[1, dayLab], [7, "7 أيام"]];
+    h += '<section class="sec"><h2>' + (sup ? "السجل" : "القراءات") + "</h2>" +
+      '<div class="seg" role="group" aria-label="الفترة">' + periods.map(function (p) { return '<button type="button" data-sact="period" data-n="' + p[0] + '" aria-pressed="' + (P() === p[0]) + '">' + E(p[1]) + "</button>"; }).join("") + "</div>" +
       '<div class="seg wrap" role="group" aria-label="القياس">' + kinds.map(function (k) { return '<button type="button" data-sact="kind" data-k="' + E(k) + '" aria-pressed="' + (X.kind === k) + '">' + E(kindInfo(k, list[0]).l) + "</button>"; }).join("") + "</div>";
     var withK = list.filter(function (s) { return codesFor(s, X.kind).length; });
     if (withK.length > 1) h += '<div class="sn-pick">' + withK.map(function (s) { var on = !X.off[s.id]; return '<button type="button" class="sn-chip" data-sact="toggle" data-id="' + E(s.id) + '" aria-pressed="' + on + '"><i style="background:' + colorOf(s) + '"></i><bdi>' + E(nm(s)) + "</bdi></button>"; }).join("") + "</div>";
     loadDays(false);
     if (!X.days || X.key !== R.from + "|" + R.to) return h + '<div class="card"><div class="empty" style="border:0">جارٍ تحميل القراءات…</div></div></section>';
     var ki = kindInfo(X.kind, withK[0]);
+    var night = nightHTML(list, R.to); h = h.replace("<!--sn-night-->", function () { return night; });
     h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة بالضبط.' + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
     if (sup && P() === 1) h += rawHTML(withK.filter(function (s) { return !X.off[s.id]; }), ki, R.to);
     h += "</section>";
@@ -511,7 +527,47 @@ var SENS = (function () {
       '<span class="sub">' + (where ? E(where) : '<span class="pill n">لم يُحدَّد الموقع</span>') + "</span>" +
       '<div class="sn-vals">' + (vals.join("") || '<span class="muted">لا قراءات</span>') + "</div>" +
       '<span class="sub' + (stale ? " sn-stale" : "") + '">' + (seen ? (stale ? "آخر قراءة " : "") + ago(seen) : "—") +
-      (batt != null ? ' · <span class="' + (batt < 20 ? "sn-low" : "") + '">🔋 ' + F(batt) + "%</span>" : "") + "</span></div>";
+      (batt != null ? ' · <span class="' + (batt < 20 ? "sn-low" : "") + '">🔋 ' + F(batt) + "%</span>" : "") + "</span>" + (stale ? "" : ydayHTML(s)) + "</div>";
+  }
+
+  /* ================= أمس في نفس الوقت، والليلة الماضية (للجميع) ================= */
+  function docOf(s, date) {
+    return (X.all || []).filter(function (d) { return d.deviceId === s.id && d.date === date && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); })[0] || null;
+  }
+  function lastOfKind(s, k) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c) === k && l[c] && l[c].v != null) v = +l[c].v; }); return v; }
+  function ydayHTML(s) {
+    var today = dkey(Date.now()); if (!window.S || S.date !== today || !X.all || typeof addDays !== "function") return "";
+    var yd = docOf(s, addDays(today, -1)); if (!yd) return "";
+    var t = Math.floor((Date.now() - dayStart(today)) / 1000), out = [];
+    [["temp", "°", 1], ["hum", "%", 0]].forEach(function (x) {
+      var now = lastOfKind(s, x[0]), y = sampler(ptsOf(yd, s, x[0]))(t); if (now == null || y == null) return;
+      var d = now - y, arr = Math.abs(d) < (x[0] === "temp" ? 0.5 : 2) ? "" : d > 0 ? " ↑" : " ↓";
+      out.push('<bdi dir="ltr" class="num">' + F(y, x[2]) + x[1] + "</bdi>" + (arr ? '<small class="muted"><bdi dir="ltr">' + arr + F(Math.abs(d), x[2]) + "</bdi></small>" : ""));
+    });
+    return out.length ? '<span class="sub sn-yd">أمس في نفس الوقت: ' + out.join(" · ") + "</span>" : "";
+  }
+  /* الليلة = من 6 مساءً أمس حتى 6 صباحاً في اليوم المختار (نفس تقسيم النهار والليل في التحليل) */
+  function nightHTML(list, date) {
+    if (!X.all || typeof addDays !== "function") return "";
+    var prev = addDays(date, -1), t0 = dayStart(prev), endT = Math.min(dayStart(date) + 21600e3, Date.now());
+    if (endT <= t0 + 64800e3) return "";
+    var live = endT < dayStart(date) + 21600e3, lo = num(cfg("airMin")), risk = scn("rhRisk"), rows = [];
+    list.forEach(function (s) {
+      var pick = function (k) {
+        var a = [], d1 = docOf(s, prev), d2 = docOf(s, date);
+        if (d1) ptsOf(d1, s, k).forEach(function (p) { if (p.t >= 64800) a.push({ t: t0 + p.t * 1000, v: p.v }); });
+        if (d2) ptsOf(d2, s, k).forEach(function (p) { if (p.t < 21600) a.push({ t: dayStart(date) + p.t * 1000, v: p.v }); });
+        return a;
+      };
+      var T = pick("temp"), H = pick("hum"); if (!T.length && !H.length) return;
+      var mn = T.reduce(function (b, p) { return !b || p.v < b.v ? p : b; }, null), mx = H.reduce(function (b, p) { return !b || p.v > b.v ? p : b; }, null), parts = [];
+      if (mn) parts.push('أدنى حرارة <b class="num' + (mn.v < lo ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mn.v, 1) + '°</bdi></b> <small class="muted num">' + tLabel(mn.t) + "</small>");
+      if (mx) parts.push('أعلى رطوبة <b class="num' + (mx.v >= risk ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mx.v) + '%</bdi></b> <small class="muted num">' + tLabel(mx.t) + "</small>");
+      rows.push('<li><i style="background:' + colorOf(s) + '"></i><b><bdi>' + E(nm(s)) + "</bdi>:</b> " + parts.join(" · ") + "</li>");
+    });
+    if (!rows.length) return "";
+    return '<section class="sec"><h2>' + (live ? "الليلة حتى الآن" : "الليلة الماضية") + ' <small class="muted">6 مساءً – 6 صباحاً</small></h2><ul class="sn-notes">' + rows.join("") + "</ul>" +
+      '<p class="help sn-hint">الأحمر: حرارة أقل من الحد الأدنى، أو رطوبة ' + F(risk) + "% فأكثر (خطر أمراض فطرية).</p></section>";
   }
 
   function summaryHTML(list, ki, R) {
