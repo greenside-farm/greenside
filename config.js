@@ -7,5 +7,7 @@ window.GS_CONFIG = {
     messagingSenderId: "860539428678",
     appId: "1:860539428678:web:f1ae962de33eb746a9cf47"
   },
-  usernameDomain: "greenside.local"
+  usernameDomain: "greenside.local",
+  // App Check (اختياري): الصق هنا مفتاح موقع reCAPTCHA v3 بعد تسجيله في Firebase ← App Check. اتركه فارغاً لإيقافه.
+  appCheckKey: ""
 };

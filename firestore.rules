@@ -14,6 +14,22 @@ service cloud.firestore {
     function isWorker() { return hasProfile() && myRole() == 'worker'; }
     function isMember() { return isSup() || isWorker(); }
 
+    // تحقق من البيانات: الأنواع والحقول المسموحة، الصور بصيغة صحيحة فقط، والتاريخ ضمن مدة معقولة للعامل
+    function okId(id) { return id.matches('[A-Za-z0-9]{20}'); }
+    function okImg(s, max) { return s is string && s.size() <= max && s.matches('data:image/(jpeg|png|gif|webp);base64,[A-Za-z0-9+/=]+'); }
+    function okTypes() { return ['mix','refill','ecph','temp','irr','light','pump','sow','xplant','harvest','note','spray','photo','batt','cal','selftest']; }
+    function okEntry(d) {
+      return d.keys().hasOnly(['type','sec','date','time','ts','by','v','grp','photo','thumb','open','review'])
+        && d.type in okTypes() && d.sec in ['n','t','g']
+        && d.date is string && d.date.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}')
+        && d.v is map
+        && (!('thumb' in d) || okImg(d.thumb, 200000))
+        && (!('photo' in d) || (d.photo is string && d.photo.size() <= 40));
+    }
+    // تاريخ تسجيل العامل: من 8 أيام مضت (لإرسال ما حُفظ بدون إنترنت) حتى الغد كحد أقصى
+    function dayOf(s) { let p = s.split('-'); return timestamp.date(int(p[0]), int(p[1]), int(p[2])); }
+    function okWorkerDate(s) { return dayOf(s) <= request.time + duration.value(1, 'd') && dayOf(s) >= request.time - duration.value(8, 'd'); }
+
     // مالك التطبيق: يُنشأ مرة واحدة فقط عند الإعداد الأول ولا يمكن تغييره من التطبيق
     match /config/owner {
       allow read: if true;
@@ -33,18 +49,22 @@ service cloud.firestore {
 
     match /entries/{id} {
       allow read: if isMember();
-      allow create: if isMember() && request.resource.data.by == request.auth.uid
-                    && !('review' in request.resource.data);
-      allow update: if isSup()
-                    || (isWorker() && resource.data.by == request.auth.uid
+      allow create: if isMember() && okId(id) && okEntry(request.resource.data)
+                    && request.resource.data.by == request.auth.uid
+                    && !('review' in request.resource.data)
+                    && (isSup() || okWorkerDate(request.resource.data.date));
+      allow update: if (isSup() && (!('thumb' in request.resource.data) || okImg(request.resource.data.thumb, 200000)))
+                    || (isWorker() && okEntry(request.resource.data) && resource.data.by == request.auth.uid
                         && !('review' in resource.data) && !('review' in request.resource.data)
                         && request.resource.data.by == resource.data.by
                         && request.resource.data.date == resource.data.date
-                        && request.resource.data.type == resource.data.type)
-                    // أي عامل يسجّل انتهاء شحن البطارية حتى لو بدأه عامل آخر: يُسمح بإضافة وقت الانتهاء فقط
+                        && request.resource.data.type == resource.data.type
+                        && request.resource.data.ts == resource.data.ts)
+                    // أي عامل يسجّل انتهاء شحن البطارية مرة واحدة حتى لو بدأه عامل آخر: وقت الانتهاء ومن سجّله فقط
                     || (isWorker() && resource.data.type == 'batt'
                         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v'])
-                        && request.resource.data.v.start == resource.data.v.start
+                        && request.resource.data.v.diff(resource.data.v).affectedKeys().hasOnly(['end', 'endBy'])
+                        && resource.data.v.get('end', null) == null
                         && request.resource.data.v.end is number
                         && request.resource.data.v.endBy == request.auth.uid);
       allow delete: if isSup()
@@ -53,8 +73,11 @@ service cloud.firestore {
 
     match /photos/{id} {
       allow read: if isMember();
-      allow create: if isMember() && request.resource.data.by == request.auth.uid;
-      allow update, delete: if isSup();
+      allow create: if isMember() && okId(id) && request.resource.data.by == request.auth.uid
+                    && request.resource.data.keys().hasOnly(['data','by','ts','sec'])
+                    && request.resource.data.data is string && request.resource.data.data.size() <= 1000000;
+      allow update: if false;
+      allow delete: if isSup();
     }
 
     match /recipes/{id} {

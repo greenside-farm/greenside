@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.4.0";
+var APP_VERSION = "2.5.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -278,6 +278,7 @@ function fmtTime(t) { if (!t) return ""; var p = String(t).split(":"); var h = +
 function tsHM(ts) { var d = new Date(ts); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
 function tsTime(ts) { return fmtTime(tsHM(ts)); }
 function fmtAgo(h) { if (h == null) return "—"; if (h < 1) return "أقل من ساعة"; if (h < 48) return Math.round(h) + " ساعة"; return Math.round(h / 24) + " يوم"; }
+function safeImg(v) { v = String(v || ""); return /^data:image\/(jpeg|png|gif|webp);base64,[A-Za-z0-9+\/=]+$/.test(v) ? v : ""; }
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function num(v) { if (v === "" || v == null) return null; if (typeof v === "number") return isFinite(v) ? v : null; var s = String(v).replace(/[٠-٩]/g, function (d) { return "٠١٢٣٤٥٦٧٨٩".indexOf(d); }).replace(/[٫,]/g, ".").trim(); if (s === "") return null; var n = Number(s); return isFinite(n) ? n : null; }
 function f(n, d) { if (n == null || !isFinite(n)) return "—"; return Number(n).toLocaleString("en-US", { maximumFractionDigits: d || 0, minimumFractionDigits: 0 }); }
@@ -400,10 +401,17 @@ function sheetHead(title, sec, icon) {
 }
 
 /* ================= boot ================= */
+/* App Check (اختياري): يمنع استخدام مفاتيح Firebase من خارج موقع التطبيق.
+   يعمل فقط إذا وُضع appCheckKey (مفتاح reCAPTCHA v3) في config.js */
+function withAppCheck(app) {
+  var k = window.GS_CONFIG && window.GS_CONFIG.appCheckKey;
+  if (k && app && typeof app.appCheck === "function") { try { app.appCheck().activate(k, true); } catch (e) { console.warn(e); } }
+  return app;
+}
 function boot() {
   var cfgF = window.GS_CONFIG && window.GS_CONFIG.firebase;
   if (!window.firebase || !cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
-  firebase.initializeApp(cfgF);
+  withAppCheck(firebase.initializeApp(cfgF));
   S.auth = firebase.auth(); S.db = firebase.firestore();
   S.db.enablePersistence({ synchronizeTabs: true }).catch(function () {});
   applySec(); bindTop();
@@ -441,7 +449,7 @@ function renderAuth() {
       '<div class="err full" id="a_err"></div><button class="btn pri block full" type="submit">إنشاء الحساب والبدء</button></form></div>' +
       '<button class="linkbtn" type="button" data-act="authMode" data-m="login">لدي حساب، تسجيل الدخول</button>';
   } else if (AUTH_MODE === "reset") {
-    h += '<div class="card"><h2>استعادة كلمة المرور</h2><p class="muted" style="font-size:13.5px">تصل رسالة الاستعادة للحسابات المسجلة ببريد حقيقي. حسابات العمال يعيد المشرف كلمة مرورها.</p><form id="authForm" class="fgrid" novalidate><label class="f full" for="a_id">البريد الإلكتروني<input class="in" id="a_id" type="email" dir="ltr"></label><div class="err full" id="a_err"></div><button class="btn pri block full" type="submit">إرسال رابط الاستعادة</button></form></div>' +
+    h += '<div class="card"><h2>استعادة كلمة المرور</h2><p class="muted" style="font-size:13.5px">تصل رسالة الاستعادة للحسابات المسجلة ببريد حقيقي. حسابات العمال (اسم مستخدم بدون بريد) لا تصلها رسالة الاستعادة: يوقف المالك الحساب القديم وينشئ للعامل حساباً جديداً.</p><form id="authForm" class="fgrid" novalidate><label class="f full" for="a_id">البريد الإلكتروني<input class="in" id="a_id" type="email" dir="ltr"></label><div class="err full" id="a_err"></div><button class="btn pri block full" type="submit">إرسال رابط الاستعادة</button></form></div>' +
       '<button class="linkbtn" type="button" data-act="authMode" data-m="login">رجوع لتسجيل الدخول</button>';
   } else {
     h += '<div class="card"><form id="authForm" class="fgrid" novalidate><label class="f full" for="a_id">اسم المستخدم أو البريد<input class="in" id="a_id" dir="ltr" autocapitalize="off" autocomplete="username"></label>' +
@@ -548,7 +556,8 @@ function bindTop() {
 }
 function switchSec(s) {
   if (s === S.sec) return; S.sec = s; lsSet("gs_sec", s); applySec();
-  if (S.tab === "rep") loadReport(); render(true); window.scrollTo(0, 0);
+  /* التقرير يُحمَّل لكل الأقسام معاً، فتبديل القسم لا يحتاج قراءة جديدة من الخادم */
+  if (S.tab === "rep" && !(S.rep && S.rep.all)) loadReport(); render(true); window.scrollTo(0, 0);
 }
 function renderTop() {
   var t = S.date === todayStr();
@@ -566,7 +575,13 @@ function renderTabs() {
 }
 
 /* ================= render ================= */
+/* تحديثات البيانات المتتالية (عند الفتح تصل عدة دفعات معاً) تُدمج في رسم واحد لكل إطار */
+var renderQ = 0;
 function render(force) {
+  if (force) { if (renderQ) { cancelAnimationFrame(renderQ); renderQ = 0; } renderNow(true); return; }
+  if (!renderQ) renderQ = requestAnimationFrame(function () { renderQ = 0; renderNow(false); });
+}
+function renderNow(force) {
   if (!S.role) return;
   renderTop(); renderTabs();
   var v = $("view"), ae = document.activeElement;
@@ -710,7 +725,7 @@ function equipAlerts() {
   var out = [], bi = battInfo(), lim = num(cfg("battHours")), mx = num(cfg("battMaxCharge"));
   if (bi.state === "none") out.push('<div class="alert warn">' + ico("batt", 20) + '<span class="tx">لم يُسجَّل شحن لبطارية مضخة الري بعد.</span>' + (canAdd() ? '<button class="btn sm" data-act="battStart">بدء الشحن</button>' : "") + "</div>");
   else if (bi.state === "idle" && bi.h > lim) out.push('<div class="alert bad">' + ico("batt", 20) + '<span class="tx"><b>تأخر شحن بطارية المضخة:</b> آخر شحن انتهى قبل ' + fmtAgo(bi.h) + ".</span>" + (canAdd() ? '<button class="btn sm pri" data-act="battStart">بدء الشحن</button>' : "") + "</div>");
-  else if (bi.state === "charging" && bi.h > mx) out.push('<div class="alert warn">' + ico("batt", 20) + '<span class="tx"><b>البطارية على الشاحن منذ ' + fmtAgo(bi.h) + "</b>. افصل الشاحن إذا اكتمل الشحن.</span>" + (canAdd() ? '<button class="btn sm pri" data-act="battEnd" data-id="' + bi.b.id + '">انتهى الشحن</button>' : "") + "</div>");
+  else if (bi.state === "charging" && bi.h > mx) out.push('<div class="alert warn">' + ico("batt", 20) + '<span class="tx"><b>البطارية على الشاحن منذ ' + fmtAgo(bi.h) + "</b>. افصل الشاحن إذا اكتمل الشحن.</span>" + (canAdd() ? '<button class="btn sm pri" data-act="battEnd" data-id="' + esc(bi.b.id) + '">انتهى الشحن</button>' : "") + "</div>");
   var c = lastCal(), cd = num(cfg("calDays"));
   if (!c) out.push('<div class="alert warn">' + ico("cal", 20) + '<span class="tx">لم تُسجَّل معايرة لجهاز القياس بعد.</span>' + (canAdd() ? '<button class="btn sm" data-act="new" data-type="cal">تسجيل معايرة</button>' : "") + "</div>");
   else { var dd = daysBetween(c.date, todayStr()); if (dd >= cd) out.push('<div class="alert warn">' + ico("cal", 20) + '<span class="tx"><b>حان موعد معايرة جهاز القياس:</b> آخر معايرة قبل ' + dd + " يوم.</span>" + (canAdd() ? '<button class="btn sm" data-act="new" data-type="cal">تسجيل معايرة</button>' : "") + "</div>"); }
@@ -768,7 +783,7 @@ function equipCard() {
   if (bi.state === "none") bt = "لا يوجد شحن مسجل";
   else if (bi.state === "charging") bt = "جارٍ الشحن منذ " + fmtAgo(bi.h) + " (بدأ " + tsTime(bi.b.v.start || bi.b.ts) + ")";
   else bt = "آخر شحن انتهى قبل " + fmtAgo(bi.h) + " (" + tsTime(bi.b.v.end) + ")";
-  bb = bi.state === "charging" ? '<button class="btn sm pri" data-act="battEnd" data-id="' + bi.b.id + '">انتهى الشحن</button>' : '<button class="btn sm" data-act="battStart">بدء الشحن</button>';
+  bb = bi.state === "charging" ? '<button class="btn sm pri" data-act="battEnd" data-id="' + esc(bi.b.id) + '">انتهى الشحن</button>' : '<button class="btn sm" data-act="battStart">بدء الشحن</button>';
   h += '<div class="eq-row"><span class="e-ic">' + ico("batt", 19) + '</span><span class="tx"><b>بطارية مضخة الري</b><span>' + bt + " · التذكير بعد " + f(num(cfg("battHours"))) + " ساعة</span></span>" + (canAdd() ? bb : "") + "</div>";
   var ct = c ? "آخر معايرة: " + fmtShort(c.date) + " (قبل " + daysBetween(c.date, todayStr()) + " يوم) · " + esc(c.v && c.v.result || "") : "لا توجد معايرة مسجلة";
   h += '<div class="eq-row"><span class="e-ic">' + ico("cal", 19) + '</span><span class="tx"><b>معايرة جهاز EC/pH</b><span>' + ct + " · كل " + f(num(cfg("calDays"))) + " يوم</span></span>" + (canAdd() ? '<button class="btn sm" data-act="new" data-type="cal">تسجيل معايرة</button>' : "") + "</div>";
@@ -824,12 +839,12 @@ function entryCard(e, showDate) {
   if (e.type === "note" && !noneNote) foot += e.open ? '<span class="pill bad">مفتوحة</span>' : '<span class="pill ok">تم الحل</span>';
   foot += '<span class="sp"></span>';
   if (isSup()) {
-    if (!rev || rev.s !== "ok") foot += '<button class="btn sm ok" data-act="approve" data-id="' + e.id + '">اعتماد</button>';
-    foot += '<button class="btn sm warn" data-act="flag" data-id="' + e.id + '">ملاحظة</button>';
-    if (e.type === "note" && !noneNote) foot += '<button class="btn sm" data-act="toggleNote" data-id="' + e.id + '">' + (e.open ? "تم الحل" : "إعادة فتح") + "</button>";
+    if (!rev || rev.s !== "ok") foot += '<button class="btn sm ok" data-act="approve" data-id="' + esc(e.id) + '">اعتماد</button>';
+    foot += '<button class="btn sm warn" data-act="flag" data-id="' + esc(e.id) + '">ملاحظة</button>';
+    if (e.type === "note" && !noneNote) foot += '<button class="btn sm" data-act="toggleNote" data-id="' + esc(e.id) + '">' + (e.open ? "تم الحل" : "إعادة فتح") + "</button>";
   }
-  if (canEditEntry(e)) foot += '<button class="btn sm ghost" data-act="edit" data-id="' + e.id + '">تعديل</button>';
-  var chips = summaryChips(e), img = e.thumb ? '<img class="e-thumb" alt="صورة" src="' + e.thumb + '" data-act="lightbox" data-pid="' + esc(e.photo || "") + '">' : (e.photo ? '<img class="e-photo" alt="صورة" data-photo="' + esc(e.photo) + '">' : "");
+  if (canEditEntry(e)) foot += '<button class="btn sm ghost" data-act="edit" data-id="' + esc(e.id) + '">تعديل</button>';
+  var chips = summaryChips(e), img = e.thumb ? '<img class="e-thumb" alt="صورة" src="' + safeImg(e.thumb) + '" data-act="lightbox" data-pid="' + esc(e.photo || "") + '">' : (e.photo ? '<img class="e-photo" alt="صورة" data-photo="' + esc(e.photo) + '">' : "");
   return '<article class="entry ' + (rev && rev.s === "flag" ? "flag" : "") + '"><div class="e-head"><span class="e-ic">' + ico(e.type, 19) + '</span><div class="e-t"><b>' + esc(T.label) + "</b><span>" + (showDate ? esc(fmtShort(e.date)) + " · " : "") + fmtTime(e.time) + "</span></div>" + (sec === "g" ? secTag("g") : "") + "</div>" +
     (chips ? '<div class="chips">' + chips + "</div>" : "") + (txt.length ? '<div class="e-text">' + esc(txt.join("\n")) + "</div>" : "") + img +
     (rev && rev.c ? '<div class="rev-note"><b>' + esc(nameOf(rev.by)) + ":</b> " + esc(rev.c) + "</div>" : "") + '<div class="e-foot">' + foot + "</div></article>";
@@ -837,8 +852,8 @@ function entryCard(e, showDate) {
 function loadPhotos(root) {
   (root || document).querySelectorAll("img[data-photo]").forEach(function (img) {
     var id = img.getAttribute("data-photo"); if (!id) return;
-    if (S.photos[id]) { img.src = S.photos[id]; return; }
-    S.db.collection("photos").doc(id).get().then(function (s) { if (s.exists) { S.photos[id] = s.data().data; img.src = S.photos[id]; } }).catch(function () {});
+    if (S.photos[id]) { img.src = safeImg(S.photos[id]); return; }
+    S.db.collection("photos").doc(id).get().then(function (s) { if (s.exists) { S.photos[id] = s.data().data; img.src = safeImg(S.photos[id]); } }).catch(function () {});
   });
 }
 
@@ -867,7 +882,7 @@ function timePicker(id, val) {
 function readTime(id) { var el = $(id); if (!el) return ""; var h = +el.querySelector(".tp-h").value, m = +el.querySelector(".tp-m").value, ap = el.getAttribute("data-ap"); return pad(h % 12 + (ap === "pm" ? 12 : 0)) + ":" + pad(m); }
 function batchOptions(val) {
   var list = sowBatches().filter(function (e) { return daysBetween(e.date, todayStr()) <= 90 || e.id === val; }).slice().reverse();
-  return '<option value="">—</option>' + list.map(function (e) { return '<option value="' + e.id + '"' + (e.id === val ? " selected" : "") + ">" + esc(fmtShort(e.date) + " · " + (e.v.crop || "") + " · " + f(num(e.v.seeds)) + " بذرة · عمر " + daysBetween(e.date, todayStr()) + " يوم") + "</option>"; }).join("");
+  return '<option value="">—</option>' + list.map(function (e) { return '<option value="' + esc(e.id) + '"' + (e.id === val ? " selected" : "") + ">" + esc(fmtShort(e.date) + " · " + (e.v.crop || "") + " · " + f(num(e.v.seeds)) + " بذرة · عمر " + daysBetween(e.date, todayStr()) + " يوم") + "</option>"; }).join("");
 }
 function gridHTML(fd, v) {
   var D = dimOf(fd);
@@ -886,7 +901,7 @@ function photoHTML(fd) {
   var sx = fd.side ? "_" + fd.side : "", e = FORM.e, cur = !fd.side && e && (e.thumb || e.photo);
   return '<div class="f full" id="w_' + fd.k + '"><span>الصورة' + (fd.req ? ' <span class="req">*</span>' : " (اختياري)") + '</span><div class="photo-btns"><label class="btn" for="f_cam' + sx + '">' + ico("cam", 20) + '&nbsp;الكاميرا</label><label class="btn" for="f_gal' + sx + '">' + ico("gallery", 20) + "&nbsp;المعرض</label></div>" +
     '<input type="file" accept="image/*" capture="environment" id="f_cam' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden><input type="file" accept="image/*" id="f_gal' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden>' +
-    '<img class="photo-prev" id="f_prev' + sx + '" alt="" ' + (cur ? (e.thumb ? 'src="' + e.thumb + '"' : 'data-photo="' + esc(e.photo) + '"') : "hidden") + "></div>";
+    '<img class="photo-prev" id="f_prev' + sx + '" alt="" ' + (cur ? (e.thumb ? 'src="' + safeImg(e.thumb) + '"' : 'data-photo="' + esc(e.photo) + '"') : "hidden") + "></div>";
 }
 function fieldHTML(fd, v) {
   if (fd.t === "grid") return gridHTML(fd, v);
@@ -931,7 +946,7 @@ function openForm(type, e, prefill) {
   if (FORM.split) h += '<p class="help full" style="margin:0">' + (T.photo ? "صوّر كل جهة في خانتها. إذا صوّرت جهة واحدة فقط تُحفظ وحدها." : "عبّئ الجهة التي زرعتها أو الجهتين معاً. كل جهة تُحفظ كتسجيل مستقل.") + "</p>";
   if (type === "mix") h += '<div class="full help" id="mixHint"></div>';
   h += '<datalist id="dl_crops">' + uniqueCrops().map(function (c) { return '<option value="' + esc(c) + '">'; }).join("") + "</datalist>";
-  h += '</form><div class="sheet-actions">' + (e ? '<button class="btn danger" type="button" data-act="del" data-id="' + e.id + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
+  h += '</form><div class="sheet-actions">' + (e ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
   openSheet(h);
   var form = $("entryForm");
   form.addEventListener("input", updForm); form.addEventListener("change", updForm);
@@ -1037,25 +1052,26 @@ function saveForm(btn) {
   }
   if (miss.length) { toast("أكمل: " + miss.join("، ")); return; }
   btn.disabled = true; btn.textContent = "جارٍ الحفظ…";
-  var ops = [], date = e ? e.date : S.date, col = S.db.collection("entries");
-  var putPhoto = function (ph) { var pref = S.db.collection("photos").doc(); ops.push(pref.set({ data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec })); S.photos[pref.id] = ph.full; return pref.id; };
+  var wb = S.db.batch(), date = e ? e.date : S.date, col = S.db.collection("entries");
+  var putPhoto = function (ph) { var pref = S.db.collection("photos").doc(); wb.set(pref, { data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec }); S.photos[pref.id] = ph.full; return pref.id; };
   if (type === "batt") { v.start = hmToTs(date, v.time); v.end = v.endTime ? hmToTs(date, v.endTime, v.start) : null; delete v.endTime; }
   if (e) {
     var nv = Object.assign(clone(e.v || {}), v), up = { v: nv, time: nv.time };
     if (FORM.photos._) { up.photo = putPhoto(FORM.photos._); up.thumb = FORM.photos._.thumb; }
     if (type === "note" && nv.cat === NOTE_NONE) up.open = false;
-    ops.push(col.doc(e.id).update(up));
+    wb.update(col.doc(e.id), up);
   } else if (FORM.split) {
     var grp = col.doc().id;
-    groups.forEach(function (g) { var d = { type: type, sec: FORM.sec, date: date, time: g.v.time, ts: Date.now(), by: S.uid, v: g.v, grp: grp }; if (g.photo) { d.photo = putPhoto(g.photo); d.thumb = g.photo.thumb; } ops.push(col.doc().set(d)); });
+    groups.forEach(function (g) { var d = { type: type, sec: FORM.sec, date: date, time: g.v.time, ts: Date.now(), by: S.uid, v: g.v, grp: grp }; if (g.photo) { d.photo = putPhoto(g.photo); d.thumb = g.photo.thumb; } wb.set(col.doc(), d); });
   } else {
     var d = { type: type, sec: FORM.sec, date: date, time: v.time, ts: Date.now(), by: S.uid, v: v };
     if (FORM.photos._) { d.photo = putPhoto(FORM.photos._); d.thumb = FORM.photos._.thumb; }
     if (type === "note") d.open = v.cat !== NOTE_NONE;
-    ops.push(col.doc().set(d));
+    wb.set(col.doc(), d);
   }
-  if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) ops.push(S.db.collection("config").doc("settings").update({ noteCats: (S.settings.noteCats || []).concat([v.cat]) }));
-  Promise.all(ops).catch(function (err) { console.warn(err); toast("لم يُحفظ التسجيل: " + errMsg(err)); });
+  if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) wb.update(S.db.collection("config").doc("settings"), { noteCats: (S.settings.noteCats || []).concat([v.cat]) });
+  /* الصورة والتسجيل يُحفظان معاً أو لا يُحفظ أيٌّ منهما */
+  wb.commit().catch(function (err) { console.warn(err); toast("لم يُحفظ التسجيل: " + errMsg(err)); });
   var where = FORM.sec === "g" ? "" : " في " + SECS[FORM.sec].name;
   closeSheet();
   toast(navigator.onLine ? "تم الحفظ" + where + (groups.length > 1 ? " · الجهتان" : "") : "حُفظ في الجوال وسيُرسل عند رجوع الإنترنت");
@@ -1229,7 +1245,7 @@ function openGallery() {
       var g = groups[k];
       return '<div class="card" style="margin-bottom:10px"><h3 style="margin-bottom:8px">' + esc(g.lab) + '</h3><div class="strip">' + g.items.slice().reverse().map(function (e) {
         var age = g.b ? "يوم " + daysBetween(g.b.date, e.date) : fmtTime(e.time);
-        return '<button class="ph" type="button" data-act="lightbox" data-pid="' + esc(e.photo || "") + '" data-cap="' + esc(fmtShort(e.date) + " · " + fmtTime(e.time) + (e.v && e.v.height ? " · " + e.v.height + " سم" : "")) + '"><img alt="" ' + (e.thumb ? 'src="' + e.thumb + '"' : 'data-photo="' + esc(e.photo || "") + '"') + "><span>" + age + "</span><span>" + fmtShort(e.date) + (e.v && e.v.height ? " · " + e.v.height + " سم" : "") + "</span></button>";
+        return '<button class="ph" type="button" data-act="lightbox" data-pid="' + esc(e.photo || "") + '" data-cap="' + esc(fmtShort(e.date) + " · " + fmtTime(e.time) + (e.v && e.v.height ? " · " + esc(e.v.height) + " سم" : "")) + '"><img alt="" ' + (e.thumb ? 'src="' + safeImg(e.thumb) + '"' : 'data-photo="' + esc(e.photo || "") + '"') + "><span>" + age + "</span><span>" + fmtShort(e.date) + (e.v && e.v.height ? " · " + esc(e.v.height) + " سم" : "") + "</span></button>";
       }).join("") + "</div></div>";
     }).join("");
     loadPhotos(gb);
@@ -1237,7 +1253,7 @@ function openGallery() {
 }
 function openLightbox(pid, cap) {
   var fromGal = !!$("galBody");
-  openSheet('<div class="sheet-bg" data-close><div class="sheet lightbox" role="dialog" aria-modal="true">' + sheetHead(cap || "الصورة", null, "photo") + '<img alt="" ' + (S.photos[pid] ? 'src="' + S.photos[pid] + '"' : 'data-photo="' + esc(pid) + '"') + ">" + (fromGal ? '<div class="sheet-actions"><button class="btn" type="button" data-act="gallery">رجوع للصور</button></div>' : "") + "</div></div>");
+  openSheet('<div class="sheet-bg" data-close><div class="sheet lightbox" role="dialog" aria-modal="true">' + sheetHead(cap || "الصورة", null, "photo") + '<img alt="" ' + (S.photos[pid] ? 'src="' + safeImg(S.photos[pid]) + '"' : 'data-photo="' + esc(pid) + '"') + ">" + (fromGal ? '<div class="sheet-actions"><button class="btn" type="button" data-act="gallery">رجوع للصور</button></div>' : "") + "</div></div>");
   loadPhotos($("sheetRoot"));
 }
 function openSowPlan() {
@@ -1257,7 +1273,7 @@ function findEntry(id) { return S.entries.filter(function (x) { return x.id === 
 function openFlag(id) {
   var e = findEntry(id);
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("ملاحظة المشرف") + '<label class="f" for="flagTxt">اكتب ما يجب تصحيحه أو متابعته<textarea class="in" id="flagTxt">' + esc(e && e.review && e.review.c || "") + "</textarea></label>" +
-    '<div class="sheet-actions"><button class="btn pri" type="button" data-act="saveFlag" data-id="' + id + '">حفظ الملاحظة</button></div></div></div>');
+    '<div class="sheet-actions"><button class="btn pri" type="button" data-act="saveFlag" data-id="' + esc(id) + '">حفظ الملاحظة</button></div></div></div>');
 }
 
 /* ================= reports ================= */
@@ -1489,7 +1505,7 @@ function supView() {
     (S.recipes[0] && S.recipes[0].date > F.date ? '<div class="banner warn" style="margin-top:10px">سُجّلت وصفة عبوة بعد تاريخ اعتماد الخلطة. إذا تغيّرت التركيبة، حدّث الخلطة ليبقى الحساب دقيقاً.</div>' : "") + "</div></section>";
   h += '<section class="sec"><h2>سجل الوصفات</h2>';
   h += S.recipes.length ? '<div class="list">' + S.recipes.slice(0, 30).map(function (r) {
-    return '<article class="entry"><div class="e-head"><span class="e-ic"><b class="num">' + esc(r.tank) + '</b></span><div class="e-t"><b>عبوة ' + esc(r.tank) + " · " + f(recipeMl(r)) + ' مل</b><span class="num">' + esc(r.date) + " · " + esc(nameOf(r.by)) + '</span></div><button class="btn sm ghost" data-act="editRecipe" data-id="' + r.id + '">تعديل</button></div>' +
+    return '<article class="entry"><div class="e-head"><span class="e-ic"><b class="num">' + esc(r.tank) + '</b></span><div class="e-t"><b>عبوة ' + esc(r.tank) + " · " + f(recipeMl(r)) + ' مل</b><span class="num">' + esc(r.date) + " · " + esc(nameOf(r.by)) + '</span></div><button class="btn sm ghost" data-act="editRecipe" data-id="' + esc(r.id) + '">تعديل</button></div>' +
       '<div class="tbl-wrap"><table><thead><tr><th>المادة</th><th>الكمية</th></tr></thead><tbody>' + (r.items || []).map(function (it) { return "<tr><td>" + esc(it.name) + '</td><td class="num">' + f(num(it.qty), 3) + " " + esc(it.unit || "") + "</td></tr>"; }).join("") + "</tbody></table></div>" +
       (r.notes ? '<div class="e-text">' + esc(r.notes) + "</div>" : "") + "</article>";
   }).join("") + "</div>" : '<div class="empty">سجّل وصفة عبوة A وعبوة B (المواد وكمياتها وحجم العبوة) لحساب استهلاك الأسمدة والمتبقي في كل عبوة.<button class="btn pri" data-act="newRecipe">إضافة أول وصفة</button></div>';
@@ -1501,7 +1517,7 @@ function supView() {
     var u = S.users[id], r = id === S.ownerUid ? "owner" : u.role;
     var pill = r === "owner" ? '<span class="pill ok">المالك · مشرف</span>' : r === "sup" ? '<span class="pill ok">مشرف</span>' : r === "worker" ? '<span class="pill n">عامل</span>' : '<span class="pill bad">موقوف</span>';
     h += '<div class="user-row"><span class="av">' + initials(id) + '</span><span class="nm">' + esc(u.name) + (id === S.uid ? ' <span class="muted">(أنت)</span>' : "") + "<small>" + esc(showLogin(u.login)) + "</small></span>" + pill;
-    if (isOwner && r !== "owner") h += "<span>" + (r !== "worker" ? '<button class="btn sm" data-act="setRole" data-id="' + id + '" data-r="worker">عامل</button> ' : "") + (r !== "sup" ? '<button class="btn sm" data-act="setRole" data-id="' + id + '" data-r="sup">مشرف</button> ' : "") + (r !== "disabled" ? '<button class="btn sm danger" data-act="setRole" data-id="' + id + '" data-r="disabled">إيقاف</button>' : "") + "</span>";
+    if (isOwner && r !== "owner") h += "<span>" + (r !== "worker" ? '<button class="btn sm" data-act="setRole" data-id="' + esc(id) + '" data-r="worker">عامل</button> ' : "") + (r !== "sup" ? '<button class="btn sm" data-act="setRole" data-id="' + esc(id) + '" data-r="sup">مشرف</button> ' : "") + (r !== "disabled" ? '<button class="btn sm danger" data-act="setRole" data-id="' + esc(id) + '" data-r="disabled">إيقاف</button>' : "") + "</span>";
     h += "</div>";
   });
   if (!isOwner) h += '<p class="muted" style="font-size:12.5px">إضافة المستخدمين وتغيير صلاحياتهم متاحة لمالك التطبيق فقط.</p>';
@@ -1595,7 +1611,7 @@ function openRecipe(r) {
     '<label class="f full" for="r_vol">حجم المحلول المركز <span class="req">*</span><div class="unitwrap"><input class="in num" ' + KPA() + ' id="r_vol" value="' + esc(r ? recipeMl(r) : "") + '"><span class="u">مل</span></div></label>' +
     '<div class="full"><h3 style="margin-bottom:8px">المواد وكمياتها</h3><datalist id="ferts">' + FERTS.map(function (x) { return '<option value="' + x + '">'; }).join("") + '</datalist><div id="riList">' + items.map(riRow).join("") + '</div><button class="btn sm" type="button" data-act="addRi">+ إضافة مادة</button></div>' +
     '<label class="f full" for="r_notes">ملاحظات (التركيز بالعناصر ppm، المورد، رقم التشغيلة…)<textarea class="in" id="r_notes">' + esc(r ? r.notes : "") + "</textarea></label>" +
-    '</form><div class="sheet-actions">' + (r ? '<button class="btn danger" type="button" data-act="delRecipe" data-id="' + r.id + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="saveRecipe" data-id="' + (r ? r.id : "") + '">حفظ الوصفة</button></div></div></div>');
+    '</form><div class="sheet-actions">' + (r ? '<button class="btn danger" type="button" data-act="delRecipe" data-id="' + esc(r.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="saveRecipe" data-id="' + (r ? r.id : "") + '">حفظ الوصفة</button></div></div></div>');
 }
 function riRow(it) { return '<div class="ri"><input class="in" list="ferts" aria-label="اسم المادة" placeholder="اسم المادة" data-ri="name" value="' + esc(it.name) + '"><input class="in num" ' + KPA() + ' aria-label="الكمية" placeholder="الكمية" data-ri="qty" value="' + esc(it.qty) + '"><select class="in" aria-label="الوحدة" data-ri="unit">' + ["غ", "كغ", "مل", "لتر"].map(function (u) { return "<option" + (it.unit === u ? " selected" : "") + ">" + u + "</option>"; }).join("") + '</select><button class="iconbtn" type="button" data-act="rmRi" aria-label="حذف السطر">✕</button></div>'; }
 function openNewUser() {
@@ -1610,7 +1626,7 @@ function createUser(btn) {
   var name = $("u_name").value.trim(), id = $("u_id").value.trim(), pw = $("u_pw").value, role = $("u_role").querySelector('[aria-pressed="true"]').getAttribute("data-r"), er = $("u_err");
   if (!name || !id || pw.length < 6) { er.textContent = "أكمل الاسم واسم المستخدم وكلمة مرور من 6 أحرف أو أكثر."; return; }
   btn.disabled = true; er.textContent = "";
-  var email = toEmail(id), sec = firebase.apps.filter(function (a) { return a.name === "secondary"; })[0] || firebase.initializeApp(window.GS_CONFIG.firebase, "secondary");
+  var email = toEmail(id), sec = firebase.apps.filter(function (a) { return a.name === "secondary"; })[0] || withAppCheck(firebase.initializeApp(window.GS_CONFIG.firebase, "secondary"));
   sec.auth().createUserWithEmailAndPassword(email, pw).then(function (cred) { var uid = cred.user.uid; return sec.auth().signOut().then(function () { return S.db.collection("users").doc(uid).set({ name: name, login: email, role: role, createdAt: Date.now() }); }); })
     .then(function () {
       openSheet('<div class="sheet-bg" data-close><div class="sheet">' + sheetHead("تم إنشاء الحساب") + "<p>أرسل هذه البيانات إلى " + esc(name) + ':</p><div class="card selectable" id="credCard"><dl class="kv"><dt>الرابط</dt><dd class="num">' + esc(location.origin + location.pathname) + '</dd><dt>اسم المستخدم</dt><dd class="num">' + esc(showLogin(email)) + '</dd><dt>كلمة المرور</dt><dd class="num">' + esc(pw) + "</dd></dl></div>" +
@@ -1727,11 +1743,11 @@ async function runSelfTest() {
   });
   await step("المشرف يعدّل الإعدادات", async function () { await db.collection("config").doc("settings").update({ lastSelfTest: Date.now() }); return "مسموح"; });
   await step("منع غير المسجلين من قراءة البيانات", async function () {
-    anon = firebase.initializeApp(cfgF, "anon" + Date.now());
+    anon = withAppCheck(firebase.initializeApp(cfgF, "anon" + Date.now()));
     var r = await expectDenied(anon.firestore().collection("entries").limit(1).get({ source: "server" })); return r;
   });
   await step("إنشاء حساب عامل تجريبي", async function () {
-    wApp = firebase.initializeApp(cfgF, "stw" + Date.now());
+    wApp = withAppCheck(firebase.initializeApp(cfgF, "stw" + Date.now()));
     var email = "selftest" + Date.now() + "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"), pw = "St" + Math.random().toString(36).slice(2, 10) + "9";
     var cred = await wApp.auth().createUserWithEmailAndPassword(email, pw); wuid = cred.user.uid;
     await db.collection("users").doc(wuid).set({ name: "فحص النظام", login: email, role: "worker", createdAt: Date.now(), selftest: true });
