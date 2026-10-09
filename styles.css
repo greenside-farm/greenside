@@ -254,6 +254,8 @@ html.lock,html.lock body{overflow:hidden!important;overscroll-behavior:none}
 .minitable th,.minitable td{padding:6px 4px;text-align:center;border-bottom:1px solid var(--line);white-space:nowrap}
 .minitable th:first-child,.minitable td:first-child{text-align:right}
 .minitable td.bad{color:var(--bad);font-weight:700}
+.minitable.wrapcells td{white-space:normal;text-align:right;line-height:1.5}
+.minitable.wrapcells td:first-child{white-space:nowrap;vertical-align:top}
 .alerts>*+*{margin-top:8px}
 .alert{border-radius:var(--r);padding:11px 13px;font-size:14px;display:flex;align-items:center;flex-wrap:wrap}
 .alert>*+*{margin-right:10px}

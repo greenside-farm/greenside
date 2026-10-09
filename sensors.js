@@ -740,6 +740,63 @@ var SENS = (function () {
     });
   }
 
+  /* ================= ملخص الحساسات لقسم التقارير ================= */
+  /* يقرأ أيام الفترة كاملة (منفصلة عن صفحة الحساسات) ويحسب لكل حساس في القسم الحالي:
+     المؤشرات على الفترة، والملخص اليومي، والفرق بين الحساس والقياس اليدوي في نفس الوقت والموقع. */
+  var REPC = { key: "", docs: null }; // آخر فترة قُرئت للتقارير: تبديل القسم لا يعيد القراءة
+  function report(from, to, rows, force) {
+    start();
+    var ck = from + "|" + to;
+    var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    var ready = function (i) { return X.user ? Promise.resolve() : X.err || i > 40 ? Promise.reject(new Error(X.err || "تعذّر الاتصال بقاعدة الحساسات")) : wait(250).then(function () { return ready(i + 1); }); };
+    return ready(0).then(function () {
+      if (!force && REPC.key === ck && REPC.docs) return REPC.docs;
+      return X.db.collection("sensorDays").where("date", ">=", from).where("date", "<=", to).get().then(function (q) {
+        REPC = { key: ck, docs: q.docs.map(function (d) { return d.data(); }) }; return REPC.docs;
+      });
+    }).then(function (docs) {
+      var list = sensorList().filter(function (s) { return codesFor(s, "temp").length || codesFor(s, "hum").length; });
+      return { from: from, to: to, sensors: list.map(function (s) { return repSensor(s, docs, rows || []); }).filter(function (r) { return r.days.length; }) };
+    });
+  }
+  function repSensor(s, docs, rows) {
+    var mine = docs.filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0 }, tD = [], tN = [], dMax = null, nMin = null;
+    var stat = function (doc, k) {
+      var mn = null, mx = null, sm = 0, n = 0;
+      codesFor(s, k).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
+      return n ? { mn: mn, mx: mx, av: sm / n } : null;
+    };
+    var days = mine.map(function (doc) {
+      var m = dayMetrics(doc, s);
+      Object.keys(tot).forEach(function (k) { tot[k] += m[k] || 0; });
+      if (m.tDay != null) tD.push(m.tDay); if (m.tNight != null) tN.push(m.tNight);
+      if (m.dMax != null) dMax = dMax == null ? m.dMax : Math.max(dMax, m.dMax);
+      if (m.nMin != null) nMin = nMin == null ? m.nMin : Math.min(nMin, m.nMin);
+      return { date: doc.date, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk };
+    });
+    var mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
+    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), dMax: dMax, nMin: nMin,
+      diffT: manualDiff(s, mine, rows, "temp"), diffH: manualDiff(s, mine, rows, "hum") };
+  }
+  /* الحساس ناقص القياس اليدوي لنفس الموقع والوقت (القراءة اليدوية مقابل آخر قراءة للحساس خلال ساعة) */
+  function manualDiff(s, docs, rows, k) {
+    var keys = manualKeys(s, k), by = {}, out = [];
+    if (!keys.length) return null;
+    docs.forEach(function (d) { by[d.date] = d; });
+    rows.forEach(function (e) {
+      if (e.type !== "temp" || !e.v || !e.time || !by[e.date]) return;
+      var vals = keys.map(function (q) { return typeof num === "function" ? num(e.v[q]) : +e.v[q]; }).filter(function (x) { return x != null && isFinite(x); });
+      if (!vals.length) return;
+      var man = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length, hm2 = String(e.time).split(":");
+      var sv = sampler(ptsOf(by[e.date], s, k))((+hm2[0]) * 3600 + (+hm2[1] || 0) * 60);
+      if (sv != null) out.push(sv - man);
+    });
+    if (!out.length) return null;
+    var a = out.reduce(function (x, y) { return x + y; }, 0) / out.length, ab = out.reduce(function (x, y) { return x + Math.abs(y); }, 0) / out.length;
+    return { n: out.length, avg: a, abs: ab };
+  }
+
   /* ================= الأزرار ================= */
   document.addEventListener("click", function (ev) {
     var b = ev.target.closest && ev.target.closest("[data-sact]"); if (!b) return;
@@ -757,5 +814,5 @@ var SENS = (function () {
     if (typeof render === "function") render(true);
   });
 
-  return { view: view, bind: bind, start: start, selfTest: selfTest, _x: X };
+  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, _x: X };
 })();
