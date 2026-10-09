@@ -395,6 +395,18 @@ var SENS = (function () {
       '<div class="card chart sn-chart" id="snProf"></div><ul class="sn-notes">' + notes.join("") + "</ul>" +
       '<button type="button" class="otherbar" data-sact="heat" aria-expanded="' + !!X.heat + '"><span>' + (X.heat ? "▾ إخفاء" : "▸ عرض") + ' خريطة الحرارة (كل ساعة × كل موقع)</span></button>' + (X.heat ? tbl + '<p class="help sn-hint">كل خانة = متوسط تلك الساعة' + (per ? " على الأيام المختارة، ولمسها يُظهر الأدنى والأعلى" : "") + ". " + (X.kind === "hum" ? "البرتقالي أجف، والأزرق أرطب." : "الأزرق أبرد، والأحمر أحر.") + " الإطار الأحمر = خارج الحدود.</p>" : "") + "</section>";
   }
+  /* مكان نافذة القراءة: فوق الرسم حتى لا تغطي الخطوط والنقاط. إن لم يتسع لها فوقه (قرب أعلى الشاشة)
+     توضع بجانب خط المؤشر، وإلا في النصف البعيد عن النقاط */
+  function placeTip(tip, r, px, ys) {
+    var tw = tip.offsetWidth || 160, th = tip.offsetHeight || 80, w = r.width, h = r.height, gap = 8;
+    var top = document.getElementById("top"), barB = top && !top.hidden ? top.getBoundingClientRect().bottom : 0;
+    var cx = Math.max(4, Math.min(w - tw - 4, px - tw / 2));
+    if (r.top - th - gap >= barB + 4) { tip.style.left = cx + "px"; tip.style.top = (-th - gap) + "px"; return; }
+    if (px + 14 + tw <= w - 4) { tip.style.left = (px + 14) + "px"; tip.style.top = "0px"; return; }
+    if (px - 14 - tw >= 4) { tip.style.left = (px - 14 - tw) + "px"; tip.style.top = "0px"; return; }
+    var avg = ys.length ? ys.reduce(function (a, b) { return a + b; }, 0) / ys.length : 0;
+    tip.style.left = cx + "px"; tip.style.top = (avg < h / 2 ? Math.max(0, h - th) : 0) + "px";
+  }
   function drawProfile(el, P_) {
     var rows = P_.rows, ki = P_.ki, W = 420, H = 230, L = 34, Rr = 8, T = 10, B = 26;
     var ys = []; rows.forEach(function (r) { r.h.forEach(function (x) { if (x) ys.push(x.m); }); });
@@ -421,11 +433,12 @@ var SENS = (function () {
       var r = svg.getBoundingClientRect(), cx = ev.touches ? ev.touches[0].clientX : ev.clientX;
       var h = Math.max(0, Math.min(23, Math.floor(((cx - r.left) / r.width * W - L) / (W - L - Rr) * 24)));
       var out = [], dots = "";
-      rows.forEach(function (rw) { var x = rw.h[h]; if (!x) return; out.push('<div><i style="background:' + rw.col + '"></i><bdi>' + E(rw.name) + '</bdi> <b class="num">' + F(x.m, ki.d) + "</b><bdi>" + E(ki.u) + "</bdi>" + (P() > 1 ? ' <small class="num">(' + F(x.mn, ki.d) + "–" + F(x.mx, ki.d) + ")</small>" : "") + "</div>"); dots += '<circle cx="' + Xh(h).toFixed(1) + '" cy="' + Y(x.m).toFixed(1) + '" r="5" fill="' + rw.col + '" stroke="var(--surface)" stroke-width="2"/>'; });
+      var ys = [];
+      rows.forEach(function (rw) { var x = rw.h[h]; if (!x) return; ys.push(Y(x.m) / H * r.height); out.push('<div><i style="background:' + rw.col + '"></i><bdi>' + E(rw.name) + '</bdi> <b class="num">' + F(x.m, ki.d) + "</b><bdi>" + E(ki.u) + "</bdi>" + (P() > 1 ? ' <small class="num">(' + F(x.mn, ki.d) + "–" + F(x.mx, ki.d) + ")</small>" : "") + "</div>"); dots += '<circle cx="' + Xh(h).toFixed(1) + '" cy="' + Y(x.m).toFixed(1) + '" r="5" fill="' + rw.col + '" stroke="var(--surface)" stroke-width="2"/>'; });
       if (!out.length) { tip.hidden = true; return; }
       hv.setAttribute("x1", Xh(h)); hv.setAttribute("x2", Xh(h)); hv.setAttribute("visibility", "visible"); hd.innerHTML = dots;
       tip.innerHTML = '<div class="sn-tt">الساعة ' + hl(h) + " – " + hl((h + 1) % 24) + "</div>" + out.join(""); tip.hidden = false;
-      var px = Xh(h) / W * r.width, tw = tip.offsetWidth || 160; tip.style.left = Math.max(4, Math.min(r.width - tw - 4, px - tw / 2)) + "px";
+      placeTip(tip, r, Xh(h) / W * r.width, ys);
     }
     svg.addEventListener("mousemove", mv); svg.addEventListener("touchstart", mv, { passive: true }); svg.addEventListener("touchmove", mv, { passive: true });
     svg.addEventListener("mouseleave", function () { tip.hidden = true; hv.setAttribute("visibility", "hidden"); hd.innerHTML = ""; });
@@ -644,7 +657,7 @@ var SENS = (function () {
     function mv(ev) {
       var r = svg.getBoundingClientRect(), cx = ev.touches ? ev.touches[0].clientX : ev.clientX;
       var x = Math.max(L, Math.min(W - Rr, (cx - r.left) / r.width * W)), t = t0 + (x - L) / (W - L - Rr) * (t1 - t0);
-      var best = null, rows = [], dots = "";
+      var best = null, rows = [], dots = "", ys = [];
       series.forEach(function (sr) { var q = near(sr.pts, t); if (q && (!best || Math.abs(q.t - t) < Math.abs(best.t - t))) best = q; });
       if (!best) { tip.hidden = true; hv.setAttribute("visibility", "hidden"); hd.innerHTML = ""; return; }
       series.forEach(function (sr) {
@@ -652,12 +665,12 @@ var SENS = (function () {
         var st = stOf(X.kind, q.y, sr.s.sec);
         rows.push('<div><i style="background:' + sr.col + '"></i><bdi>' + E(sr.name) + '</bdi> <b class="num' + (bad(st) ? " sn-bad" : "") + '">' + F(q.y, ki.d) + "</b><bdi>" + E(ki.u) + "</bdi>" + (Math.abs(q.t - best.t) > 5 * 60000 ? ' <small class="num">' + tLabel(q.t) + "</small>" : "") + "</div>");
         dots += '<circle cx="' + X_(q.t).toFixed(1) + '" cy="' + Y(q.y).toFixed(1) + '" r="5" fill="' + sr.col + '" stroke="var(--surface)" stroke-width="2"/>';
+        ys.push(Y(q.y) / H * r.height);
       });
       hv.setAttribute("x1", X_(best.t)); hv.setAttribute("x2", X_(best.t)); hv.setAttribute("visibility", "visible"); hd.innerHTML = dots;
       tip.innerHTML = '<div class="sn-tt">' + (P() === 1 ? "" : E(typeof fmtShort === "function" ? fmtShort(dkey(best.t)) : dkey(best.t)) + " · ") + '<span class="num">' + tLabel(best.t) + "</span></div>" + rows.join("");
       tip.hidden = false;
-      var px = X_(best.t) / W * r.width, tw = tip.offsetWidth || 160;
-      tip.style.left = Math.max(4, Math.min(r.width - tw - 4, px - tw / 2)) + "px";
+      placeTip(tip, r, X_(best.t) / W * r.width, ys);
     }
     svg.addEventListener("mousemove", mv);
     svg.addEventListener("touchstart", mv, { passive: true });

@@ -385,7 +385,7 @@ html.kp-open .wrap{padding-bottom:320px}
 .sn-chart{padding:10px 8px 6px}
 .sn-legend{flex-wrap:wrap;gap:4px 14px;padding:0 6px}
 .sn-plot{position:relative;touch-action:pan-y}
-.sn-tip{position:absolute;top:0;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12.5px;padding:6px 9px;border-radius:8px;min-width:130px;box-shadow:0 4px 14px rgba(0,0,0,.2)}
+.sn-tip{position:absolute;top:0;z-index:5;pointer-events:none;background:var(--ink);color:var(--bg);font-size:12.5px;padding:6px 9px;border-radius:8px;min-width:130px;box-shadow:0 4px 14px rgba(0,0,0,.2)}
 .sn-tip div{display:flex;align-items:center;gap:5px;white-space:nowrap}
 .sn-tip i{width:9px;height:9px;border-radius:2px;display:inline-block;flex:none}
 .sn-tip .sn-tt{font-weight:700;margin-bottom:2px}
