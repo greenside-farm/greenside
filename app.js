@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.5.6";
+var APP_VERSION = "2.5.8";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -1447,6 +1447,8 @@ function sensRepHTML(R) {
     ["الحرارة ضمن الحد <small>" + f(lo) + "–" + f(hi) + "°</small>", function (s) { var q = pct(s.tot.inT, s.tot.cov); return q == null ? "—" : '<b class="num ' + (q < 70 ? "sn-bad" : q < 90 ? "sn-warn" : "") + '">' + q + "%</b>"; }],
     ["ساعات الإجهاد الحراري <small>فوق حد الإجهاد · مجموع الفترة</small>", function (s) { return '<span class="' + (s.tot.heat >= 3 ? "sn-bad" : s.tot.heat > 0.4 ? "sn-warn" : "") + '">' + hrsTxt(s.tot.heat) + "</span>"; }],
     ["الرطوبة ضمن الحد", function (s) { var q = pct(s.tot.inH, s.tot.hCov); return q == null ? "—" : '<b class="num ' + (q < 70 ? "sn-bad" : q < 90 ? "sn-warn" : "") + '">' + q + "%</b>"; }],
+    ["VPD نهاراً <small>kPa · متوسط 6ص–6م</small>", function (s) { if (s.vDay == null) return "—"; var o = s.vDay >= s.vMin && s.vDay <= s.vMax; return '<b class="num ' + (o ? "" : "sn-warn") + '"><bdi dir="ltr">' + s.vDay.toFixed(2) + "</bdi></b> " + '<small class="muted">' + (s.vDay < s.vMin ? "رطب" : s.vDay > s.vMax ? "جاف" : "مثالي") + "</small>"; }],
+    ["VPD ضمن المثالي <small>نسبة الوقت</small>", function (s) { var q = pct(s.tot.inV, s.tot.vCov); return q == null ? "—" : '<b class="num ' + (q < 50 ? "sn-bad" : q < 75 ? "sn-warn" : "") + '">' + q + "%</b>"; }],
     ["ساعات خطر الأمراض الفطرية <small>مجموع الفترة</small>", function (s) { return '<span class="' + (s.tot.risk >= 6 * s.days.length ? "sn-bad" : s.tot.risk >= 2 * s.days.length ? "sn-warn" : "") + '">' + hrsTxt(s.tot.risk) + "</span>"; }],
     ["فرق الحساس عن القياس اليدوي: الحرارة", function (s) { return df(s.diffT, "°", 1); }],
     ["فرق الحساس عن القياس اليدوي: الرطوبة", function (s) { return df(s.diffH, "%", 0); }],
@@ -1588,8 +1590,8 @@ function exportXlsx(btn) {
     if (WS.length) add("العمال", [["الاسم", "التسجيلات", "أيام العمل", "معتمد", "عليه ملاحظة", "بانتظار المراجعة"]].concat(WS.map(function (w) { return [nameOf(w.id), w.n, w.dn, w.ok, w.flag, w.pend]; })));
     var SR = S.repSens && S.repSens.data, r1 = function (x, d) { return x == null ? "" : +x.toFixed(d); };
     if (SR && SR.sensors.length) {
-      add("الحساسات - الفترة", [["الحساس", "حرارة النهار", "حرارة الليل", "أعلى حرارة", "أدنى حرارة", "الحرارة ضمن الحد %", "ساعات الإجهاد الحراري", "الرطوبة ضمن الحد %", "ساعات خطر الأمراض", "فرق الحرارة عن اليدوي", "قراءات المقارنة", "فرق الرطوبة عن اليدوي"]].concat(SR.sensors.map(function (s) { return [s.name, r1(s.tDay, 1), r1(s.tNight, 1), r1(s.dMax, 1), r1(s.nMin, 1), pct(s.tot.inT, s.tot.cov), r1(s.tot.heat, 1), pct(s.tot.inH, s.tot.hCov), r1(s.tot.risk, 1), s.diffT ? r1(s.diffT.avg, 1) : "", s.diffT ? s.diffT.n : "", s.diffH ? r1(s.diffH.avg, 0) : ""]; })));
-      add("الحساسات - يومي", [["التاريخ", "الحساس", "أدنى حرارة", "أعلى حرارة", "متوسط الحرارة", "أدنى رطوبة", "أعلى رطوبة", "متوسط الرطوبة", "ساعات الحرارة ضمن الحد", "ساعات الإجهاد", "ساعات خطر الأمراض", "ساعات فيها قراءات"]].concat(SR.sensors.reduce(function (acc, s) { return acc.concat(s.days.map(function (d) { return [d.date, s.name, d.t ? r1(d.t.mn, 1) : "", d.t ? r1(d.t.mx, 1) : "", d.t ? r1(d.t.av, 1) : "", d.h ? r1(d.h.mn, 0) : "", d.h ? r1(d.h.mx, 0) : "", d.h ? r1(d.h.av, 0) : "", r1(d.inT, 1), r1(d.heat, 1), r1(d.risk, 1), r1(Math.max(d.cov, d.hCov), 1)]; })); }, []).sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; })));
+      add("الحساسات - الفترة", [["الحساس", "حرارة النهار", "حرارة الليل", "أعلى حرارة", "أدنى حرارة", "الحرارة ضمن الحد %", "ساعات الإجهاد الحراري", "الرطوبة ضمن الحد %", "VPD نهاراً (kPa)", "VPD ضمن المثالي %", "ساعات خطر الأمراض", "فرق الحرارة عن اليدوي", "قراءات المقارنة", "فرق الرطوبة عن اليدوي"]].concat(SR.sensors.map(function (s) { return [s.name, r1(s.tDay, 1), r1(s.tNight, 1), r1(s.dMax, 1), r1(s.nMin, 1), pct(s.tot.inT, s.tot.cov), r1(s.tot.heat, 1), pct(s.tot.inH, s.tot.hCov), r1(s.vDay, 2), pct(s.tot.inV, s.tot.vCov), r1(s.tot.risk, 1), s.diffT ? r1(s.diffT.avg, 1) : "", s.diffT ? s.diffT.n : "", s.diffH ? r1(s.diffH.avg, 0) : ""]; })));
+      add("الحساسات - يومي", [["التاريخ", "الحساس", "أدنى حرارة", "أعلى حرارة", "متوسط الحرارة", "أدنى رطوبة", "أعلى رطوبة", "متوسط الرطوبة", "ساعات الحرارة ضمن الحد", "ساعات الإجهاد", "VPD نهاراً (kPa)", "ساعات VPD ضمن المثالي", "ساعات خطر الأمراض", "ساعات فيها قراءات"]].concat(SR.sensors.reduce(function (acc, s) { return acc.concat(s.days.map(function (d) { return [d.date, s.name, d.t ? r1(d.t.mn, 1) : "", d.t ? r1(d.t.mx, 1) : "", d.t ? r1(d.t.av, 1) : "", d.h ? r1(d.h.mn, 0) : "", d.h ? r1(d.h.mx, 0) : "", d.h ? r1(d.h.av, 0) : "", r1(d.inT, 1), r1(d.heat, 1), r1(d.vDay, 2), r1(d.inV, 1), r1(d.risk, 1), r1(Math.max(d.cov, d.hCov), 1)]; })); }, []).sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; })));
     }
     XLSX.writeFile(wb, "GREEN-SIDE-" + (sec === "t" ? "TOWERS" : "NURSERY") + "-" + S.rep.start + "-" + (S.rep.end || todayStr()) + ".xlsx");
     toast("تم تنزيل الملف");

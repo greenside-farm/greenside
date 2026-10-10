@@ -23,12 +23,14 @@ var SENS = (function () {
   var KINDS = {
     temp: { l: "الحرارة", u: "°C", d: 1, c: "air" },
     hum: { l: "رطوبة الهواء", u: "%", d: 0, c: "rh" },
+    dew: { l: "نقطة الندى", u: "°C", d: 1 }, // محسوبة من الحرارة والرطوبة لنفس الحساس
+    vpd: { l: "VPD", u: "kPa", d: 2 }, // عجز ضغط البخار: محسوب من الحرارة والرطوبة، وحدوده vpdMin–vpdMax
     soil: { l: "رطوبة التربة", u: "%", d: 0 },
     lux: { l: "الإضاءة", u: "lux", d: 0, c: "lux" },
     co2: { l: "CO₂", u: "ppm", d: 0 },
     batt: { l: "البطارية", u: "%", d: 0 }
   };
-  var ORDER = ["temp", "hum", "soil", "lux", "co2"];
+  var ORDER = ["temp", "hum", "vpd", "dew", "soil", "lux", "co2"];
   var CODE_KIND = {
     va_temperature: "temp", temp_current: "temp", temp_value: "temp", temp_indoor: "temp",
     va_humidity: "hum", humidity_value: "hum", humidity_indoor: "hum",
@@ -177,16 +179,20 @@ var SENS = (function () {
     var ids = Object.keys(X.sensors).sort(); var i = ids.indexOf(s.id);
     return PAL[(i < 0 ? 0 : i) % PAL.length];
   }
-  function codesFor(s, k) { return Object.keys((s && s.measures) || {}).filter(function (c) { return kindOf(c) === k; }); }
+  function codesFor(s, k) {
+    if (k === "dew" || k === "vpd") return codesFor(s, "temp").length && codesFor(s, "hum").length ? ["__" + k] : [];
+    return Object.keys((s && s.measures) || {}).filter(function (c) { return kindOf(c) === k; });
+  }
   function kindsAvail(list) {
     var seen = {};
-    list.forEach(function (s) { Object.keys(s.measures || {}).forEach(function (c) { seen[kindOf(c)] = 1; }); });
+    list.forEach(function (s) { Object.keys(s.measures || {}).forEach(function (c) { seen[kindOf(c)] = 1; }); if (codesFor(s, "dew").length) { seen.dew = 1; seen.vpd = 1; } });
     var ks = ORDER.filter(function (k) { return seen[k]; });
     Object.keys(seen).forEach(function (k) { if (ks.indexOf(k) < 0 && k !== "batt") ks.push(k); });
     if (seen.batt) ks.push("batt");
     return ks;
   }
   function stOf(k, v, sec) {
+    if (k === "vpd") { if (v == null) return null; return v < scn("vpdMin") ? "lo" : v > scn("vpdMax") ? "hi" : "ok"; }
     var c = KINDS[k] && KINDS[k].c; if (!c || v == null || typeof chk !== "function") return null;
     return chk(c, v, S.sec);
   }
@@ -196,6 +202,7 @@ var SENS = (function () {
     return (X.days || []).filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); });
   }
   function seriesFor(s, k) {
+    if (k === "dew" || k === "vpd") { var dp = []; dayDocs(s).forEach(function (d) { var t0 = dayStart(d.date); ptsOf(d, s, k).forEach(function (p) { dp.push({ t: t0 + p.t * 1000, y: p.v }); }); }); return dp.sort(function (a, b) { return a.t - b.t; }); }
     var codes = codesFor(s, k), pts = [];
     dayDocs(s).forEach(function (d) {
       var t0 = dayStart(d.date);
@@ -224,6 +231,11 @@ var SENS = (function () {
   function dewOf(T, RH) { var a = 17.27, b = 237.7, g = a * T / (b + T) + Math.log(Math.max(1, RH) / 100); return b * g / (a - g); }
   var STEP = 300, HOLD = 3600; // نأخذ عينة كل 5 دقائق، وتبقى آخر قراءة صالحة حتى ساعة
   function ptsOf(doc, s, k) {
+    if (k === "dew" || k === "vpd") {
+      if (!codesFor(s, k).length) return [];
+      var H = sampler(ptsOf(doc, s, "hum")), fn = k === "dew" ? dewOf : vpdOf;
+      return ptsOf(doc, s, "temp").map(function (p) { var h = H(p.t); return h == null ? null : { t: p.t, v: +fn(p.v, h).toFixed(3) }; }).filter(Boolean);
+    }
     var out = []; codesFor(s, k).forEach(function (c) { ((doc.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) out.push({ t: +p.t, v: +p.v }); }); });
     return out.sort(function (a, b) { return a.t - b.t; });
   }
@@ -288,7 +300,7 @@ var SENS = (function () {
     if (!X.days || X.key !== R.from + "|" + R.to) return h + '<div class="card"><div class="empty" style="border:0">جارٍ تحميل القراءات…</div></div></section>';
     var ki = kindInfo(X.kind, withK[0]);
     var night = nightHTML(list, R.to); h = h.replace("<!--sn-night-->", function () { return night; });
-    h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة بالضبط.' + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
+    h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة بالضبط.' + (X.kind === "vpd" ? " VPD يقيس قوة سحب الهواء للماء من الورقة. المنطقة المظللة هي المثالي (" + F(scn("vpdMin"), 1) + "–" + F(scn("vpdMax"), 1) + " kPa): أقل منها جو رطب يضعف النتح ووصول الكالسيوم (احتراق الحواف وأمراض)، وأعلى منها جو جاف يُجهد النبات. انخفاضه في الليل طبيعي، والمهم قيمته في النهار." : "") + (X.kind === "dew" ? " نقطة الندى هي الحرارة التي يبدأ عندها تكثّف الماء على الأوراق: كلما اقتربت من حرارة الجو (أقل من " + F(scn("dewGap")) + "°) زاد خطر الأمراض الفطرية." : "") + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
     if (sup && P() === 1) h += rawHTML(withK.filter(function (s) { return !X.off[s.id]; }), ki, R.to);
     h += "</section>";
     if (!sup) return h;
@@ -412,6 +424,7 @@ var SENS = (function () {
     var ys = []; rows.forEach(function (r) { r.h.forEach(function (x) { if (x) ys.push(x.m); }); });
     var lo = null, hi = null, c = KINDS[X.kind] && KINDS[X.kind].c;
     if (c && typeof cfg === "function" && CHECK[c]) { lo = num(cfg(CHECK[c][0])); hi = num(cfg(CHECK[c][1])); }
+    if (X.kind === "vpd") { lo = scn("vpdMin"); hi = scn("vpdMax"); }
     var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys), sp = Math.max(1, ymax - ymin);
     if (lo != null && lo > ymin - sp * 1.5) ymin = Math.min(ymin, lo);
     if (hi != null && hi < ymax + sp * 1.5) ymax = Math.max(ymax, hi);
@@ -540,7 +553,7 @@ var SENS = (function () {
       '<span class="sub">' + (where ? E(where) : '<span class="pill n">لم يُحدَّد الموقع</span>') + "</span>" +
       '<div class="sn-vals">' + (vals.join("") || '<span class="muted">لا قراءات</span>') + "</div>" +
       '<span class="sub' + (stale ? " sn-stale" : "") + '">' + (seen ? (stale ? "آخر قراءة " : "") + ago(seen) : "—") +
-      (batt != null ? ' · <span class="' + (batt < 20 ? "sn-low" : "") + '">🔋 ' + F(batt) + "%</span>" : "") + "</span>" + (stale ? "" : ydayHTML(s)) + "</div>";
+      (batt != null ? ' · <span class="' + (batt < 20 ? "sn-low" : "") + '">🔋 ' + F(batt) + "%</span>" : "") + "</span>" + (stale ? "" : vpdHTML(s) + dewHTML(s) + ydayHTML(s)) + "</div>";
   }
 
   /* ================= أمس في نفس الوقت، والليلة الماضية (للجميع) ================= */
@@ -548,14 +561,26 @@ var SENS = (function () {
     return (X.all || []).filter(function (d) { return d.deviceId === s.id && d.date === date && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); })[0] || null;
   }
   function lastOfKind(s, k) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c) === k && l[c] && l[c].v != null) v = +l[c].v; }); return v; }
+  /* VPD الآن مقارنة بالنطاق المثالي من الإعدادات */
+  function vpdHTML(s) {
+    var t = lastOfKind(s, "temp"), h = lastOfKind(s, "hum"); if (t == null || h == null) return "";
+    var v = vpdOf(t, h), st = stOf("vpd", v), lab = st === "lo" ? "رطب" : st === "hi" ? "جاف" : "مثالي";
+    return '<span class="sub sn-vpd">VPD <b class="num ' + (st === "ok" ? "sn-good" : "sn-bad") + '"><bdi dir="ltr">' + v.toFixed(2) + '</bdi></b> <small class="muted">kPa</small> · <span class="' + (st === "ok" ? "sn-good" : "sn-bad") + '">' + lab + "</span></span>";
+  }
+  /* نقطة الندى الآن والهامش (الحرارة ناقص نقطة الندى) */
+  function dewHTML(s) {
+    var t = lastOfKind(s, "temp"), h = lastOfKind(s, "hum"); if (t == null || h == null) return "";
+    var dp = dewOf(t, h), mg = t - dp, low = mg <= scn("dewGap");
+    return '<span class="sub sn-dew">الندى <bdi dir="ltr" class="num">' + F(dp, 1) + '°</bdi> · الهامش <b class="num' + (low ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mg, 1) + "°</bdi></b>" + (low ? ' <small class="sn-bad">خطر تكثّف</small>' : "") + "</span>";
+  }
   function ydayHTML(s) {
     var today = dkey(Date.now()); if (!window.S || S.date !== today || !X.all || typeof addDays !== "function") return "";
     var yd = docOf(s, addDays(today, -1)); if (!yd) return "";
     var t = Math.floor((Date.now() - dayStart(today)) / 1000), out = [];
     [["temp", "°", 1], ["hum", "%", 0]].forEach(function (x) {
       var now = lastOfKind(s, x[0]), y = sampler(ptsOf(yd, s, x[0]))(t); if (now == null || y == null) return;
-      var d = now - y, arr = Math.abs(d) < (x[0] === "temp" ? 0.5 : 2) ? "" : d > 0 ? " ↑" : " ↓";
-      out.push('<bdi dir="ltr" class="num">' + F(y, x[2]) + x[1] + "</bdi>" + (arr ? '<small class="muted"><bdi dir="ltr">' + arr + F(Math.abs(d), x[2]) + "</bdi></small>" : ""));
+      var d = now - y, arr = Math.abs(d) < (x[0] === "temp" ? 0.5 : 2) ? "" : d > 0 ? "↑" : "↓";
+      out.push('<bdi dir="ltr" class="num">' + F(y, x[2]) + x[1] + "</bdi>" + (arr ? ' <small class="muted">(الآن <bdi dir="ltr">' + arr + F(Math.abs(d), x[2]) + "</bdi>)</small>" : ""));
     });
     return out.length ? '<span class="sub sn-yd">أمس في نفس الوقت: ' + out.join(" · ") + "</span>" : "";
   }
@@ -573,14 +598,20 @@ var SENS = (function () {
         return a;
       };
       var T = pick("temp"), H = pick("hum"); if (!T.length && !H.length) return;
+      var mg = null, hi = 0;
+      if (T.length && H.length) { H.sort(function (a, b) { return a.t - b.t; }); T.slice().sort(function (a, b) { return a.t - b.t; }).forEach(function (p) {
+        while (hi + 1 < H.length && H[hi + 1].t <= p.t) hi++; var q = H[hi]; if (!q || q.t > p.t || p.t - q.t > HOLD * 1000) return;
+        var g = p.v - dewOf(p.v, q.v); if (!mg || g < mg.v) mg = { t: p.t, v: g };
+      }); }
       var mn = T.reduce(function (b, p) { return !b || p.v < b.v ? p : b; }, null), mx = H.reduce(function (b, p) { return !b || p.v > b.v ? p : b; }, null), parts = [];
       if (mn) parts.push('أدنى حرارة <b class="num' + (mn.v < lo ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mn.v, 1) + '°</bdi></b> <small class="muted num">' + tLabel(mn.t) + "</small>");
       if (mx) parts.push('أعلى رطوبة <b class="num' + (mx.v >= risk ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mx.v) + '%</bdi></b> <small class="muted num">' + tLabel(mx.t) + "</small>");
+      if (mg) parts.push('أقل هامش ندى <b class="num' + (mg.v <= scn("dewGap") ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mg.v, 1) + '°</bdi></b> <small class="muted num">' + tLabel(mg.t) + "</small>");
       rows.push('<li><i style="background:' + colorOf(s) + '"></i><b><bdi>' + E(nm(s)) + "</bdi>:</b> " + parts.join(" · ") + "</li>");
     });
     if (!rows.length) return "";
     return '<section class="sec"><h2>' + (live ? "الليلة حتى الآن" : "الليلة الماضية") + ' <small class="muted">6 مساءً – 6 صباحاً</small></h2><ul class="sn-notes">' + rows.join("") + "</ul>" +
-      '<p class="help sn-hint">الأحمر: حرارة أقل من الحد الأدنى، أو رطوبة ' + F(risk) + "% فأكثر (خطر أمراض فطرية).</p></section>";
+      '<p class="help sn-hint">الأحمر: حرارة أقل من الحد الأدنى، أو رطوبة ' + F(risk) + "% فأكثر، أو هامش ندى " + F(scn("dewGap")) + "° أو أقل (خطر تكثّف وأمراض فطرية). هامش الندى = حرارة الجو ناقص نقطة الندى.</p></section>";
   }
 
   function summaryHTML(list, ki, R) {
@@ -589,7 +620,8 @@ var SENS = (function () {
     var cell = function (s, date) {
       var doc = by[date + "|" + s.id]; if (!doc || !secOk(doc.sec != null && doc.sec !== "" ? doc.sec : s.sec)) return '<td class="muted">—</td>';
       var mn = null, mx = null, sm = 0, n = 0;
-      codesFor(s, X.kind).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
+      if (X.kind === "dew" || X.kind === "vpd") ptsOf(doc, s, X.kind).forEach(function (p) { mn = mn == null ? p.v : Math.min(mn, p.v); mx = mx == null ? p.v : Math.max(mx, p.v); sm += p.v; n++; });
+      else codesFor(s, X.kind).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
       if (!n) return '<td class="muted">—</td>';
       var b1 = bad(stOf(X.kind, mn, s.sec)), b2 = bad(stOf(X.kind, mx, s.sec));
       return '<td><span class="num"><span class="' + (b1 ? "sn-bad" : "") + '">' + F(mn, ki.d) + '</span> – <span class="' + (b2 ? "sn-bad" : "") + '">' + F(mx, ki.d) + '</span></span><small class="sn-avg">متوسط <b class="num">' + F(sm / n, ki.d) + "</b> · " + n + " قراءة</small></td>";
@@ -619,6 +651,7 @@ var SENS = (function () {
     var all = []; series.forEach(function (sr) { all = all.concat(sr.pts, sr.man); });
     var ys = all.map(function (p) { return p.y; }), lo = null, hi = null, c = KINDS[X.kind] && KINDS[X.kind].c;
     if (c && typeof cfg === "function" && CHECK[c]) { lo = num(cfg(CHECK[c][0])); hi = num(cfg(CHECK[c][1])); }
+    if (X.kind === "vpd") { lo = scn("vpdMin"); hi = scn("vpdMax"); }
     var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
     // نُظهر نطاق الحدود فقط إن كان قريباً من القراءات، كي لا تنضغط الخطوط
     var span0 = Math.max(1, ymax - ymin);
@@ -782,7 +815,7 @@ var SENS = (function () {
   }
   function repSensor(s, docs, rows) {
     var mine = docs.filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0 }, tD = [], tN = [], dMax = null, nMin = null;
+    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0, vCov: 0, inV: 0 }, tD = [], tN = [], vD = [], dMax = null, nMin = null;
     var stat = function (doc, k) {
       var mn = null, mx = null, sm = 0, n = 0;
       codesFor(s, k).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
@@ -791,13 +824,13 @@ var SENS = (function () {
     var days = mine.map(function (doc) {
       var m = dayMetrics(doc, s);
       Object.keys(tot).forEach(function (k) { tot[k] += m[k] || 0; });
-      if (m.tDay != null) tD.push(m.tDay); if (m.tNight != null) tN.push(m.tNight);
+      if (m.tDay != null) tD.push(m.tDay); if (m.tNight != null) tN.push(m.tNight); if (m.vDay != null) vD.push(m.vDay);
       if (m.dMax != null) dMax = dMax == null ? m.dMax : Math.max(dMax, m.dMax);
       if (m.nMin != null) nMin = nMin == null ? m.nMin : Math.min(nMin, m.nMin);
-      return { date: doc.date, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk };
+      return { date: doc.date, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
     });
     var mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
-    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), dMax: dMax, nMin: nMin,
+    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), vDay: mean(vD), vMin: scn("vpdMin"), vMax: scn("vpdMax"), dMax: dMax, nMin: nMin,
       diffT: manualDiff(s, mine, rows, "temp"), diffH: manualDiff(s, mine, rows, "hum") };
   }
   /* الحساس ناقص القياس اليدوي لنفس الموقع والوقت (القراءة اليدوية مقابل آخر قراءة للحساس خلال ساعة) */
