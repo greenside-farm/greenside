@@ -43,7 +43,7 @@ var SENS = (function () {
   var STALE_H = 3;
   /* حدود الحساسات (تُعدَّل من زر "إعدادات الحساسات" وتُحفظ في config/settings.sens). القيم المبدئية للخس الورقي (لولو بيوندا). */
   var SDEF = {
-    vpdMin: 0.5, vpdMax: 1.2, heat: 27, rhRisk: 90, dewGap: 2, gradMax: 4, dliMin: 12, dliMax: 17, luxPpfd: 0.0185,
+    vpdMin: 0.5, vpdMax: 1.2, heat: 27, rhRisk: 90, dewGap: 2, condGap: 1, gradMax: 4, dliMin: 12, dliMax: 17, luxPpfd: 0.0185,
     msgHot: "الحرارة مرتفعة", msgCold: "الحرارة منخفضة", msgHumid: "الرطوبة مرتفعة: خطر أمراض فطرية", msgDry: "الجو جاف",
     msgOff: "حساس لا يرسل قراءات أو بطاريته ضعيفة: بلّغ المشرف"
   };
@@ -514,7 +514,7 @@ var SENS = (function () {
   /* ================= إعدادات الحساسات (للمشرف) ================= */
   function openSet() {
     var kpa = typeof KPA === "function" ? KPA() : 'inputmode="decimal"';
-    var nf = [["vpdMin", "VPD الأدنى المثالي", "kPa"], ["vpdMax", "VPD الأعلى المثالي", "kPa"], ["heat", "حد الإجهاد الحراري", "°C"], ["rhRisk", "رطوبة خطر الأمراض", "%"], ["dewGap", "الاقتراب من نقطة الندى", "°C"], ["gradMax", "أقصى فرق مقبول بين أول البيت وآخره", "°C"], ["dliMin", "DLI الأدنى", "mol"], ["dliMax", "DLI الأعلى", "mol"]];
+    var nf = [["vpdMin", "VPD الأدنى المثالي", "kPa"], ["vpdMax", "VPD الأعلى المثالي", "kPa"], ["heat", "حد الإجهاد الحراري", "°C"], ["rhRisk", "رطوبة خطر الأمراض", "%"], ["dewGap", "الاقتراب من نقطة الندى", "°C"], ["condGap", "هامش التكثّف المحتمل على الأوراق", "°C"], ["gradMax", "أقصى فرق مقبول بين أول البيت وآخره", "°C"], ["dliMin", "DLI الأدنى", "mol"], ["dliMax", "DLI الأعلى", "mol"]];
     var tf = [["msgHot", "رسالة الحرارة المرتفعة"], ["msgCold", "رسالة الحرارة المنخفضة"], ["msgHumid", "رسالة الرطوبة المرتفعة"], ["msgDry", "رسالة الجو الجاف"], ["msgOff", "رسالة الحساس المنقطع أو البطارية"]];
     openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("إعدادات الحساسات") +
       '<form class="fgrid" id="snSet" novalidate><p class="help full" style="margin:0">حدود الحرارة والرطوبة نفسها تُؤخذ من "الحدود المستهدفة" لكل قسم في صفحة المشرف. هذه الحدود إضافية للتحليل، والقيم المبدئية للخس الورقي.</p>' +
@@ -609,12 +609,13 @@ var SENS = (function () {
       var mn = T.reduce(function (b, p) { return !b || p.v < b.v ? p : b; }, null), mx = H.reduce(function (b, p) { return !b || p.v > b.v ? p : b; }, null), parts = [];
       if (mn) parts.push('أدنى حرارة <b class="num' + (mn.v < lo ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mn.v, 1) + '°</bdi></b> <small class="muted num">' + tLabel(mn.t) + "</small>");
       if (mx) parts.push('أعلى رطوبة <b class="num' + (mx.v >= risk ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mx.v) + '%</bdi></b> <small class="muted num">' + tLabel(mx.t) + "</small>");
+      if (codesFor(s, "dew").length) { var cc = condOf(s, X.all, date); parts.push("تكثّف محتمل " + (cc.h > 0 ? condTxt(cc) : '<span class="sn-good">لا</span>')); }
       if (mg) parts.push('أقل هامش ندى <b class="num' + (mg.v <= scn("dewGap") ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mg.v, 1) + '°</bdi></b> <small class="muted num">' + tLabel(mg.t) + "</small>");
       rows.push('<li><i style="background:' + colorOf(s) + '"></i><b><bdi>' + E(nm(s)) + "</bdi>:</b> " + parts.join(" · ") + "</li>");
     });
     if (!rows.length) return "";
     return '<section class="sec"><h2>' + (live ? "الليلة حتى الآن" : "الليلة الماضية") + ' <small class="muted">6 مساءً – 6 صباحاً</small></h2><ul class="sn-notes">' + rows.join("") + "</ul>" +
-      '<p class="help sn-hint">الأحمر: حرارة أقل من الحد الأدنى، أو رطوبة ' + F(risk) + "% فأكثر، أو هامش ندى " + F(scn("dewGap")) + "° أو أقل (خطر تكثّف وأمراض فطرية). هامش الندى = حرارة الجو ناقص نقطة الندى.</p></section>";
+      '<p class="help sn-hint">الأحمر: حرارة أقل من الحد الأدنى، أو رطوبة ' + F(risk) + "% فأكثر، أو هامش ندى " + F(scn("dewGap")) + "° أو أقل (خطر تكثّف وأمراض فطرية). هامش الندى = حرارة الجو ناقص نقطة الندى. التكثّف المحتمل: هامش " + F(scn("condGap")) + "° أو أقل، لأن الورقة في الليل أبرد من الهواء.</p></section>";
   }
 
   function summaryHTML(list, ki, R) {
@@ -776,6 +777,44 @@ var SENS = (function () {
     });
   }
 
+  /* ================= التكثّف المحتمل على الأوراق ================= */
+  /* الورقة في الليل أبرد من الهواء بدرجة أو درجتين، فيتكثف عليها الماء قبل أن يتشبع الهواء.
+     نعدّه محتملاً عندما يكون هامش الندى (حرارة الهواء ناقص نقطة الندى) condGap أو أقل، بعيّنة كل 5 دقائق،
+     وبحرارة ورطوبة متقاربتين في الوقت (30 دقيقة). الليلة = 6 مساءً من اليوم السابق حتى 6 صباحاً. */
+  function condOf(s, docs, date) {
+    var res = { h: 0, spans: [] }; if (!codesFor(s, "dew").length || typeof addDays !== "function") return res;
+    var gap = scn("condGap"), cur = null, prev = addDays(date, -1);
+    [[prev, 64800, 86400], [date, 0, 21600]].forEach(function (x) {
+      var d = (docs || []).filter(function (dd) { return dd.deviceId === s.id && dd.date === x[0] && secOk(dd.sec != null && dd.sec !== "" ? dd.sec : s.sec); })[0]; if (!d) return;
+      var fT = samplerP(ptsOf(d, s, "temp")), fH = samplerP(ptsOf(d, s, "hum")), end = Math.min(x[2], dayEnd(d.date)), base = dayStart(x[0]);
+      for (var t = x[1]; t < end; t += STEP) {
+        var a = fT(t), b = fH(t); if (!a || !b || Math.abs(a.t - b.t) > 1800) continue;
+        if (a.v - dewOf(a.v, b.v) > gap) continue;
+        var at = base + t * 1000; res.h += STEP / 3600;
+        if (cur && at - cur.b <= 1000) cur.b = at + STEP * 1000; else { cur = { a: at, b: at + STEP * 1000 }; res.spans.push(cur); }
+      }
+    });
+    return res;
+  }
+  function condTxt(c) {
+    if (!c.spans.length) return "";
+    var f = c.spans[0], l = c.spans[c.spans.length - 1];
+    return '<b class="num sn-bad">' + F(c.h, c.h < 10 ? 1 : 0) + ' س</b> <small class="muted num">(' + tLabel(f.a) + "–" + tLabel(l.b) + (c.spans.length > 1 ? " · " + c.spans.length + " فترات" : "") + ")</small>";
+  }
+  /* للصفحة الرئيسية: وثائق أمس واليوم فقط، تُقرأ مرة ثم تُحدَّث مع الجامع حتى السابعة صباحاً */
+  var NC = { key: "", run: 0, docs: null, loading: false };
+  function nightDocs() {
+    var today = dkey(Date.now()), run = X.status ? ms(X.status.lastRun) || 0 : 0, hr = riy(Date.now()).getUTCHours();
+    var need = NC.key !== today || (hr < 7 && run && run !== NC.run);
+    if (need && !NC.loading && X.user && typeof addDays === "function") {
+      NC.loading = true;
+      X.db.collection("sensorDays").where("date", ">=", addDays(today, -1)).where("date", "<=", today).get().then(function (q) {
+        NC = { key: today, run: run, docs: q.docs.map(function (d) { return d.data(); }), loading: false }; rr();
+      }).catch(function (e) { NC.loading = false; console.warn(e); });
+    }
+    return NC.key === today ? NC.docs : null;
+  }
+
   /* ================= شريط الحساسات في الصفحة الرئيسية (للجميع) ================= */
   function strip() {
     start();
@@ -792,9 +831,12 @@ var SENS = (function () {
         (hm_ != null ? ' <span class="num' + (bh ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(hm_) + "%</bdi></span>" : "");
       return '<span class="snb-c' + (stale ? " off" : bt || bh ? " bad" : "") + '"><i style="background:' + colorOf(s) + '"></i><small><bdi>' + E(nm(s)) + "</bdi></small>" + v + "</span>";
     }).join("");
+    var nd = nightDocs(), today = dkey(Date.now()), condL = [];
+    if (nd) list.forEach(function (s) { var c = condOf(s, nd, today); if (c.h > 0) condL.push(E(nm(s)) + " " + F(c.h, c.h < 10 ? 1 : 0) + " س"); });
+    var cond = condL.length ? '<span class="snb-cond">💧 <b>تكثّف محتمل على الأوراق ' + (riy(Date.now()).getUTCHours() < 6 ? "الليلة" : "ليلة أمس") + ":</b> " + condL.join(" · ") + ' <small>افحص الأوراق وحسّن التهوية</small></span>' : "";
     var pill = nBad ? '<span class="pill bad">' + nBad + " خارج الحدود</span>" : nOff ? '<span class="pill warn">' + nOff + " متوقف</span>" : '<span class="pill ok">ضمن الحدود</span>';
     return '<section class="sec"><button class="mybar snbar" type="button" data-act="goSens"><span class="mb-t">🌡️ الحساسات الآن ' + pill + '</span><span class="muted">' + (newest ? ago(newest) : "") + " ‹</span>" +
-      '<span class="snb-row">' + chips + "</span></button></section>";
+      '<span class="snb-row">' + chips + "</span>" + cond + "</button></section>";
   }
 
   /* ================= ملخص الحساسات لقسم التقارير ================= */
@@ -818,7 +860,7 @@ var SENS = (function () {
   }
   function repSensor(s, docs, rows) {
     var mine = docs.filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0, vCov: 0, inV: 0 }, tD = [], tN = [], vD = [], dMax = null, nMin = null, minMg = null, dewS = 0, dewN = 0;
+    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0, vCov: 0, inV: 0, cond: 0 }, tD = [], tN = [], vD = [], dMax = null, nMin = null, minMg = null, dewS = 0, dewN = 0;
     var stat = function (doc, k) {
       var mn = null, mx = null, sm = 0, n = 0;
       codesFor(s, k).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
@@ -833,19 +875,19 @@ var SENS = (function () {
       // نقطة الندى: متوسطها، وأقل هامش (الحرارة ناقص نقطة الندى) ووقته
       // موزونة بالوقت: عيّنة كل 5 دقائق (مثل باقي ساعات التقرير)، فلا تطغى ساعات النهار التي يرسل فيها الحساس قراءات أكثر
       // ونقرن الحرارة بالرطوبة فقط إذا كانت القراءتان متقاربتين (30 دقيقة)، كي لا تُحسب حرارة جديدة مع رطوبة قديمة عند تشغيل التبريد مثلاً
-      var fT = samplerP(ptsOf(doc, s, "temp")), fH = samplerP(ptsOf(doc, s, "hum")), dSum = 0, dN = 0, mg = null;
+      var fT = samplerP(ptsOf(doc, s, "temp")), fH = samplerP(ptsOf(doc, s, "hum")), dSum = 0, dN = 0, mg = null, cH = 0, cGap = scn("condGap");
       for (var tt = 0, te = dayEnd(doc.date); tt < te; tt += STEP) {
         var qT = fT(tt), qH = fH(tt); if (!qT || !qH || Math.abs(qT.t - qH.t) > 1800) continue;
         var tv = qT.v, hv = qH.v;
-        var dv = dewOf(tv, hv), g = tv - dv; dSum += dv; dN++;
+        var dv = dewOf(tv, hv), g = tv - dv; dSum += dv; dN++; if (g <= cGap) cH += STEP / 3600;
         if (!mg || g < mg.v) mg = { v: g, t: dayStart(doc.date) + tt * 1000 };
       }
       if (mg && (!minMg || mg.v < minMg.v)) minMg = { v: mg.v, t: mg.t };
-      dewS += dSum; dewN += dN;
-      return { date: doc.date, dewAvg: dN ? dSum / dN : null, mgMin: mg ? mg.v : null, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
+      dewS += dSum; dewN += dN; tot.cond += cH;
+      return { date: doc.date, cond: cH, dewAvg: dN ? dSum / dN : null, mgMin: mg ? mg.v : null, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
     });
     var mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
-    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), vDay: mean(vD), vMin: scn("vpdMin"), vMax: scn("vpdMax"), dewAvg: dewN ? dewS / dewN : null, minMg: minMg, dewGap: scn("dewGap"), dMax: dMax, nMin: nMin,
+    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), vDay: mean(vD), vMin: scn("vpdMin"), vMax: scn("vpdMax"), dewAvg: dewN ? dewS / dewN : null, minMg: minMg, dewGap: scn("dewGap"), condGap: scn("condGap"), hasDew: codesFor(s, "dew").length > 0, dMax: dMax, nMin: nMin,
       diffT: manualDiff(s, mine, rows, "temp"), diffH: manualDiff(s, mine, rows, "hum") };
   }
   /* الحساس ناقص القياس اليدوي لنفس الموقع والوقت (القراءة اليدوية مقابل آخر قراءة للحساس خلال ساعة) */

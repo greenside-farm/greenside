@@ -442,3 +442,5 @@ html.kp-open .wrap{padding-bottom:320px}
 .snb-c.off{opacity:.65}
 .snbar .mb-t .pill{margin-inline-start:4px}
 .sn-good{color:var(--ok)}
+.snbar .snb-cond{grid-column:1/-1;display:block;background:var(--warn-soft);color:var(--ink);border:1px solid var(--warn);border-radius:10px;padding:7px 10px;font-size:13px;line-height:1.5}
+.snbar .snb-cond small{color:var(--muted);display:block}
