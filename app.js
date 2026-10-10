@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.6.2";
+var APP_VERSION = "2.6.3";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -1513,37 +1513,72 @@ function bindCharts() {
   var R = S.rep; if (!R || !R.all) return; var rows = R.all.filter(function (r) { return secOf(r) === S.sec; });
   document.querySelectorAll("[data-chart]").forEach(function (el) { var k = el.getAttribute("data-chart"); drawChart(el, S.sec === "n" && (k === "air" || k === "rh" || k === "lux") ? sideSeries(rows, k) : [{ pts: ptsFor(rows, k) }], k); });
 }
+/* مكان نافذة القراءة: فوق الرسم حتى لا تغطي الخطوط، وإن لم يتسع فبجانب المؤشر، وإلا في النصف البعيد عن النقاط */
+function placeTip(tip, r, px, ys) {
+  var tw = tip.offsetWidth || 160, th = tip.offsetHeight || 80, w = r.width, h = r.height, top = $("top"), barB = top && !top.hidden ? top.getBoundingClientRect().bottom : 0;
+  var cx = Math.max(4, Math.min(w - tw - 4, px - tw / 2));
+  if (r.top - th - 8 >= barB + 4) { tip.style.left = cx + "px"; tip.style.top = (-th - 8) + "px"; return; }
+  if (px + 14 + tw <= w - 4) { tip.style.left = (px + 14) + "px"; tip.style.top = "0px"; return; }
+  if (px - 14 - tw >= 4) { tip.style.left = (px - 14 - tw) + "px"; tip.style.top = "0px"; return; }
+  var avg = ys.length ? ys.reduce(function (a, b) { return a + b; }, 0) / ys.length : 0;
+  tip.style.left = cx + "px"; tip.style.top = (avg < h / 2 ? Math.max(0, h - th) : 0) + "px";
+}
+var CH_UNIT = { ec: "µS/cm", ph: "", wt: "°C", air: "°C", rh: "%", lux: "lux" };
 function drawChart(el, series, c) {
   var COL = ["var(--ln1)", "var(--ln2)", "var(--ln3)"];
   series = series.map(function (sr, i) { return { name: sr.name || "", col: COL[i % 3], pts: sr.pts.filter(function (p) { return p.y != null && isFinite(p.y); }).sort(function (a, b) { return a.t - b.t; }) }; }).filter(function (sr) { return sr.pts.length; });
   if (!series.length) { el.innerHTML = '<div class="muted" style="font-size:13px;text-align:center;padding:16px">لا توجد قراءات</div>'; return; }
   var all = [].concat.apply([], series.map(function (sr) { return sr.pts; })).sort(function (a, b) { return a.t - b.t; });
-  var W = 600, H = 190, L = 50, Rr = 12, T = 12, B = 26, lo = num(cfg(CHECK[c][0])), hi = num(cfg(CHECK[c][1]));
-  var ys = all.map(function (p) { return p.y; }), ymin = Math.min.apply(null, ys.concat([lo])), ymax = Math.max.apply(null, ys.concat([hi])), padv = (ymax - ymin) * 0.12 || 1; ymin -= padv; ymax += padv;
-  var t0 = all[0].t, t1 = all[all.length - 1].t;
-  var X = function (t) { return L + (t1 === t0 ? (W - L - Rr) / 2 : (t - t0) / (t1 - t0) * (W - L - Rr)); }, Y = function (y) { return T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B); };
-  var dec = c === "ph" ? 1 : 0, g = "";
-  for (var i = 0; i <= 3; i++) { var v = ymin + (ymax - ymin) * i / 3; g += '<line class="gl" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(v) + '" y2="' + Y(v) + '"/><text class="ax" x="' + (L - 6) + '" y="' + (Y(v) + 4) + '" text-anchor="end">' + f(v, dec) + "</text>"; }
-  var band = '<rect x="' + L + '" width="' + (W - L - Rr) + '" y="' + Y(hi) + '" height="' + Math.max(0, Y(lo) - Y(hi)) + '" fill="var(--band)"/>';
-  var seen = {}, xl = [all[0], all[Math.floor(all.length / 2)], all[all.length - 1]].filter(function (p) { var d = p.lab.slice(0, 5); if (seen[d]) return false; seen[d] = 1; return true; });
-  var xs = xl.map(function (p) { return '<text class="ax" x="' + X(p.t) + '" y="' + (H - 6) + '" text-anchor="middle">' + p.lab.slice(0, 5) + "</text>"; }).join("");
-  var lines = series.map(function (sr) {
+  var unit = CH_UNIT[c] || "", vdec = c === "ph" ? 2 : (c === "wt" || c === "air") ? 1 : 0, adec = c === "ph" ? 1 : 0;
+  var W = 420, H = 210, L = c === "lux" || c === "ec" ? 46 : 34, Rr = 12, T = 18, B = 28, lo = num(cfg(CHECK[c][0])), hi = num(cfg(CHECK[c][1]));
+  var ys = all.map(function (p) { return p.y; }), ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys), sp = Math.max(ymax - ymin, Math.abs(ymax) * 0.05, c === "ph" ? 0.2 : 1);
+  // نظهر نطاق الحدود كاملاً إن كان قريباً من القراءات، كي لا تنضغط الخطوط
+  if (lo != null && lo > ymin - sp * 1.5) ymin = Math.min(ymin, lo);
+  if (hi != null && hi < ymax + sp * 1.5) ymax = Math.max(ymax, hi);
+  var padv = (ymax - ymin) * 0.14 || 1; ymin -= padv; ymax += padv; if (Math.min.apply(null, ys) >= 0 && ymin < 0) ymin = 0;
+  var t0 = all[0].t, t1 = all[all.length - 1].t, span = t1 - t0;
+  var X = function (t) { return L + (span ? (t - t0) / span * (W - L - Rr) : (W - L - Rr) / 2); }, Y = function (y) { return T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B); };
+  var g = "", st4 = (ymax - ymin) / 4; adec = st4 < 0.1 ? 2 : st4 < 1 ? 1 : adec; // كسور عشرية حسب المدى حتى لا تتكرر الأرقام
+  for (var i = 0; i <= 4; i++) { var v = ymin + (ymax - ymin) * i / 4; g += '<line class="gl" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '"/><text class="ax" x="' + (L - 5) + '" y="' + (Y(v) + 4).toFixed(1) + '" text-anchor="end">' + f(v, adec) + "</text>"; }
+  var band = lo != null && hi != null ? (function () { var y1 = Math.max(T, Y(Math.min(hi, ymax))), y2 = Math.min(H - B, Y(Math.max(lo, ymin))); return y2 > y1 ? '<rect x="' + L + '" width="' + (W - L - Rr) + '" y="' + y1.toFixed(1) + '" height="' + (y2 - y1).toFixed(1) + '" fill="var(--band)"/>' : ""; })() : "";
+  // محور الوقت: ساعات ليوم واحد، وتواريخ لأكثر
+  var hm = function (t) { var d = new Date(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }, dlab = function (t) { var d = new Date(t); return d.getDate() + "/" + (d.getMonth() + 1); };
+  var oneDay = span < 36 * 3600e3, xs = "", uniq = all.map(function (p) { return p.t; }).filter(function (t, i, a) { return a.indexOf(t) === i; }), ticks;
+  if (oneDay && uniq.length <= 5) ticks = uniq; // أوقات القراءات نفسها
+  else { ticks = []; for (var k = 0; k < 4; k++) { var tt = t0 + span * k / 3; if (oneDay && k > 0 && k < 3) tt = Math.round(tt / 3600e3) * 3600e3; ticks.push(tt); } }
+  ticks.forEach(function (tt, k) { var xx = X(tt), an = ticks.length > 1 && k === 0 ? "start" : ticks.length > 1 && k === ticks.length - 1 ? "end" : "middle"; xs += '<text class="ax" x="' + xx.toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + an + '">' + (oneDay ? fmtTime(hm(tt)) : dlab(tt)) + "</text>"; });
+  var few = series.length === 1 && series[0].pts.length <= 8; // أرقام على النقاط لخط واحد فقط، وللخطين تكفي النافذة
+  var lines = series.map(function (sr, si) {
     var path = sr.pts.map(function (p, j) { return (j ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.y).toFixed(1); }).join(" ");
-    var dots = sr.pts.map(function (p) { var st = chk(c, p.y); return '<circle cx="' + X(p.t) + '" cy="' + Y(p.y) + '" r="' + (all.length > 60 ? 2.6 : 4) + '" fill="' + (st === "ok" ? sr.col : "var(--bad)") + '" stroke="var(--surface)" stroke-width="1.5"/>'; }).join("");
-    return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="2.8" stroke-linejoin="round" stroke-linecap="round"/>' + dots;
+    var dots = sr.pts.map(function (p) {
+      var st = chk(c, p.y), bad = st === "lo" || st === "hi", cx = X(p.t), cy = Y(p.y);
+      var lab = few ? '<text class="vl' + (bad ? " bad" : "") + '" x="' + cx.toFixed(1) + '" y="' + (cy - 9).toFixed(1) + '" text-anchor="' + (cx < L + 18 ? "start" : cx > W - Rr - 18 ? "end" : "middle") + '">' + f(p.y, vdec) + "</text>" : "";
+      return '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (all.length > 60 ? 2.6 : 4.2) + '" fill="' + (bad ? "var(--bad)" : sr.col) + '" stroke="var(--surface)" stroke-width="1.5"/>' + lab;
+    }).join("");
+    return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>' + dots;
   }).join("");
   var legend = series.length > 1 ? '<div class="legend">' + series.map(function (sr) { return '<span><i style="background:' + sr.col + '"></i>' + esc(sr.name) + "</span>"; }).join("") + "</div>" : "";
-  el.innerHTML = legend + '<svg viewBox="0 0 ' + W + " " + H + '" role="img">' + band + g + lines + xs + '<line class="hov" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/></svg><div class="tip" hidden></div>';
-  var svg = el.querySelector("svg"), tip = el.querySelector(".tip"), hv = svg.querySelector(".hov");
+  el.innerHTML = legend + '<div class="sn-plot"><svg viewBox="0 0 ' + W + " " + H + '" role="img">' + band + g + xs + lines + '<line class="hov" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--ink)" stroke-width="1" visibility="hidden"/><g class="hovd"></g></svg><div class="sn-tip" hidden></div></div>';
+  var svg = el.querySelector("svg"), tip = el.querySelector(".sn-tip"), hv = svg.querySelector(".hov"), hd = svg.querySelector(".hovd");
   function mv(ev) {
     var r = svg.getBoundingClientRect(), cx = ev.touches ? ev.touches[0].clientX : ev.clientX, x = (cx - r.left) / r.width * W, best = null, bd = 1e9;
-    series.forEach(function (sr) { sr.pts.forEach(function (p) { var d = Math.abs(X(p.t) - x); if (d < bd) { bd = d; best = { p: p, n: sr.name }; } }); });
-    var near = series.map(function (sr) { var q = sr.pts.filter(function (p) { return p.t === best.p.t; })[0]; return q ? (sr.name ? sr.name + " " : "") + f(q.y, c === "ph" ? 2 : 0) : ""; }).filter(Boolean).join(" · ");
-    hv.setAttribute("x1", X(best.p.t)); hv.setAttribute("x2", X(best.p.t)); hv.setAttribute("visibility", "visible");
-    tip.hidden = false; tip.textContent = best.p.lab + " · " + near; tip.style.left = Math.max(80, Math.min(r.width - 80, X(best.p.t) / W * r.width)) + "px";
+    all.forEach(function (p) { var d = Math.abs(X(p.t) - x); if (d < bd) { bd = d; best = p; } });
+    if (!best) return;
+    var rows = [], dots = "", yy = [];
+    series.forEach(function (sr) {
+      var q = null, qd = 1e18; sr.pts.forEach(function (p) { var d = Math.abs(p.t - best.t); if (d < qd) { qd = d; q = p; } });
+      if (!q || qd > 45 * 60000) return;
+      var st = chk(c, q.y), bad = st === "lo" || st === "hi";
+      rows.push('<div><i style="background:' + sr.col + '"></i>' + (sr.name ? "<bdi>" + esc(sr.name) + "</bdi> " : "") + '<b class="num' + (bad ? " sn-bad" : "") + '"><bdi dir="ltr">' + f(q.y, vdec) + "</bdi></b>" + (unit ? ' <small><bdi dir="ltr">' + unit + "</bdi></small>" : "") + (bad ? ' <small class="sn-bad">' + (st === "lo" ? "منخفض" : "مرتفع") + "</small>" : "") + "</div>");
+      dots += '<circle cx="' + X(q.t).toFixed(1) + '" cy="' + Y(q.y).toFixed(1) + '" r="6" fill="' + sr.col + '" stroke="var(--surface)" stroke-width="2"/>'; yy.push(Y(q.y) / H * r.height);
+    });
+    hv.setAttribute("x1", X(best.t)); hv.setAttribute("x2", X(best.t)); hv.setAttribute("visibility", "visible"); hd.innerHTML = dots;
+    var d0 = new Date(best.t), ds = d0.getFullYear() + "-" + pad(d0.getMonth() + 1) + "-" + pad(d0.getDate());
+    tip.innerHTML = '<div class="sn-tt">' + esc(fmtShort(ds)) + ' · <span class="num">' + fmtTime(hm(best.t)) + "</span></div>" + rows.join(""); tip.hidden = false;
+    placeTip(tip, r, X(best.t) / W * r.width, yy);
   }
   svg.addEventListener("mousemove", mv); svg.addEventListener("touchstart", mv, { passive: true }); svg.addEventListener("touchmove", mv, { passive: true });
-  svg.addEventListener("mouseleave", function () { tip.hidden = true; hv.setAttribute("visibility", "hidden"); });
+  svg.addEventListener("mouseleave", function () { tip.hidden = true; hv.setAttribute("visibility", "hidden"); hd.innerHTML = ""; });
 }
 function exportXlsx(btn) {
   if (!window.XLSX || !S.rep || !S.rep.all) { toast("التصدير غير متاح الآن، تحقق من الإنترنت"); return; }
