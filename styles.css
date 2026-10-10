@@ -432,3 +432,12 @@ html.kp-open .wrap{padding-bottom:320px}
 :root{--ln1:#1C7ED6;--ln2:#E8590C;--ln3:#7048E8}
 @media (prefers-color-scheme: dark){:root{--ln1:#4DABF7;--ln2:#FFA94D;--ln3:#B197FC}}
 .tx-warn{color:var(--warn)}
+
+/* شريط الحساسات في الصفحة الرئيسية */
+.snbar .snb-row{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px}
+.snb-c{display:inline-flex;align-items:center;gap:5px;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:4px 8px;font-size:13px;white-space:nowrap}
+.snb-c i{width:8px;height:8px;border-radius:2px;flex:none}
+.snb-c small{color:var(--muted);font-size:11.5px}
+.snb-c.bad{border-color:var(--bad)}
+.snb-c.off{opacity:.65}
+.snbar .mb-t .pill{margin-inline-start:4px}

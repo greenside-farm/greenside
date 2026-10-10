@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.5.4";
+var APP_VERSION = "2.5.5";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -627,6 +627,7 @@ function todayView() {
   if (mt.need) h += '<section class="sec"><button class="mybar" type="button" data-act="goTasks"><span class="mb-t">' + SECS[sec].icon + " مهام " + SECS[sec].name + ': <b class="num">' + mt.done + " / " + mt.need + "</b>" + (mt.left ? " · متبقي <b class=\"num\">" + mt.left + "</b>" : " · اكتملت ✓") + '</span><span class="muted">التفاصيل ‹</span><span class="bar"><i class="' + (mp >= 100 ? "full" : "") + '" style="width:' + mp + '%"></i></span></button></section>';
   var alerts = equipAlerts().concat(sprayAlerts(sec));
   if (alerts.length) h += '<section class="sec alerts">' + alerts.join("") + "</section>";
+  if (isToday && window.SENS && SENS.strip) h += SENS.strip();
   var ecE = lastOf(SE, function (e) { return e.v && num(e.v.ec) != null; }), phE = lastOf(SE, function (e) { return e.v && num(e.v.ph) != null; }), wtE = lastOf(SE, function (e) { return e.v && num(e.v.wt) != null && e.type !== "temp"; });
   var airE = lastOf(SE, function (e) { return e.type === "temp" && metric(e.v, "air") != null; }), lE = lastOf(SE, function (e) { return e.type === "light" && metric(e.v, "lux") != null; });
   var ecv = ecE ? ec25(num(ecE.v.ec), num(ecE.v.wt)) : null, phv = phE ? ph25(num(phE.v.ph), num(phE.v.wt)) : null;
@@ -1937,6 +1938,7 @@ document.addEventListener("click", function (ev) {
     case "logout": if (NAV.sheet) closeSheet(); memberSubs = false; S.auth.signOut(); break;
     case "account": openAccount(); break;
     case "install": if (S.installEvt) { S.installEvt.prompt(); S.installEvt = null; closeSheet(); } break;
+    case "goSens": setTab("sens"); break;
     case "changeEmail":
       var ne = ($("e_new").value || "").trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(ne)) { toast("اكتب بريداً صحيحاً"); return; }

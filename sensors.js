@@ -75,7 +75,7 @@ var SENS = (function () {
     if (m < 1) return "الآن"; if (m < 60) return "منذ " + m + " دقيقة";
     var h = Math.round(m / 60); if (h < 48) return "منذ " + h + " ساعة"; return "منذ " + Math.round(h / 24) + " يوم";
   }
-  function rr() { if (window.S && S.tab === "sens" && typeof render === "function") render(); }
+  function rr() { if (window.S && (S.tab === "sens" || (S.tab === "today" && S.date === dkey(Date.now()))) && typeof render === "function") render(); }
 
   /* ================= الاتصال ================= */
   function start() {
@@ -740,6 +740,27 @@ var SENS = (function () {
     });
   }
 
+  /* ================= شريط الحساسات في الصفحة الرئيسية (للجميع) ================= */
+  function strip() {
+    start();
+    if (!X.user || !Object.keys(X.sensors).length) return "";
+    var list = sensorList().filter(function (s) { return codesFor(s, "temp").length || codesFor(s, "hum").length; });
+    if (!list.length) return "";
+    var nBad = 0, nOff = 0, newest = 0;
+    var chips = list.map(function (s) {
+      var seen = ms(s.lastSeen), stale = !seen || Date.now() - seen > STALE_H * 3600e3; if (seen > newest) newest = seen;
+      var t = lastOfKind(s, "temp"), hm_ = lastOfKind(s, "hum"), bt = t != null && bad(stOf("temp", t)), bh = hm_ != null && bad(stOf("hum", hm_));
+      if (stale) nOff++; else if (bt || bh) nBad++;
+      var v = stale ? '<span class="muted">متوقف</span>' :
+        (t != null ? '<b class="num' + (bt ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(t, 1) + "°</bdi></b>" : "") +
+        (hm_ != null ? ' <span class="num' + (bh ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(hm_) + "%</bdi></span>" : "");
+      return '<span class="snb-c' + (stale ? " off" : bt || bh ? " bad" : "") + '"><i style="background:' + colorOf(s) + '"></i><small><bdi>' + E(nm(s)) + "</bdi></small>" + v + "</span>";
+    }).join("");
+    var pill = nBad ? '<span class="pill bad">' + nBad + " خارج الحدود</span>" : nOff ? '<span class="pill warn">' + nOff + " متوقف</span>" : '<span class="pill ok">ضمن الحدود</span>';
+    return '<section class="sec"><button class="mybar snbar" type="button" data-act="goSens"><span class="mb-t">🌡️ الحساسات الآن ' + pill + '</span><span class="muted">' + (newest ? ago(newest) : "") + " ‹</span>" +
+      '<span class="snb-row">' + chips + "</span></button></section>";
+  }
+
   /* ================= ملخص الحساسات لقسم التقارير ================= */
   /* يقرأ أيام الفترة كاملة (منفصلة عن صفحة الحساسات) ويحسب لكل حساس في القسم الحالي:
      المؤشرات على الفترة، والملخص اليومي، والفرق بين الحساس والقياس اليدوي في نفس الوقت والموقع. */
@@ -814,5 +835,5 @@ var SENS = (function () {
     if (typeof render === "function") render(true);
   });
 
-  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, _x: X };
+  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, _x: X };
 })();
