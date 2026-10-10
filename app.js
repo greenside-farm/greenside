@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.5.5";
+var APP_VERSION = "2.5.6";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -1464,7 +1464,8 @@ function repView() {
   if (!R || R.loading) return h + '<div class="empty">جارٍ تجهيز التقرير…</div>';
   if (R.err) return h + '<div class="empty">تعذّر تحميل التقرير. اضغط تحديث.</div>';
   var rows = R.all.filter(function (r) { return secOf(r) === sec; });
-  if (!rows.length) return h + '<div class="empty">لا توجد تسجيلات في ' + SECS[sec].name + " لهذه الفترة.</div>";
+  /* بدون تسجيلات يدوية نعرض بيانات الحساسات للفترة نفسها، فهي مستقلة عن التسجيل */
+  if (!rows.length) return h + '<div class="empty">لا توجد تسجيلات يدوية في ' + SECS[sec].name + " لهذه الفترة.</div>" + sensRepHTML(sensRep(rows));
   var C = consumption(rows), D = daily(rows);
   h += '<section class="sec"><div class="grid2 grid-stat">' +
     '<div class="stat"><span class="lab">محلول A المستهلك</span><span class="val num">' + f(C.mlA) + " <small>مل</small></span></div>" +
