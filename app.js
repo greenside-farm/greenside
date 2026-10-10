@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.5.3";
+var APP_VERSION = "2.5.4";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -302,7 +302,7 @@ function errMsg(e) {
   return {
     "auth/invalid-credential": "اسم المستخدم أو كلمة المرور غير صحيحة.", "auth/wrong-password": "كلمة المرور غير صحيحة.", "auth/user-not-found": "لا يوجد حساب بهذا الاسم.",
     "auth/invalid-email": "اكتب اسم مستخدم أو بريداً صحيحاً.", "auth/too-many-requests": "محاولات كثيرة. انتظر قليلاً ثم حاول.", "auth/network-request-failed": "لا يوجد اتصال بالإنترنت.",
-    "auth/email-already-in-use": "اسم المستخدم مستخدم من قبل.", "auth/weak-password": "كلمة المرور قصيرة. استخدم 6 أحرف أو أكثر.", "auth/requires-recent-login": "سجّل الخروج ثم الدخول من جديد، ثم غيّر كلمة المرور.",
+    "auth/email-already-in-use": "اسم المستخدم مستخدم من قبل.", "auth/weak-password": "كلمة المرور قصيرة. استخدم 6 أحرف أو أكثر.", "auth/requires-recent-login": "سجّل الخروج ثم الدخول من جديد، ثم أعد المحاولة.", "auth/email-already-exists": "هذا البريد مستخدم في حساب آخر.",
     "permission-denied": "ليس لديك صلاحية لهذا الإجراء.", "unavailable": "لا يوجد اتصال بالخادم حالياً."
   }[c] || "حدث خطأ. حاول مرة أخرى.";
 }
@@ -486,6 +486,7 @@ function startSession() {
   }).then(function () {
     unsubAll.push(db.collection("users").doc(uid).onSnapshot(function (s) {
       S.me = s.exists ? s.data() : null;
+      if (S.me && S.ownerUid === uid && S.user && S.user.email && S.me.login !== S.user.email) db.collection("users").doc(uid).update({ login: S.user.email }).catch(logErr);
       var r = S.ownerUid === uid ? "sup" : (S.me && S.me.role);
       var nr = (r === "sup" || r === "worker") ? r : null, changed = nr !== S.role; S.role = nr;
       if (changed) onRole(); else render();
@@ -1753,6 +1754,7 @@ function openAccount() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("حسابي") +
     '<div class="card"><dl class="kv"><dt>الاسم</dt><dd>' + esc(nameOf(S.uid)) + '</dd><dt>الدخول</dt><dd class="num">' + esc(showLogin(S.user.email)) + "</dd><dt>الصلاحية</dt><dd>" + (isSup() ? "مشرف" : "عامل") + "</dd></dl></div>" +
     '<form class="fgrid" id="pwForm" style="margin-top:14px" novalidate><label class="f full" for="p_new">تغيير كلمة المرور<input class="in" id="p_new" type="password" dir="ltr" autocomplete="new-password" placeholder="كلمة المرور الجديدة"></label><button class="btn full" type="button" data-act="changePw">حفظ كلمة المرور</button></form>' +
+    (showLogin(S.user.email) !== S.user.email ? "" : '<form class="fgrid" style="margin-top:14px" novalidate><label class="f full" for="e_new">تغيير البريد الإلكتروني<input class="in" id="e_new" type="email" dir="ltr" autocomplete="email" placeholder="البريد الجديد"></label><button class="btn full" type="button" data-act="changeEmail">إرسال رابط التأكيد</button><p class="muted full" style="font-size:12.5px;margin:0">يصل رابط تأكيد إلى البريد الجديد، وبعد فتحه يتغيّر بريد الدخول. سجّل الدخول بعدها بالبريد الجديد.</p></form>') +
     '<div class="f full" style="margin-top:14px"><span>لوحة الأرقام في خانات القياس</span><div class="seg" id="kp_on" role="group"><button type="button" data-v="1" aria-pressed="' + kpOn() + '">لوحة GREEN SIDE الكبيرة</button><button type="button" data-v="0" aria-pressed="' + !kpOn() + '">لوحة الجوال</button></div></div>' +
     (S.installEvt ? '<button class="btn pri block" style="margin-top:14px" type="button" data-act="install">تثبيت التطبيق على الجوال</button>' : '<p class="muted" style="font-size:13px;margin-top:14px">لتثبيت التطبيق: من قائمة المتصفح (⋮) اختر "تثبيت التطبيق".</p>') +
     '<div class="sheet-actions"><button class="btn danger" type="button" data-act="logout">تسجيل الخروج</button></div><p class="muted" style="font-size:12px;text-align:center">GREEN SIDE · الإصدار ' + APP_VERSION + ' · بواسطة <bdi>Hamed</bdi></p></div></div>');
@@ -1935,6 +1937,12 @@ document.addEventListener("click", function (ev) {
     case "logout": if (NAV.sheet) closeSheet(); memberSubs = false; S.auth.signOut(); break;
     case "account": openAccount(); break;
     case "install": if (S.installEvt) { S.installEvt.prompt(); S.installEvt = null; closeSheet(); } break;
+    case "changeEmail":
+      var ne = ($("e_new").value || "").trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(ne)) { toast("اكتب بريداً صحيحاً"); return; }
+      if (ne === (S.user.email || "").toLowerCase()) { toast("هذا هو بريدك الحالي"); return; }
+      b.disabled = true;
+      S.user.verifyBeforeUpdateEmail(ne).then(function () { toast("أُرسل رابط التأكيد إلى " + ne + " · افتحه ثم سجّل الدخول بالبريد الجديد"); closeSheet(); }).catch(fail); break;
     case "changePw": var np = $("p_new").value; if (np.length < 6) { toast("كلمة المرور 6 أحرف أو أكثر"); return; } b.disabled = true; S.user.updatePassword(np).then(function () { toast("تم تغيير كلمة المرور"); closeSheet(); }).catch(fail); break;
     case "close": closeSheet(); break;
     case "stay": hideExit(); NAV.lastBack = 0; break;
