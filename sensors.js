@@ -202,7 +202,7 @@ var SENS = (function () {
     return (X.days || []).filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); });
   }
   function seriesFor(s, k) {
-    if (k === "dew" || k === "vpd") { var dp = []; dayDocs(s).forEach(function (d) { var t0 = dayStart(d.date); ptsOf(d, s, k).forEach(function (p) { dp.push({ t: t0 + p.t * 1000, y: p.v }); }); }); return dp.sort(function (a, b) { return a.t - b.t; }); }
+    if (k === "dew" || k === "vpd") { var dp = []; dayDocs(s).forEach(function (d) { var t0 = dayStart(d.date); ptsOf(d, s, k).forEach(function (p) { dp.push({ t: t0 + p.t * 1000, y: p.v, T: p.T, H: p.H }); }); }); return dp.sort(function (a, b) { return a.t - b.t; }); }
     var codes = codesFor(s, k), pts = [];
     dayDocs(s).forEach(function (d) {
       var t0 = dayStart(d.date);
@@ -234,7 +234,7 @@ var SENS = (function () {
     if (k === "dew" || k === "vpd") {
       if (!codesFor(s, k).length) return [];
       var H = sampler(ptsOf(doc, s, "hum")), fn = k === "dew" ? dewOf : vpdOf;
-      return ptsOf(doc, s, "temp").map(function (p) { var h = H(p.t); return h == null ? null : { t: p.t, v: +fn(p.v, h).toFixed(3) }; }).filter(Boolean);
+      return ptsOf(doc, s, "temp").map(function (p) { var h = H(p.t); return h == null ? null : { t: p.t, v: +fn(p.v, h).toFixed(3), T: p.v, H: h }; }).filter(Boolean);
     }
     var out = []; codesFor(s, k).forEach(function (c) { ((doc.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) out.push({ t: +p.t, v: +p.v }); }); });
     return out.sort(function (a, b) { return a.t - b.t; });
@@ -300,7 +300,7 @@ var SENS = (function () {
     if (!X.days || X.key !== R.from + "|" + R.to) return h + '<div class="card"><div class="empty" style="border:0">جارٍ تحميل القراءات…</div></div></section>';
     var ki = kindInfo(X.kind, withK[0]);
     var night = nightHTML(list, R.to); h = h.replace("<!--sn-night-->", function () { return night; });
-    h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة بالضبط.' + (X.kind === "vpd" ? " VPD يقيس قوة سحب الهواء للماء من الورقة. المنطقة المظللة هي المثالي (" + F(scn("vpdMin"), 1) + "–" + F(scn("vpdMax"), 1) + " kPa): أقل منها جو رطب يضعف النتح ووصول الكالسيوم (احتراق الحواف وأمراض)، وأعلى منها جو جاف يُجهد النبات. انخفاضه في الليل طبيعي، والمهم قيمته في النهار." : "") + (X.kind === "dew" ? " نقطة الندى هي الحرارة التي يبدأ عندها تكثّف الماء على الأوراق: كلما اقتربت من حرارة الجو (أقل من " + F(scn("dewGap")) + "°) زاد خطر الأمراض الفطرية." : "") + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
+    h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة بالضبط.' + (X.kind === "vpd" ? " VPD يقيس قوة سحب الهواء للماء من الورقة. المنطقة المظللة هي المثالي (" + F(scn("vpdMin"), 1) + "–" + F(scn("vpdMax"), 1) + " kPa): أقل منها جو رطب يضعف النتح ووصول الكالسيوم (احتراق الحواف وأمراض)، وأعلى منها جو جاف يُجهد النبات. انخفاضه في الليل طبيعي، والمهم قيمته في النهار." : "") + (X.kind === "dew" || X.kind === "vpd" ? " في النافذة بجانب كل قيمة: الحرارة والرطوبة اللتان حُسبت منهما." : "") + (X.kind === "dew" ? " نقطة الندى هي الحرارة التي يبدأ عندها تكثّف الماء على الأوراق: كلما اقتربت من حرارة الجو (أقل من " + F(scn("dewGap")) + "°) زاد خطر الأمراض الفطرية." : "") + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
     if (sup && P() === 1) h += rawHTML(withK.filter(function (s) { return !X.off[s.id]; }), ki, R.to);
     h += "</section>";
     if (!sup) return h;
@@ -696,7 +696,7 @@ var SENS = (function () {
       series.forEach(function (sr) {
         var q = near(sr.pts, best.t); if (!q) return;
         var st = stOf(X.kind, q.y, sr.s.sec);
-        rows.push('<div><i style="background:' + sr.col + '"></i><bdi>' + E(sr.name) + '</bdi> <b class="num' + (bad(st) ? " sn-bad" : "") + '">' + F(q.y, ki.d) + "</b><bdi>" + E(ki.u) + "</bdi>" + (Math.abs(q.t - best.t) > 5 * 60000 ? ' <small class="num">' + tLabel(q.t) + "</small>" : "") + "</div>");
+        rows.push('<div><i style="background:' + sr.col + '"></i><bdi>' + E(sr.name) + '</bdi> <b class="num' + (bad(st) ? " sn-bad" : "") + '">' + F(q.y, ki.d) + "</b><bdi>" + E(ki.u) + "</bdi>" + (q.T != null ? ' <small>من <bdi dir="ltr" class="num">' + F(q.T, 1) + '°</bdi> و<bdi dir="ltr" class="num">' + F(q.H) + "%</bdi></small>" : "") + (Math.abs(q.t - best.t) > 5 * 60000 ? ' <small class="num">' + tLabel(q.t) + "</small>" : "") + "</div>");
         dots += '<circle cx="' + X_(q.t).toFixed(1) + '" cy="' + Y(q.y).toFixed(1) + '" r="5" fill="' + sr.col + '" stroke="var(--surface)" stroke-width="2"/>';
         ys.push(Y(q.y) / H * r.height);
       });
