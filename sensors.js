@@ -815,7 +815,7 @@ var SENS = (function () {
   }
   function repSensor(s, docs, rows) {
     var mine = docs.filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0, vCov: 0, inV: 0 }, tD = [], tN = [], vD = [], dMax = null, nMin = null;
+    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0, vCov: 0, inV: 0 }, tD = [], tN = [], vD = [], dMax = null, nMin = null, minMg = null, dewS = 0, dewN = 0;
     var stat = function (doc, k) {
       var mn = null, mx = null, sm = 0, n = 0;
       codesFor(s, k).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
@@ -827,10 +827,15 @@ var SENS = (function () {
       if (m.tDay != null) tD.push(m.tDay); if (m.tNight != null) tN.push(m.tNight); if (m.vDay != null) vD.push(m.vDay);
       if (m.dMax != null) dMax = dMax == null ? m.dMax : Math.max(dMax, m.dMax);
       if (m.nMin != null) nMin = nMin == null ? m.nMin : Math.min(nMin, m.nMin);
-      return { date: doc.date, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
+      // نقطة الندى: متوسطها، وأقل هامش (الحرارة ناقص نقطة الندى) ووقته
+      var dp = ptsOf(doc, s, "dew"), dSum = 0, mg = null;
+      dp.forEach(function (p) { dSum += p.v; var g = p.T - p.v; if (!mg || g < mg.v) mg = { v: g, t: dayStart(doc.date) + p.t * 1000 }; });
+      if (mg && (!minMg || mg.v < minMg.v)) minMg = { v: mg.v, t: mg.t };
+      if (dp.length) { dewS += dSum; dewN += dp.length; }
+      return { date: doc.date, dewAvg: dp.length ? dSum / dp.length : null, mgMin: mg ? mg.v : null, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
     });
     var mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
-    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), vDay: mean(vD), vMin: scn("vpdMin"), vMax: scn("vpdMax"), dMax: dMax, nMin: nMin,
+    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), vDay: mean(vD), vMin: scn("vpdMin"), vMax: scn("vpdMax"), dewAvg: dewN ? dewS / dewN : null, minMg: minMg, dewGap: scn("dewGap"), dMax: dMax, nMin: nMin,
       diffT: manualDiff(s, mine, rows, "temp"), diffH: manualDiff(s, mine, rows, "hum") };
   }
   /* الحساس ناقص القياس اليدوي لنفس الموقع والوقت (القراءة اليدوية مقابل آخر قراءة للحساس خلال ساعة) */
