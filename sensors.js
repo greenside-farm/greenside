@@ -239,6 +239,9 @@ var SENS = (function () {
     var out = []; codesFor(s, k).forEach(function (c) { ((doc.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) out.push({ t: +p.t, v: +p.v }); }); });
     return out.sort(function (a, b) { return a.t - b.t; });
   }
+  function samplerP(pts) { // مثل sampler لكنه يعيد القراءة نفسها (القيمة ووقتها)
+    var i = 0; return function (t) { if (!pts.length) return null; while (i + 1 < pts.length && pts[i + 1].t <= t) i++; var q = pts[i]; return q.t > t || t - q.t > HOLD ? null : q; };
+  }
   function sampler(pts) {
     var i = 0; return function (t) { if (!pts.length) return null; while (i + 1 < pts.length && pts[i + 1].t <= t) i++; var q = pts[i]; return q.t > t || t - q.t > HOLD ? null : q.v; };
   }
@@ -828,11 +831,18 @@ var SENS = (function () {
       if (m.dMax != null) dMax = dMax == null ? m.dMax : Math.max(dMax, m.dMax);
       if (m.nMin != null) nMin = nMin == null ? m.nMin : Math.min(nMin, m.nMin);
       // نقطة الندى: متوسطها، وأقل هامش (الحرارة ناقص نقطة الندى) ووقته
-      var dp = ptsOf(doc, s, "dew"), dSum = 0, mg = null;
-      dp.forEach(function (p) { dSum += p.v; var g = p.T - p.v; if (!mg || g < mg.v) mg = { v: g, t: dayStart(doc.date) + p.t * 1000 }; });
+      // موزونة بالوقت: عيّنة كل 5 دقائق (مثل باقي ساعات التقرير)، فلا تطغى ساعات النهار التي يرسل فيها الحساس قراءات أكثر
+      // ونقرن الحرارة بالرطوبة فقط إذا كانت القراءتان متقاربتين (30 دقيقة)، كي لا تُحسب حرارة جديدة مع رطوبة قديمة عند تشغيل التبريد مثلاً
+      var fT = samplerP(ptsOf(doc, s, "temp")), fH = samplerP(ptsOf(doc, s, "hum")), dSum = 0, dN = 0, mg = null;
+      for (var tt = 0, te = dayEnd(doc.date); tt < te; tt += STEP) {
+        var qT = fT(tt), qH = fH(tt); if (!qT || !qH || Math.abs(qT.t - qH.t) > 1800) continue;
+        var tv = qT.v, hv = qH.v;
+        var dv = dewOf(tv, hv), g = tv - dv; dSum += dv; dN++;
+        if (!mg || g < mg.v) mg = { v: g, t: dayStart(doc.date) + tt * 1000 };
+      }
       if (mg && (!minMg || mg.v < minMg.v)) minMg = { v: mg.v, t: mg.t };
-      if (dp.length) { dewS += dSum; dewN += dp.length; }
-      return { date: doc.date, dewAvg: dp.length ? dSum / dp.length : null, mgMin: mg ? mg.v : null, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
+      dewS += dSum; dewN += dN;
+      return { date: doc.date, dewAvg: dN ? dSum / dN : null, mgMin: mg ? mg.v : null, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
     });
     var mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
     return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), vDay: mean(vD), vMin: scn("vpdMin"), vMax: scn("vpdMax"), dewAvg: dewN ? dewS / dewN : null, minMg: minMg, dewGap: scn("dewGap"), dMax: dMax, nMin: nMin,
