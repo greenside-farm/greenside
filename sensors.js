@@ -50,6 +50,11 @@ var SENS = (function () {
   function sc(k) { var o = (window.S && S.settings && S.settings.sens) || {}; var v = o[k]; return v != null && v !== "" ? v : SDEF[k]; }
   function scn(k) { var v = sc(k); return typeof num === "function" ? num(v) : +v; }
   function isSupU() { return typeof isSup === "function" && isSup(); }
+  /* تصحيح المعايرة لكل حساس (من صفحة صحة الحساسات): يُضاف لقراءة الحرارة والرطوبة قبل أي عرض أو حساب */
+  function offs() { return (window.S && S.settings && S.settings.sens && S.settings.sens.off) || {}; }
+  function offOf(s, k) { if (k !== "temp" && k !== "hum") return 0; var x = s && offs()[s.id], v = x ? +x[k] : 0; return isFinite(v) ? v : 0; }
+  function corr(s, k, v) { var o = offOf(s, k); if (!o || v == null) return v; v = +v + o; if (k === "hum") v = Math.max(0, Math.min(100, v)); return Math.round(v * 100) / 100; }
+  function statOf(s, c, q) { var o = offOf(s, kindOf(c)); return !o ? q : { min: corr(s, kindOf(c), q.min), max: corr(s, kindOf(c), q.max), sum: (q.sum || 0) + o * q.n, n: q.n }; }
   function P() { return isSupU() ? X.period : (X.period > 1 ? 7 : 1); } // العامل: اليوم أو آخر 7 أيام، والمشرف حتى 30 يوماً
   var POS = { t: ["b", "m", "e"], n: ["1", "2", "3"] };
 
@@ -126,7 +131,7 @@ var SENS = (function () {
     var from0 = typeof addDays === "function" ? addDays(R.from, -1) : R.from;
     X.db.collection("sensorDays").where("date", ">=", from0).where("date", "<=", R.to).get().then(function (q) {
       if (X.loading !== key) return;
-      X.all = q.docs.map(function (d) { return d.data(); });
+      X.all = q.docs.map(function (d) { return d.data(); }); X.from0 = from0;
       X.days = X.all.filter(function (d) { return d.date >= R.from; }); X.key = key; X.loading = ""; rr();
     }).catch(function (e) { if (X.loading === key) X.loading = ""; onErr(e); });
   }
@@ -191,11 +196,34 @@ var SENS = (function () {
     if (seen.batt) ks.push("batt");
     return ks;
   }
-  function stOf(k, v, sec) {
-    if (k === "vpd") { if (v == null) return null; return v < scn("vpdMin") ? "lo" : v > scn("vpdMax") ? "hi" : "ok"; }
-    var c = KINDS[k] && KINDS[k].c; if (!c || v == null || typeof chk !== "function") return null;
-    return chk(c, v, S.sec);
+  /* حالة القيمة حسب الحدود، مع حدود منفصلة للنهار والليل في الحرارة والرطوبة. ts = وقت القراءة (الافتراضي: الآن) */
+  function stOf(k, v, ts) {
+    if (v == null) return null;
+    if (k === "vpd") return v < scn("vpdMin") ? "lo" : v > scn("vpdMax") ? "hi" : "ok";
+    var c = KINDS[k] && KINDS[k].c; if (!c || typeof chk !== "function") return null;
+    return chk(c, v, S.sec, ts == null ? Date.now() : ts);
   }
+  function limAt(k, ts) {
+    if (k === "vpd") return [scn("vpdMin"), scn("vpdMax")];
+    var c = KINDS[k] && KINDS[k].c; if (!c || typeof lim !== "function") return [null, null];
+    return lim(c, S.sec, ts);
+  }
+  function DH() { return typeof dayHours === "function" ? dayHours() : [6, 18]; }
+  /* شرائط النطاق المسموح: للحرارة والرطوبة شريط للنهار وآخر لليل */
+  function bandRects(k, t0, t1, X_, Y, ymin, ymax, top, bot, left, right) {
+    var out = "", d = DH(), segs = [];
+    for (var day = dkey(t0); dayStart(day) < t1; day = addDays(day, 1)) {
+      var s0 = dayStart(day);
+      [[0, d[0], "00:00"], [d[0], d[1], "12:00"], [d[1], 24, "23:00"]].forEach(function (x) { var a = Math.max(t0, s0 + x[0] * 3600e3), b = Math.min(t1, s0 + x[1] * 3600e3); if (b > a) segs.push([a, b, s0 + (x[0] + x[1]) / 2 * 3600e3]); });
+    }
+    segs.forEach(function (sg) {
+      var L = limAt(k, sg[2]); if (L[0] == null || L[1] == null) return;
+      var y1 = Math.max(top, Y(Math.min(L[1], ymax))), y2 = Math.min(bot, Y(Math.max(L[0], ymin))), x1 = Math.max(left, X_(sg[0])), x2 = Math.min(right, X_(sg[1]));
+      if (y2 > y1 && x2 > x1) out += '<rect x="' + x1.toFixed(1) + '" width="' + (x2 - x1).toFixed(1) + '" y="' + y1.toFixed(1) + '" height="' + (y2 - y1).toFixed(1) + '" fill="var(--band)"/>';
+    });
+    return out;
+  }
+  function limSpan(k) { var a = limAt(k, dayStart(dkey(Date.now())) + 12 * 3600e3), b = limAt(k, dayStart(dkey(Date.now())) + 2 * 3600e3); var lo = [a[0], b[0]].filter(function (x) { return x != null; }), hi = [a[1], b[1]].filter(function (x) { return x != null; }); return [lo.length ? Math.min.apply(null, lo) : null, hi.length ? Math.max.apply(null, hi) : null]; }
   function bad(st) { return st === "lo" || st === "hi"; }
   /* يوم الحساس صالح للقسم الحالي: نعتمد موقع الحساس في ذلك اليوم إن حُفظ، وإلا موقعه الحالي */
   function dayDocs(s) {
@@ -206,7 +234,7 @@ var SENS = (function () {
     var codes = codesFor(s, k), pts = [];
     dayDocs(s).forEach(function (d) {
       var t0 = dayStart(d.date);
-      codes.forEach(function (c) { ((d.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) pts.push({ t: t0 + p.t * 1000, y: +p.v }); }); });
+      codes.forEach(function (c) { ((d.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) pts.push({ t: t0 + p.t * 1000, y: corr(s, k, +p.v) }); }); });
     });
     pts.sort(function (a, b) { return a.t - b.t; });
     return pts;
@@ -236,7 +264,7 @@ var SENS = (function () {
       var H = sampler(ptsOf(doc, s, "hum")), fn = k === "dew" ? dewOf : vpdOf;
       return ptsOf(doc, s, "temp").map(function (p) { var h = H(p.t); return h == null ? null : { t: p.t, v: +fn(p.v, h).toFixed(3), T: p.v, H: h }; }).filter(Boolean);
     }
-    var out = []; codesFor(s, k).forEach(function (c) { ((doc.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) out.push({ t: +p.t, v: +p.v }); }); });
+    var out = []; codesFor(s, k).forEach(function (c) { ((doc.p || {})[c] || []).forEach(function (p) { if (p && p.v != null && isFinite(p.v)) out.push({ t: +p.t, v: corr(s, k, +p.v) }); }); });
     return out.sort(function (a, b) { return a.t - b.t; });
   }
   function samplerP(pts) { // مثل sampler لكنه يعيد القراءة نفسها (القيمة ووقتها)
@@ -248,11 +276,11 @@ var SENS = (function () {
   function dayEnd(date) { return typeof todayStr === "function" && date === todayStr() ? Math.max(0, Math.min(86400, Math.floor((Date.now() - dayStart(date)) / 1000))) : 86400; }
   function dayMetrics(doc, s) {
     var T = sampler(ptsOf(doc, s, "temp")), H = sampler(ptsOf(doc, s, "hum")), Lx = sampler(ptsOf(doc, s, "lux"));
-    var lo = num(cfg("airMin")), hi = num(cfg("airMax")), rlo = num(cfg("rhMin")), rhi = num(cfg("rhMax"));
+    var dh = DH(), tD = limAt("temp", "12:00"), tN = limAt("temp", "00:00"), hD = limAt("hum", "12:00"), hN = limAt("hum", "00:00");
     var vmin = scn("vpdMin"), vmax = scn("vpdMax"), heat = scn("heat"), risk = scn("rhRisk"), gap = scn("dewGap"), k = scn("luxPpfd"), h = STEP / 3600;
     var m = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, vCov: 0, inV: 0, risk: 0, dS: 0, dN: 0, dMax: null, nS: 0, nN: 0, nMin: null, vS: 0, vN: 0, lCov: 0, dli: 0, hasLux: codesFor(s, "lux").length > 0 };
     for (var t = 0, end = dayEnd(doc.date); t < end; t += STEP) {
-      var tv = T(t), hv = H(t), lv = Lx(t), day = t >= 21600 && t < 64800;
+      var tv = T(t), hv = H(t), lv = Lx(t), day = t >= dh[0] * 3600 && t < dh[1] * 3600, lo = day ? tD[0] : tN[0], hi = day ? tD[1] : tN[1], rlo = day ? hD[0] : hN[0], rhi = day ? hD[1] : hN[1];
       if (tv != null) {
         m.cov += h; if (tv >= lo && tv <= hi) m.inT += h; if (tv > heat) m.heat += h;
         if (day) { m.dS += tv; m.dN++; m.dMax = m.dMax == null ? tv : Math.max(m.dMax, tv); } else { m.nS += tv; m.nN++; m.nMin = m.nMin == null ? tv : Math.min(m.nMin, tv); }
@@ -278,44 +306,260 @@ var SENS = (function () {
     return r;
   }
 
-  /* ================= الصفحة ================= */
+  /* ================= مؤشرات النمو (للمشرف): آخر 24 ساعة مقارنة بأمس ومتوسط 7 أيام =================
+     متوسط البيت كل 5 دقائق: الحرارة وVPD متوسط الحساسات، وساعات التكثّف والإجهاد الحراري إن حدثت في أي موقع.
+     الأيام قبل أمس نهائية، فتُحفظ نتيجتها على الجهاز ولا تُقرأ من القاعدة مرة ثانية. */
+  function mean(a) { return a.reduce(function (x, y) { return x + y; }, 0) / a.length; }
+  function myDocs(s, docs) { return (docs || []).filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); }); }
+  function absPts(s, k, docs) {
+    var out = []; docs.forEach(function (d) { var b = dayStart(d.date) / 1000; ptsOf(d, s, k).forEach(function (p) { out.push({ t: b + p.t, v: p.v }); }); });
+    return out.sort(function (a, b) { return a.t - b.t; });
+  }
+  function houseKPI(list, docs, w0, w1) {
+    var ss = list.map(function (s) { var my = myDocs(s, docs); return { T: samplerP(absPts(s, "temp", my)), H: samplerP(absPts(s, "hum", my)), L: codesFor(s, "lux").length ? sampler(absPts(s, "lux", my)) : null }; });
+    var dh = DH(), h = STEP / 3600, heat = scn("heat"), cg = scn("condGap"), vmin = scn("vpdMin"), vmax = scn("vpdMax"), kL = scn("luxPpfd");
+    var m = { cov: 0, n: 0, sum: 0, dS: 0, dN: 0, nS: 0, nN: 0, vCov: 0, vIn: 0, cond: 0, heat: 0, lux: ss.some(function (x) { return x.L; }), lCov: 0, dli: 0 };
+    for (var t = Math.ceil(w0 / 1000 / STEP) * STEP, e = Math.floor(w1 / 1000); t < e; t += STEP) {
+      var ts = [], vs = [], c = false, hot = false, lx = [];
+      ss.forEach(function (x) {
+        var a = x.T(t), b = x.H(t);
+        if (a) { ts.push(a.v); if (a.v > heat) hot = true; }
+        if (a && b && Math.abs(a.t - b.t) <= 1800) { vs.push(vpdOf(a.v, b.v)); if (a.v - dewOf(a.v, b.v) <= cg) c = true; }
+        if (x.L) { var l = x.L(t); if (l != null) lx.push(l); }
+      });
+      var hr = ((t + 10800) % 86400) / 3600, day = hr >= dh[0] && hr < dh[1];
+      if (lx.length) { m.lCov += h; m.dli += mean(lx) * kL * STEP / 1e6; }
+      if (!ts.length) continue;
+      var tm = mean(ts); m.cov += h; m.sum += tm; m.n++;
+      if (day) { m.dS += tm; m.dN++; } else { m.nS += tm; m.nN++; }
+      if (hot) m.heat += h;
+      if (vs.length) { if (c) m.cond += h; if (day) { m.vCov += h; var vm = mean(vs); if (vm >= vmin && vm <= vmax) m.vIn += h; } }
+    }
+    if (!m.n) return null;
+    var r = function (x, d) { return x == null ? null : Math.round(x * d) / d; };
+    var tD = m.dN ? m.dS / m.dN : null, tN = m.nN ? m.nS / m.nN : null;
+    return { cov: r(m.cov, 100), tMean: r(m.sum / m.n, 100), tDay: r(tD, 100), tNight: r(tN, 100), dif: tD != null && tN != null ? r(tD - tN, 100) : null,
+      vCov: r(m.vCov, 100), vIn: r(m.vIn, 100), cond: r(m.cond, 100), heat: r(m.heat, 100), lux: m.lux, lCov: r(m.lCov, 100), dli: m.lux ? r(m.dli, 100) : null };
+  }
+  var KH = { docs: [], have: {}, loading: false, fail: 0 };
+  function kpiSig(list) {
+    var o = offs();
+    return ["k1", S.sec, DH().join("-"), scn("heat"), scn("condGap"), scn("vpdMin"), scn("vpdMax"), scn("luxPpfd"),
+      list.map(function (s) { var x = o[s.id]; return s.id + (x ? ":" + (+x.temp || 0) + "/" + (+x.hum || 0) : ""); }).sort().join(",")].join("|");
+  }
+  function kcGet() { try { return JSON.parse(lsG("gs_kpi") || "{}") || {}; } catch (e) { return {}; } }
+  function kcPut(o) { var ks = Object.keys(o); if (ks.length > 150) ks.sort(function (a, b) { return o[a].at - o[b].at; }).slice(0, ks.length - 150).forEach(function (k) { delete o[k]; }); lsS("gs_kpi", JSON.stringify(o)); }
+  /* مؤشرات يوم تقويمي كامل. undefined = لم تُقرأ بياناته بعد، null = لا بيانات */
+  function kpiDay(list, date, C) {
+    var ck = C.sig + "|" + date; if (C.c[ck]) return C.c[ck].m;
+    var prev = addDays(date, -1), by = {};
+    (X.all || []).concat(KH.docs).forEach(function (d) { if (d.date === date || d.date === prev) by[d.date + "|" + d.deviceId] = d; });
+    var docs = Object.keys(by).map(function (k) { return by[k]; });
+    var inAll = X.from0 && X.key && X.from0 <= date && date <= X.key.split("|")[1];
+    if (!KH.have[date] && !inAll) return undefined;
+    var m = houseKPI(list, docs, dayStart(date), dayStart(date) + 864e5);
+    if (date < addDays(dkey(Date.now()), -1)) { C.c[ck] = { at: Date.now(), m: m }; C.dirty = true; }
+    return m;
+  }
+  function kpiFetch(dates) {
+    if (KH.loading || !X.user || !dates.length || Date.now() - KH.fail < 60000) return;
+    var a = dates[0], b = dates[dates.length - 1]; KH.loading = true;
+    X.db.collection("sensorDays").where("date", ">=", a).where("date", "<=", b).get().then(function (q) {
+      var by = {}; KH.docs.concat(q.docs.map(function (d) { return d.data(); })).forEach(function (d) { by[d.date + "|" + d.deviceId] = d; });
+      KH.docs = Object.keys(by).map(function (k) { return by[k]; });
+      for (var d = a; d <= b; d = addDays(d, 1)) KH.have[d] = 1;
+      KH.loading = false; rr();
+    }).catch(function (e) { KH.loading = false; KH.fail = Date.now(); console.warn(e); });
+  }
+  function kpiHTML(list, R) {
+    if (!isSupU() || typeof addDays !== "function" || !X.all) return "";
+    var ss = list.filter(function (s) { return codesFor(s, "temp").length; }); if (!ss.length) return "";
+    var today = dkey(Date.now()), live = R.to >= today, w1 = live ? Date.now() : dayStart(R.to) + 864e5;
+    var cur = houseKPI(ss, X.all, w1 - 864e5, w1); if (!cur) return "";
+    var C = { sig: kpiSig(ss), c: kcGet(), dirty: false }, base = live ? today : R.to, y = kpiDay(ss, addDays(base, -1), C), wk = [], miss = [];
+    for (var i = 1; i <= 7; i++) { var d = addDays(base, -i), m = kpiDay(ss, d, C); if (m === undefined) miss.push(d); else if (m && m.cov >= 12) wk.push(m); }
+    if (C.dirty) kcPut(C.c);
+    kpiFetch(miss.sort());
+    var avgOf = function (k) { var a = wk.map(function (m) { return m[k]; }).filter(function (x) { return x != null; }); return a.length ? mean(a) : null; };
+    var L = function (x) { return '<bdi dir="ltr" class="num">' + x + "</bdi>"; };
+    var deg = function (x) { return L(F(x, 1) + "°"); }, hr = function (x) { return '<span class="num">' + F(x, 1) + "</span> س"; }, sgn = function (x) { return L((x > 0 ? "+" : "") + F(x, 1) + "°"); };
+    var cmp = function (k, fm) { var a = y ? y[k] : null, b = avgOf(k), o = []; if (a != null) o.push("أمس " + fm(a)); if (b != null && wk.length > 1) o.push("متوسط " + (wk.length === 2 ? "يومين" : wk.length + " أيام") + " " + fm(b)); return o.length ? o.join(" · ") : miss.length && KH.loading ? "جارٍ تحميل المقارنة…" : ""; };
+    /* الوحدة الرمزية (° %) تُلصق بالرقم من اليسار، والوحدة العربية (س) تأتي بعده بالترتيب العربي */
+    var tile = function (tone, lab, val, unit, note, cm) { var sym = unit === "°" || unit === "%"; return '<div class="gk ' + tone + '"><span class="gk-l">' + lab + '</span><b class="gk-v num"><bdi dir="ltr">' + val + (unit && sym ? "<small>" + unit + "</small>" : "") + "</bdi>" + (unit && !sym ? "<small>" + unit + "</small>" : "") + "</b>" + (note ? '<span class="gk-n">' + note + "</span>" : "") + (cm ? '<span class="gk-c">' + cm + "</span>" : "") + "</div>"; };
+    var aMin = typeof cfg === "function" ? num(cfg("avgMin")) : null, aMax = typeof cfg === "function" ? num(cfg("avgMax")) : null, tm = cur.tMean;
+    var tT = aMin == null || aMax == null ? "" : tm < aMin - 1 || tm > aMax + 1 ? "bad" : tm < aMin || tm > aMax ? "warn" : "ok";
+    var vp = cur.vCov ? cur.vIn / cur.vCov : null, tV = vp == null ? "" : vp >= 0.7 ? "ok" : vp >= 0.4 ? "warn" : "bad";
+    var t = [
+      tile(tT, "متوسط الحرارة", F(tm, 1), "°", aMin != null ? 'المستهدف <bdi dir="ltr" class="num">' + F(aMin) + "–" + F(aMax) + "°</bdi>" : "", cmp("tMean", deg)),
+      tile("", "DIF <small>النهار − الليل</small>", cur.dif == null ? "—" : (cur.dif > 0 ? "+" : "") + F(cur.dif, 1), cur.dif == null ? "" : "°", cur.dif == null ? "" : 'نهار <bdi dir="ltr" class="num">' + F(cur.tDay, 1) + '°</bdi> · ليل <bdi dir="ltr" class="num">' + F(cur.tNight, 1) + "°</bdi>", cmp("dif", sgn)),
+      tile(tV, "VPD المثالي <small>نهاراً</small>", cur.vCov ? F(cur.vIn, 1) : "—", cur.vCov ? " س" : "", cur.vCov ? 'من <span class="num">' + F(cur.vCov, 1) + "</span> س · " + '<span class="num">' + F(vp * 100) + "%</span>" : "يحتاج حرارة ورطوبة", cmp("vIn", hr)),
+      tile(cur.cond >= 2 ? "bad" : cur.cond > 0 ? "warn" : "ok", "تكثّف محتمل", F(cur.cond, 1), " س", 'هامش الندى ≤ <bdi dir="ltr" class="num">' + F(scn("condGap"), 1) + "°</bdi>", cmp("cond", hr)),
+      tile(cur.heat >= 3 ? "bad" : cur.heat > 0.4 ? "warn" : "ok", "إجهاد حراري", F(cur.heat, 1), " س", 'فوق <bdi dir="ltr" class="num">' + F(scn("heat")) + "°</bdi> في أي موقع", cmp("heat", hr)),
+      cur.lux && cur.lCov >= 1 ? tile(cur.dli < scn("dliMin") * 0.75 ? "bad" : cur.dli < scn("dliMin") || cur.dli > scn("dliMax") ? "warn" : "ok", "DLI <small>الضوء اليومي</small>", F(cur.dli, 1), " mol", 'المستهدف <bdi dir="ltr" class="num">' + F(scn("dliMin")) + "–" + F(scn("dliMax")) + "</bdi>", cmp("dli", function (x) { return F(x, 1); }))
+        : '<div class="gk na"><span class="gk-l">DLI <small>الضوء اليومي</small></span><b class="gk-v">—</b><span class="gk-n">يحتاج حساس ضوء داخل البيت</span></div>'
+    ];
+    return '<section class="sec"><div class="sec-h"><h2>مؤشرات النمو</h2><span class="muted" style="font-size:12.5px">' + (live ? "آخر 24 ساعة" : E(typeof fmtShort === "function" ? fmtShort(R.to) : R.to)) + "</span></div>" +
+      (cur.cov < 20 ? '<p class="help sn-warn" style="margin:0 0 6px">البيانات تغطي <span class="num">' + F(cur.cov, 1) + "</span> ساعة فقط من 24، فالأرقام تقريبية.</p>" : "") +
+      '<div class="gks">' + t.join("") + "</div>" +
+      (typeof fold === "function" ? fold("gkHelp", "ماذا تعني هذه المؤشرات؟", '<ul class="gk-help"><li><b>متوسط الحرارة على 24 ساعة</b> هو ما يحدد سرعة نمو الخس وطول الدورة: أعلى من المستهدف = نمو أسرع لكن أوراق أخف وخطر الحرقان والتزهير، وأقل منه = دورة أطول.</li><li><b>DIF</b> = متوسط النهار ناقص متوسط الليل. الموجب الكبير يزيد استطالة الشتلات، والصغير أو السالب يعطي نباتاً مندمجاً.</li><li><b>VPD المثالي</b>: ساعات النهار التي كان فيها النتح جيداً (يصل الكالسيوم للأوراق).</li><li><b>التكثّف والإجهاد الحراري</b> تُحسب إذا حدثت في أي موقع في البيت، لأن أسوأ نقطة هي التي تمرض أو تحترق.</li><li>المقارنة مع أمس ومتوسط الأيام السابقة الكاملة تبيّن هل الأجواء تتحسن أو تسوء.</li></ul>') : "") + "</section>";
+  }
+
+  /* ================= الصفحة: تبويبات الآن · الرسم البياني · التحليل ================= */
   function view() {
     start();
     var list = sensorList(), sup = isSupU();
-    var h = '<section class="sec"><div class="sec-h"><h2>الحساسات · ' + (SECS[S.sec] ? SECS[S.sec].icon + " " + SECS[S.sec].name : "") + '</h2><button class="btn sm" type="button" data-sact="refresh">تحديث</button></div>' + statusHTML() + "</section>";
-    if (X.err && !X.user) return h;
-    if (!X.user) return h + '<div class="empty">جارٍ الاتصال بالحساسات…</div>';
-    if (!Object.keys(X.sensors).length) return h + '<div class="empty">لم تصل بيانات حساسات بعد.</div>';
-    if (!list.length) return h + '<div class="empty">لا توجد حساسات في ' + SECS[S.sec].name + '. حدّد قسم كل حساس من ورقة Devices في جدول Tuya Sensors.</div>';
+    var tabs = sup ? [["now", "الآن"], ["chart", "الرسم"], ["an", "التحليل"], ["dev", "الأجهزة"]] : [["now", "الآن"], ["chart", "الرسم البياني"]];
+    var h = '<section class="sec"><div class="sec-h"><h2>الحساسات · ' + (SECS[S.sec] ? SECS[S.sec].icon + " " + SECS[S.sec].name : "") + '</h2><button class="btn sm" type="button" data-sact="refresh">تحديث</button></div>' + statusHTML();
+    if (X.err && !X.user) return h + "</section>";
+    if (!X.user) return h + '</section><div class="empty">جارٍ الاتصال بالحساسات…</div>';
+    if (!Object.keys(X.sensors).length) return h + '</section><div class="empty">لم تصل بيانات حساسات بعد.</div>';
+    if (!list.length) return h + '</section><div class="empty">لا توجد حساسات في ' + SECS[S.sec].name + '. حدّد قسم كل حساس من ورقة Devices في جدول Tuya Sensors.</div>';
+    h += subTabs("sens", tabs) + "</section>";
+    var tab = subGet("sens", tabs);
+    loadDays(false);
+    var R = rangeOf(), ready = X.days && X.key === R.from + "|" + R.to, wait = '<div class="card"><div class="empty" style="border:0">جارٍ تحميل القراءات…</div></div>';
 
-    h += '<section class="sec">' + alertsHTML(list) + '<div class="grid2">' + list.map(cardHTML).join("") + "</div></section><!--sn-night-->";
+    if (tab === "now") {
+      var al = alertsHTML(list);
+      h += (al ? '<section class="sec">' + al + "</section>" : "") + mapHTML(list) + (ready ? kpiHTML(list, R) + nightHTML(list, R.to) : "");
+      return h + '<section class="sec"><h2>تفاصيل الحساسات</h2><div class="sncards">' + list.map(cardHTML).join("") + "</div></section>";
+    }
+    if (tab === "dev") return h + (ready ? healthHTML(list) : wait);
 
     var kinds = kindsAvail(list); if (kinds.indexOf(X.kind) < 0) X.kind = kinds[0];
-    var R = rangeOf(), isToday = typeof todayStr === "function" && R.to === todayStr();
-    var dayLab = isToday ? "اليوم" : (typeof fmtShort === "function" ? fmtShort(R.to) : R.to);
+    var isToday = typeof todayStr === "function" && R.to === todayStr(), dayLab = isToday ? "اليوم" : (typeof fmtShort === "function" ? fmtShort(R.to) : R.to);
     var periods = sup ? [[1, dayLab], [7, "7 أيام"], [30, "30 يوم"]] : [[1, dayLab], [7, "7 أيام"]];
-    h += '<section class="sec"><h2>' + (sup ? "السجل" : "القراءات") + "</h2>" +
-      '<div class="seg" role="group" aria-label="الفترة">' + periods.map(function (p) { return '<button type="button" data-sact="period" data-n="' + p[0] + '" aria-pressed="' + (P() === p[0]) + '">' + E(p[1]) + "</button>"; }).join("") + "</div>" +
-      '<div class="seg wrap" role="group" aria-label="القياس">' + kinds.map(function (k) { return '<button type="button" data-sact="kind" data-k="' + E(k) + '" aria-pressed="' + (X.kind === k) + '">' + E(kindInfo(k, list[0]).l) + "</button>"; }).join("") + "</div>";
-    var withK = list.filter(function (s) { return codesFor(s, X.kind).length; });
-    if (withK.length > 1) h += '<div class="sn-pick">' + withK.map(function (s) { var on = !X.off[s.id]; return '<button type="button" class="sn-chip" data-sact="toggle" data-id="' + E(s.id) + '" aria-pressed="' + on + '"><i style="background:' + colorOf(s) + '"></i><bdi>' + E(nm(s)) + "</bdi></button>"; }).join("") + "</div>";
-    loadDays(false);
-    if (!X.days || X.key !== R.from + "|" + R.to) return h + '<div class="card"><div class="empty" style="border:0">جارٍ تحميل القراءات…</div></div></section>';
+    var segP = '<div class="seg" role="group" aria-label="الفترة">' + periods.map(function (p) { return '<button type="button" data-sact="period" data-n="' + p[0] + '" aria-pressed="' + (P() === p[0]) + '">' + E(p[1]) + "</button>"; }).join("") + "</div>";
+    var segK = '<div class="seg wrap" role="group" aria-label="القياس">' + kinds.map(function (k) { return '<button type="button" data-sact="kind" data-k="' + E(k) + '" aria-pressed="' + (X.kind === k) + '">' + E({ hum: "الرطوبة", soil: "رطوبة التربة" }[k] || kindInfo(k, list[0]).l) + "</button>"; }).join("") + "</div>";
+    var withK = list.filter(function (s) { return codesFor(s, X.kind).length; }), shown = withK.filter(function (s) { return !X.off[s.id]; });
     var ki = kindInfo(X.kind, withK[0]);
-    var night = nightHTML(list, R.to); h = h.replace("<!--sn-night-->", function () { return night; });
-    h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة بالضبط.' + (X.kind === "vpd" ? " VPD يقيس قوة سحب الهواء للماء من الورقة. المنطقة المظللة هي المثالي (" + F(scn("vpdMin"), 1) + "–" + F(scn("vpdMax"), 1) + " kPa): أقل منها جو رطب يضعف النتح ووصول الكالسيوم (احتراق الحواف وأمراض)، وأعلى منها جو جاف يُجهد النبات. انخفاضه في الليل طبيعي، والمهم قيمته في النهار." : "") + (X.kind === "dew" || X.kind === "vpd" ? " في النافذة بجانب كل قيمة: الحرارة والرطوبة اللتان حُسبت منهما." : "") + (X.kind === "dew" ? " نقطة الندى هي الحرارة التي يبدأ عندها تكثّف الماء على الأوراق: كلما اقتربت من حرارة الجو (أقل من " + F(scn("dewGap")) + "°) زاد خطر الأمراض الفطرية." : "") + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
-    if (sup && P() === 1) h += rawHTML(withK.filter(function (s) { return !X.off[s.id]; }), ki, R.to);
-    h += "</section>";
-    if (!sup) return h;
-    h += analysisHTML(list, R) + profileHTML(withK.filter(function (s) { return !X.off[s.id]; }), ki) + coolingHTML(list, R) + summaryHTML(withK, ki, R);
+
+    if (tab === "chart") {
+      h += '<section class="sec">' + segP + segK;
+      if (withK.length > 1) h += '<div class="sn-pick">' + withK.map(function (s) { var on = !X.off[s.id]; return '<button type="button" class="sn-chip" data-sact="toggle" data-id="' + E(s.id) + '" aria-pressed="' + on + '"><i style="background:' + colorOf(s) + '"></i><bdi>' + E(nm(s)) + "</bdi></button>"; }).join("") + "</div>";
+      if (!ready) return h + wait + "</section>";
+      h += '<div class="card chart sn-chart" id="snChart"></div><p class="help muted sn-hint">المس الرسم أو حرّك إصبعك عليه لترى الوقت والقيمة.' + (X.kind === "vpd" ? " المنطقة المظللة هي المدى المثالي (" + F(scn("vpdMin"), 1) + "–" + F(scn("vpdMax"), 1) + " kPa). أقل منه: جو رطب يضعف النتح ووصول الكالسيوم. أعلى منه: جو جاف يُجهد النبات. انخفاضه في الليل طبيعي." : "") + (X.kind === "dew" ? " نقطة الندى هي الحرارة التي يتكثّف عندها الماء على الأوراق: كلما اقتربت من حرارة الجو زاد خطر الأمراض الفطرية." : "") + (X.kind === "dew" || X.kind === "vpd" ? " في النافذة بجانب كل قيمة: الحرارة والرطوبة اللتان حُسبت منهما." : "") + (P() === 1 && (X.kind === "temp" || X.kind === "hum") && withK.some(function (s) { return manualKeys(s, X.kind).length; }) ? " المربعات = القراءات اليدوية لنفس الموقع." : "") + "</p>";
+      if (sup && P() === 1) h += rawHTML(shown, ki, R.to);
+      return h + "</section>";
+    }
+
+    /* التحليل (للمشرف) */
+    h += '<section class="sec">' + segP + segK + "</section>";
+    if (!ready) return h + wait;
+    h += analysisHTML(list, R) + coolingHTML(list, R) + profileHTML(shown, ki) + summaryHTML(withK, ki, R);
     h += '<section class="sec"><button class="btn block" type="button" data-sact="export">تنزيل قراءات الفترة (Excel)</button><button class="btn block" type="button" data-sact="set">إعدادات الحساسات وحدود التحليل</button></section>';
     h += '<p class="muted sn-foot">لتغيير اسم الحساس أو قسمه أو موقعه: ورقة <b>Devices</b> في جدول Tuya Sensors. يظهر التغيير مع القراءة التالية.</p>';
     return h;
   }
 
+  /* ================= خريطة البيت (للجميع): كل حساس في مكانه، ولونه حسب حالته الآن ================= */
+  function nodeSt(s) {
+    var seen = ms(s.lastSeen); if (!seen || Date.now() - seen > STALE_H * 3600e3) return "off";
+    var t = lastOfKind(s, "temp"), h = lastOfKind(s, "hum");
+    if (bad(stOf("temp", t)) || bad(stOf("hum", h))) return "bad";
+    if (t != null && h != null && (bad(stOf("vpd", vpdOf(t, h))) || t - dewOf(t, h) <= scn("dewGap"))) return "warn";
+    return "ok";
+  }
+  function mapNode(s) {
+    var st = nodeSt(s), t = lastOfKind(s, "temp"), h = lastOfKind(s, "hum");
+    var v = st === "off" ? '<span class="hm-v hm-off">متوقف</span>' :
+      '<span class="hm-v">' + (t != null ? '<b class="num"><bdi dir="ltr">' + F(t, 1) + "°</bdi></b>" : "") + (h != null ? '<span class="num"><bdi dir="ltr">' + F(h) + "%</bdi></span>" : "") + "</span>" +
+      (t != null && h != null ? '<small class="num">VPD <bdi dir="ltr">' + vpdOf(t, h).toFixed(2) + "</bdi></small>" : "");
+    return '<button type="button" class="hm-n ' + st + '" data-act="jump" data-to="snc_' + E(s.id) + '"><span class="hm-nm"><i style="background:' + colorOf(s) + '"></i><bdi>' + E(nm(s)) + "</bdi></span>" + v + "</button>";
+  }
+  function mapHTML(list) {
+    var ss = list.filter(function (s) { return codesFor(s, "temp").length || codesFor(s, "hum").length; }); if (!ss.length) return "";
+    var Z = typeof ZONES !== "undefined" ? ZONES : ["البداية", "الوسط", "النهاية"], t = S.sec === "t", loose = [];
+    var lanes = t ? { a: [[], [], []] } : { r: [[], [], []], c: [[], [], []], l: [[], [], []] };
+    ss.forEach(function (s) {
+      var p = posOf(s), i = t ? POS.t.indexOf(p.charAt(0)) : POS.n.indexOf(p.slice(-1));
+      if (!p || i < 0) { loose.push(s); return; }
+      (t ? lanes.a : /^[rl]/.test(p) ? lanes[p.charAt(0)] : lanes.c)[i].push(s);
+    });
+    var zone = function (arr) { return '<div class="hm-z">' + (arr.length ? arr.map(mapNode).join("") : '<span class="hm-none">لا حساس</span>') + "</div>"; };
+    var head = '<div class="hm-row hm-head">' + (t ? "" : "<span></span>") + Z.map(function (z, i) { return "<span>" + E(z) + (t && i === 0 ? "<small>جهة الخلايا</small>" : t && i === 2 ? "<small>جهة المراوح</small>" : "") + "</span>"; }).join("") + "</div>";
+    var body = t ? '<div class="hm-row">' + lanes.a.map(zone).join("") + "</div>" :
+      [["r", "يمين"], ["c", "الممر"], ["l", "يسار"]].filter(function (x) { return x[0] !== "c" || lanes.c.some(function (a) { return a.length; }); })
+        .map(function (x) { return '<div class="hm-row"><span class="hm-ll">' + x[1] + "</span>" + lanes[x[0]].map(zone).join("") + "</div>"; }).join("");
+    // فرق الحرارة من أول البيت إلى آخره (التبريد)
+    var avgT = function (arr) { var a = arr.filter(function (s) { return nodeSt(s) !== "off"; }).map(function (s) { return lastOfKind(s, "temp"); }).filter(function (v) { return v != null; }); return a.length ? mean(a) : null; };
+    var first = t ? lanes.a[0] : lanes.r[0].concat(lanes.c[0], lanes.l[0]), last = t ? lanes.a[2] : lanes.r[2].concat(lanes.c[2], lanes.l[2]);
+    var a0 = avgT(first), z0 = avgT(last), gd = a0 != null && z0 != null ? z0 - a0 : null, gm = scn("gradMax");
+    var foot = (gd != null ? '<span class="' + (gd > gm ? "sn-warn" : "") + '">فرق الحرارة من البداية إلى النهاية <b class="num"><bdi dir="ltr">' + (gd > 0 ? "+" : "") + F(gd, 1) + "°</bdi></b>" + (gd > gm ? " · أعلى من " + F(gm, 1) + "°: افحص التبريد" : "") + "</span>" : "") +
+      (isSupU() ? '<span class="hm-out">خارج البيت: لا يوجد حساس بعد</span>' : "");
+    return '<section class="sec"><div class="sec-h"><h2>خريطة ' + (t ? "البيت" : "المشتل") + '</h2><span class="muted" style="font-size:12.5px">اضغط الحساس لتفاصيله</span></div>' +
+      '<div class="hmap ' + (t ? "t" : "n") + '">' + head + '<div class="hm-house">' + body + "</div>" + (t ? '<div class="hm-air"><span>الخلايا</span><i></i><span>المراوح</span></div>' : "") + "</div>" +
+      (loose.length ? '<div class="hm-loose"><span class="muted">بدون موقع:</span>' + loose.map(mapNode).join("") + "</div>" : "") +
+      (foot ? '<p class="hm-foot">' + foot + "</p>" : "") + "</section>";
+  }
+
+  /* ================= صحة الحساسات وتصحيح المعايرة (للمشرف) ================= */
+  var HM = { key: "", rows: null, loading: false };
+  function manRows() { // تسجيلات القياس اليدوي لآخر 8 أيام (تُقرأ مرة لكل يوم، أو تؤخذ من التقارير إن غطّتها)
+    var to = dkey(Date.now()), from = addDays(to, -7), key = from + "|" + to;
+    if (window.S && S.rep && S.rep.all && S.rep.start <= from && S.rep.end >= to) return S.rep.all;
+    if (HM.key === key) return HM.rows;
+    if (!HM.loading && window.S && S.db) {
+      HM.loading = true;
+      S.db.collection("entries").where("date", ">=", from).where("date", "<=", to).get().then(function (q) { HM = { key: key, rows: q.docs.map(function (d) { return d.data(); }), loading: false }; rr(); })
+        .catch(function (e) { HM = { key: key, rows: [], loading: false }; console.warn(e); });
+    }
+    return null;
+  }
+  function dayCov(s, doc) { // تغطية يوم: الساعات التي فيها قراءة صالحة، وأطول انقطاع
+    var pts = ptsOf(doc, s, codesFor(s, "temp").length ? "temp" : "hum"), end = dayEnd(doc.date), f = sampler(pts), c = 0, n = 0;
+    for (var t = 0; t < end; t += STEP) { n++; if (f(t) != null) c++; }
+    var gap = { s: 0, at: 0 }, prev = 0; pts.concat([{ t: end }]).forEach(function (p) { if (p.t - prev > gap.s) gap = { s: p.t - prev, at: prev }; prev = p.t; });
+    return { pct: n ? c / n : 0, gap: gap, n: pts.length };
+  }
+  function healthHTML(list) {
+    var today = dkey(Date.now()), rows = manRows(), days = [];
+    for (var i = 7; i >= 0; i--) days.push(addDays(today, -i));
+    var miss = days.filter(function (d) { return !KH.have[d] && !(X.from0 && X.key && X.from0 <= d && d <= X.key.split("|")[1]); });
+    kpiFetch(miss.sort());
+    var all = {}; (X.all || []).concat(KH.docs).forEach(function (d) { all[d.date + "|" + d.deviceId] = d; });
+    var o = offs(), kpa = typeof KPA === "function" ? KPA() : 'inputmode="decimal"';
+    var cards = list.map(function (s) {
+      var seen = ms(s.lastSeen), stale = !seen || Date.now() - seen > STALE_H * 3600e3, batt = lastOfKind(s, "batt"), mine = [];
+      var cov = days.map(function (d) { var doc = all[d + "|" + s.id]; if (doc && secOk(doc.sec != null && doc.sec !== "" ? doc.sec : s.sec)) mine.push(doc); return doc ? dayCov(s, doc) : null; });
+      var td = cov[cov.length - 1], bars = days.map(function (d, i) { var c = cov[i], loaded = KH.have[d] || (X.from0 && X.from0 <= d), p = c ? c.pct : 0;
+        return '<i class="' + (!loaded ? "na" : p >= 0.95 ? "ok" : p >= 0.7 ? "warn" : "bad") + '" title="' + E(d) + " · " + (loaded ? F(p * 100) + "%" : "…") + '"></i>'; }).join("");
+      var gapTxt = !td ? "لا قراءات اليوم" : td.gap.s > HOLD ? '<span class="sn-warn">' + F(td.gap.s / 3600, 1) + " س من " + tLabel(dayStart(today) + td.gap.at * 1000) + "</span>" : '<span class="sn-good">لا يوجد</span>';
+      var ox = o[s.id] || {}, hasTH = codesFor(s, "temp").length || codesFor(s, "hum").length;
+      var dT = rows ? manualDiff(s, mine, rows.filter(function (e) { return (e.sec || "n") === S.sec; }), "temp") : null, dH = rows ? manualDiff(s, mine, rows.filter(function (e) { return (e.sec || "n") === S.sec; }), "hum") : null;
+      var dTxt = function (d, u, dec, lim) { if (!d) return '<span class="muted">لا توجد قراءات يدوية مطابقة</span>'; var a = d.avg; return (Math.abs(a) < lim ? '<span class="sn-good">متطابق تقريباً</span>' : "الحساس " + (a > 0 ? "أعلى" : "أقل") + ' بـ <b class="num"><bdi dir="ltr">' + F(Math.abs(a), dec) + u + "</bdi></b>") + ' <small class="muted">(' + d.n + " قراءة)</small>"; };
+      var sugT = dT && dT.n >= 3 && Math.abs(dT.avg) >= 0.3 ? Math.round(((+ox.temp || 0) - dT.avg) * 10) / 10 : null, sugH = dH && dH.n >= 3 && Math.abs(dH.avg) >= 2 ? Math.round((+ox.hum || 0) - dH.avg) : null;
+      var pl = posLabel(s), where = s.loc || pl || "لم يُحدَّد الموقع";
+      return '<article class="card snh"><div class="snc-h"><i class="sw" style="background:' + colorOf(s) + '"></i><div class="snc-n"><b dir="auto">' + E(nm(s)) + "</b><span>" + E(where) + '</span></div><div class="snc-meta"><span class="snc-t' + (stale ? " stale" : "") + '"><i></i>' + (seen ? ago(seen) : "لا قراءات") + "</span></div></div>" +
+        '<dl class="kv snh-kv"><dt>البطارية</dt><dd>' + (batt == null ? '<span class="muted">لا تُرسل</span>' : '<b class="num ' + (batt < 20 ? "sn-bad" : batt < 40 ? "sn-warn" : "") + '">' + F(batt) + "%</b>" + (batt < 20 ? " · اشحن أو بدّل البطارية" : "")) + "</dd>" +
+        "<dt>تغطية اليوم</dt><dd>" + (td ? '<b class="num">' + F(td.pct * 100) + '%</b> <small class="muted">' + td.n + " قراءة</small>" : "—") + "</dd>" +
+        "<dt>أطول انقطاع اليوم</dt><dd>" + gapTxt + "</dd>" +
+        '<dt>آخر 8 أيام</dt><dd><span class="snh-bars" aria-label="تغطية آخر 8 أيام">' + bars + "</span></dd></dl>" +
+        (hasTH ? '<div class="snh-man"><b>مقابل القياس اليدوي</b> <small class="muted">آخر 8 أيام، نفس الموقع والوقت</small>' + (rows ? (codesFor(s, "temp").length ? "<div>الحرارة: " + dTxt(dT, "°", 1, 0.3) + "</div>" : "") + (codesFor(s, "hum").length ? "<div>الرطوبة: " + dTxt(dH, "%", 0, 2) + "</div>" : "") : '<div class="muted">جارٍ التحميل…</div>') + "</div>" : "") +
+        (hasTH ? '<div class="snh-cal"><b>تصحيح المعايرة</b><div class="snh-in">' +
+          (codesFor(s, "temp").length ? '<label>الحرارة<div class="unitwrap"><input class="in num" ' + kpa + ' id="off_t_' + E(s.id) + '" value="' + E(ox.temp != null ? ox.temp : "") + '" placeholder="0"><span class="u">°C</span></div></label>' : "") +
+          (codesFor(s, "hum").length ? '<label>الرطوبة<div class="unitwrap"><input class="in num" ' + kpa + ' id="off_h_' + E(s.id) + '" value="' + E(ox.hum != null ? ox.hum : "") + '" placeholder="0"><span class="u">%</span></div></label>' : "") +
+          '</div><div class="snh-act">' + (sugT != null || sugH != null ? '<button type="button" class="btn sm" data-sact="offSug" data-id="' + E(s.id) + '" data-t="' + (sugT != null ? sugT : "") + '" data-h="' + (sugH != null ? sugH : "") + '">اقتراح من اليدوي: ' + [sugT != null ? '<bdi dir="ltr">' + (sugT > 0 ? "+" : "") + F(sugT, 1) + "°</bdi>" : "", sugH != null ? '<bdi dir="ltr">' + (sugH > 0 ? "+" : "") + F(sugH) + "%</bdi>" : ""].filter(Boolean).join(" ") + "</button>" : "") +
+          '<button type="button" class="btn sm pri" data-sact="offSave" data-id="' + E(s.id) + '">حفظ التصحيح</button></div>' +
+          (ox.at ? '<p class="help" style="margin:4px 0 0">آخر تعديل ' + E(typeof fmtShort === "function" ? fmtShort(ox.at) : ox.at) + "</p>" : "") + "</div>" : "") + "</article>";
+    });
+    return '<section class="sec"><h2>صحة الحساسات</h2><div class="snh-list">' + cards.join("") + "</div>" +
+      '<p class="help sn-hint">التغطية = نسبة الوقت الذي فيه قراءة صالحة (الحساس يرسل عند تغيّر القيمة، فغياب القراءة أقل من ساعة طبيعي). المربعات = آخر 8 أيام: أخضر 95% فأكثر، برتقالي ناقص، أحمر ضعيف.<br>' +
+      "<b>التصحيح</b> رقم يُضاف لقراءة الحساس في كل الصفحات والتقارير (مثلاً −0.8 إذا كان الحساس يقرأ أعلى من الحقيقة بـ 0.8°). استخدم الاقتراح فقط إذا كان جهاز القياس اليدوي موثوقاً ومعايَراً، والأفضل وضع الجهازين متجاورين في الظل 15 دقيقة ثم المقارنة.</p></section>";
+  }
+  function saveOff(b) {
+    var id = b.getAttribute("data-id"), gv = function (k) { var el = document.getElementById("off_" + k + "_" + id); return el ? (el.value.trim() === "" ? 0 : num(el.value)) : 0; };
+    var t = gv("t"), h = gv("h");
+    if (t == null || h == null || Math.abs(t) > 5 || Math.abs(h) > 20) { toast("التصحيح يجب أن يكون بين −5 و +5 للحرارة، وبين −20 و +20 للرطوبة"); return; }
+    var off = Object.assign({}, offs()); if (!t && !h) delete off[id]; else off[id] = { temp: t, hum: h, at: dkey(Date.now()), by: S.uid || "" };
+    b.disabled = true;
+    S.db.collection("config").doc("settings").set(Object.assign({}, S.settings, { sens: Object.assign({}, S.settings.sens || {}, { off: off }) }))
+      .then(function () { toast(!t && !h ? "أُلغي التصحيح" : "حُفظ التصحيح، ويُطبّق على كل القراءات"); }).catch(function (e) { b.disabled = false; toast(typeof errMsg === "function" ? errMsg(e) : "تعذّر الحفظ"); });
+  }
+
   /* ================= حالة الأجواء الآن (للجميع) ================= */
   function alertsHTML(list) {
-    var lo = num(cfg("airMin")), hi = num(cfg("airMax")), rlo = num(cfg("rhMin")), rhi = num(cfg("rhMax")), heat = scn("heat"), risk = scn("rhRisk");
+    var now = Date.now(), lo = limAt("temp", now)[0], hi = limAt("temp", now)[1], rlo = limAt("hum", now)[0], rhi = limAt("hum", now)[1], heat = scn("heat"), risk = scn("rhRisk");
     var g = { hot: [], cold: [], humid: [], dry: [], off: [] }, fresh = 0;
     list.forEach(function (s) {
       var seen = ms(s.lastSeen), stale = !seen || Date.now() - seen > STALE_H * 3600e3, sn = nm(s), last = s.last || {}, batt = null;
@@ -323,7 +567,7 @@ var SENS = (function () {
       if (stale || (batt != null && batt < 20)) { g.off.push(sn); if (stale) return; }
       fresh++;
       Object.keys(last).forEach(function (c) {
-        var k = kindOf(c), v = last[c] && last[c].v; if (v == null) return;
+        var k = kindOf(c), v = last[c] && corr(s, k, last[c].v); if (v == null) return;
         if (k === "temp") { if (v > hi || v > heat) g.hot.push(sn + " " + F(v, 1) + "°"); else if (v < lo) g.cold.push(sn + " " + F(v, 1) + "°"); }
         if (k === "hum") { if (v >= risk || v > rhi) g.humid.push(sn + " " + F(v) + "%"); else if (v < rlo) g.dry.push(sn + " " + F(v) + "%"); }
       });
@@ -335,20 +579,22 @@ var SENS = (function () {
   }
 
   /* ================= تحليل البيئة (للمشرف) ================= */
+  function hS(h) { h = ((h % 24) + 24) % 24; return (h === 0 ? 12 : h > 12 ? h - 12 : h) + (h < 12 ? "ص" : "م"); }
+  function dnLab(c, u) { return typeof dnTxt === "function" ? dnTxt(c, S.sec, u) : ""; }
   function rng(a, b, u, d) { return '<bdi dir="ltr" class="num">' + F(a, d || 0) + "–" + F(b, d || 0) + (u || "") + "</bdi>"; }
   function colHead(s) { return '<th><i class="sn-sw" style="background:' + colorOf(s) + '"></i><bdi>' + E(nm(s)) + "</bdi></th>"; }
   function hrs(x, of) { return x == null ? "—" : '<b class="num">' + F(x, 1) + "</b> س" + (of ? ' <small class="muted num">' + F(of ? x / of * 100 : 0) + "%</small>" : ""); }
   function analysisHTML(list, R) {
     var ss = list.filter(function (s) { return codesFor(s, "temp").length || codesFor(s, "hum").length || codesFor(s, "lux").length; });
     var M = ss.map(metricsFor); if (!M.some(Boolean)) return "";
-    var lo = num(cfg("airMin")), hi = num(cfg("airMax")), rlo = num(cfg("rhMin")), rhi = num(cfg("rhMax")), vmin = scn("vpdMin"), vmax = scn("vpdMax"), per = P() > 1;
+    var lo = limAt("temp", "00:00")[0], hi = limAt("temp", "12:00")[1], vmin = scn("vpdMin"), vmax = scn("vpdMax"), per = P() > 1;
     var cl = function (bad, warn) { return bad ? "sn-bad" : warn ? "sn-warn" : ""; };
     var rows = [
-      ["حرارة النهار <small>6ص–6م · متوسط / أعلى</small>", function (m) { return m.tDay == null ? "—" : '<b class="num">' + F(m.tDay, 1) + '</b> / <b class="num ' + cl(m.dMax > hi) + '">' + F(m.dMax, 1) + "</b>°"; }],
+      ["حرارة النهار <small>" + hS(DH()[0]) + "–" + hS(DH()[1]) + " · متوسط / أعلى</small>", function (m) { return m.tDay == null ? "—" : '<b class="num">' + F(m.tDay, 1) + '</b> / <b class="num ' + cl(m.dMax > hi) + '">' + F(m.dMax, 1) + "</b>°"; }],
       ["حرارة الليل <small>متوسط / أدنى</small>", function (m) { return m.tNight == null ? "—" : '<b class="num">' + F(m.tNight, 1) + '</b> / <b class="num ' + cl(m.nMin < lo) + '">' + F(m.nMin, 1) + "</b>°"; }],
-      ["الحرارة ضمن الحد <small>" + rng(lo, hi, "°") + "</small>", function (m) { return m.cov ? hrs(m.inT, m.cov) : "—"; }],
+      ["الحرارة ضمن الحد <small>" + dnLab("air", "°") + "</small>", function (m) { return m.cov ? hrs(m.inT, m.cov) : "—"; }],
       ["ساعات الإجهاد الحراري <small class=\"num\">فوق " + F(scn("heat")) + "°</small>", function (m) { return m.cov ? '<span class="' + cl(m.heat >= 3, m.heat > 0.4) + '">' + hrs(m.heat) + "</span>" : "—"; }],
-      ["الرطوبة ضمن الحد <small>" + rng(rlo, rhi, "%") + "</small>", function (m) { return m.hCov ? hrs(m.inH, m.hCov) : "—"; }],
+      ["الرطوبة ضمن الحد <small>" + dnLab("rh", "%") + "</small>", function (m) { return m.hCov ? hrs(m.inH, m.hCov) : "—"; }],
       ["VPD نهاراً <small>kPa · المثالي " + rng(vmin, vmax, "", 1) + "</small>", function (m) { return m.vDay == null ? "—" : '<b class="num ' + cl(m.vDay < vmin - 0.2 || m.vDay > vmax + 0.3, m.vDay < vmin || m.vDay > vmax) + '">' + F(m.vDay, 2) + "</b>"; }],
       ["ساعات VPD ضمن المثالي", function (m) { return m.vCov ? hrs(m.inV, m.vCov) : "—"; }],
       ["ساعات خطر الأمراض الفطرية <small>رطوبة ≥ " + F(scn("rhRisk")) + "% أو قرب نقطة الندى</small>", function (m) { return m.hCov ? '<span class="' + cl(m.risk >= 6, m.risk >= 2) + '">' + hrs(m.risk) + "</span>" : "—"; }]
@@ -401,7 +647,7 @@ var SENS = (function () {
     for (var i = 0; i < 24; i++) {
       tbl += '<tr><td class="num">' + hl(i) + "</td>" + rows.map(function (r) {
         var x = r.h[i]; if (!x) return '<td class="muted">—</td>';
-        var st = stOf(X.kind, x.m, r.s.sec);
+        var st = stOf(X.kind, x.m, p2(i) + ":30");
         return '<td class="num sn-hc' + (bad(st) ? " sn-hbad" : "") + '" style="background:hsla(' + hueOf(x.m).toFixed(0) + ",75%,50%," + alphaOf(x.m).toFixed(2) + ')"' + (per ? ' title="أدنى ' + F(x.mn, ki.d) + " · أعلى " + F(x.mx, ki.d) + '"' : "") + ">" + F(x.m, ki.d) + "</td>";
       }).join("") + "</tr>";
     }
@@ -425,9 +671,7 @@ var SENS = (function () {
   function drawProfile(el, P_) {
     var rows = P_.rows, ki = P_.ki, W = 420, H = 230, L = 34, Rr = 8, T = 10, B = 26;
     var ys = []; rows.forEach(function (r) { r.h.forEach(function (x) { if (x) ys.push(x.m); }); });
-    var lo = null, hi = null, c = KINDS[X.kind] && KINDS[X.kind].c;
-    if (c && typeof cfg === "function" && CHECK[c]) { lo = num(cfg(CHECK[c][0])); hi = num(cfg(CHECK[c][1])); }
-    if (X.kind === "vpd") { lo = scn("vpdMin"); hi = scn("vpdMax"); }
+    var LS = limSpan(X.kind), lo = LS[0], hi = LS[1];
     var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys), sp = Math.max(1, ymax - ymin);
     if (lo != null && lo > ymin - sp * 1.5) ymin = Math.min(ymin, lo);
     if (hi != null && hi < ymax + sp * 1.5) ymax = Math.max(ymax, hi);
@@ -435,7 +679,8 @@ var SENS = (function () {
     var Xh = function (h) { return L + (h + 0.5) / 24 * (W - L - Rr); }, Y = function (y) { return T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B); };
     var g = "";
     for (var i = 0; i <= 4; i++) { var v = ymin + (ymax - ymin) * i / 4; g += '<line class="gl" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '"/><text class="ax" x="' + (L - 6) + '" y="' + (Y(v) + 4).toFixed(1) + '" text-anchor="end">' + F(v, (ymax - ymin) < 6 ? 1 : 0) + "</text>"; }
-    if (lo != null && hi != null) { var y1 = Math.max(T, Y(Math.min(hi, ymax))), y2 = Math.min(H - B, Y(Math.max(lo, ymin))); if (y2 > y1) g = '<rect x="' + L + '" width="' + (W - L - Rr) + '" y="' + y1.toFixed(1) + '" height="' + (y2 - y1).toFixed(1) + '" fill="var(--band)"/>' + g; }
+    var d0 = dayStart(dkey(Date.now()));
+    g = bandRects(X.kind, d0, d0 + 86400e3, function (t) { return L + (t - d0) / 86400e3 * (W - L - Rr); }, Y, ymin, ymax, T, H - B, L, W - Rr) + g;
     [0, 6, 12, 18, 23].forEach(function (h, i, a) { g += '<text class="ax" x="' + Xh(h).toFixed(1) + '" y="' + (H - 9) + '" text-anchor="' + (i === 0 ? "start" : i === a.length - 1 ? "end" : "middle") + '">' + p2(h) + ":00</text>"; });
     var lines = rows.map(function (r) {
       var d = "", prev = false;
@@ -465,7 +710,7 @@ var SENS = (function () {
     var ps = list.filter(function (s) { return posOf(s) && codesFor(s, "temp").length; }).sort(function (a, b) { return posRank(a) - posRank(b); });
     if (ps.length < 2) return "";
     var A = ps[0], Z = ps[ps.length - 1], gmax = scn("gradMax");
-    var lastT = function (s) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c) === "temp" && l[c] && ms(l[c].at) && Date.now() - ms(l[c].at) < STALE_H * 3600e3) v = l[c].v; }); return v; };
+    var lastT = function (s) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c) === "temp" && l[c] && ms(l[c].at) && Date.now() - ms(l[c].at) < STALE_H * 3600e3) v = corr(s, "temp", l[c].v); }); return v; };
     var chain = ps.map(function (s) { var v = lastT(s); return '<span class="sn-step"><small>' + E(posLabel(s) || nm(s)) + '</small><b class="num">' + (v == null ? "—" : F(v, 1) + "°") + "</b></span>"; }).join('<span class="sn-arr">←</span>');
     var a0 = lastT(A), z0 = lastT(Z), now = a0 != null && z0 != null ? z0 - a0 : null;
     var byDate = {}; (X.days || []).forEach(function (d) { byDate[d.date + "|" + d.deviceId] = d; });
@@ -501,7 +746,7 @@ var SENS = (function () {
       var cells = list.map(function (s, si) {
         var pts = ser[si], last = null, here = null;
         for (var k = 0; k < pts.length && pts[k].t < (b + 1) * B; k++) { last = pts[k]; if (pts[k].t >= b * B) here = pts[k]; }
-        if (here) { var st = stOf(X.kind, here.v, s.sec); return '<td class="num sn-real ' + (bad(st) ? "sn-bad" : "") + '" title="' + hm(t0 + here.t * 1000) + '">' + F(here.v, ki.d) + "</td>"; }
+        if (here) { var st = stOf(X.kind, here.v, t0 + here.t * 1000); return '<td class="num sn-real ' + (bad(st) ? "sn-bad" : "") + '" title="' + hm(t0 + here.t * 1000) + '">' + F(here.v, ki.d) + "</td>"; }
         if (last && b * B - last.t < HOLD) return '<td class="num sn-carry" title="آخر قراءة ' + hm(t0 + last.t * 1000) + '">' + F(last.v, ki.d) + "</td>";
         return '<td class="muted">—</td>';
       });
@@ -541,29 +786,43 @@ var SENS = (function () {
     return '<p class="muted sn-status"><span class="sn-dot"></span>التحديث تلقائي كل 15 دقيقة · آخر تحديث ' + ago(t) + "</p>";
   }
 
+  /* بطاقة الحساس: الاسم والموقع وحالة الاتصال في الرأس، ثم القياسات في شبكة واحدة متساوية */
+  var UNIT_S = { temp: "°", hum: "%", soil: "%", lux: "", co2: "" };
+  function ydVal(s, k) { // نفس الوقت أمس
+    var today = dkey(Date.now()); if (!window.S || S.date !== today || !X.all || typeof addDays !== "function") return null;
+    var yd = docOf(s, addDays(today, -1)); if (!yd) return null;
+    return sampler(ptsOf(yd, s, k))(Math.floor((Date.now() - dayStart(today)) / 1000));
+  }
+  function mCell(val, unit, lab, isBad, sub) {
+    return '<div class="m' + (isBad ? " bad" : "") + '"><b class="num"><bdi dir="ltr">' + val + (unit ? "<small>" + E(unit) + "</small>" : "") + "</bdi></b><span>" + lab + "</span>" + (sub ? "<em>" + sub + "</em>" : "") + "</div>";
+  }
   function cardHTML(s) {
-    var last = s.last || {}, codes = Object.keys(last), seen = ms(s.lastSeen), stale = seen && Date.now() - seen > STALE_H * 3600e3;
-    var anyBad = false, batt = null, vals = [];
-    codes.sort(function (a, b) { var ka = ORDER.indexOf(kindOf(a)), kb = ORDER.indexOf(kindOf(b)); return (ka < 0 ? 99 : ka) - (kb < 0 ? 99 : kb); }).forEach(function (c) {
-      var k = kindOf(c), v = last[c] && last[c].v; if (v == null) return;
-      if (k === "batt") { batt = v; return; }
-      var ki = kindInfo(k, s), st = stOf(k, v, s.sec); if (bad(st)) anyBad = true;
-      vals.push('<span class="sn-v' + (bad(st) ? " bad" : "") + '"><b class="num">' + F(v, ki.d) + "</b><small>" + E(ki.u) + "</small><i>" + E(ki.l) + "</i></span>");
+    var last = s.last || {}, seen = ms(s.lastSeen), stale = !seen || Date.now() - seen > STALE_H * 3600e3, batt = lastOfKind(s, "batt"), anyBad = false, cells = [], kinds = [];
+    Object.keys(last).forEach(function (c) { var k = kindOf(c); if (k !== "batt" && kinds.indexOf(k) < 0 && last[c] && last[c].v != null) kinds.push(k); });
+    kinds.sort(function (a, b) { var x = ORDER.indexOf(a), y = ORDER.indexOf(b); return (x < 0 ? 99 : x) - (y < 0 ? 99 : y); });
+    kinds.forEach(function (k) {
+      var v = lastOfKind(s, k), ki = kindInfo(k, s), b = !stale && bad(stOf(k, v)); if (b) anyBad = true;
+      var y = !stale && (k === "temp" || k === "hum") ? ydVal(s, k) : null, dl = "";
+      if (y != null) { var d = v - y; dl = Math.abs(d) < (k === "temp" ? 0.5 : 2) ? "مثل أمس" : '<bdi dir="ltr">' + (d > 0 ? "↑" : "↓") + F(Math.abs(d), ki.d) + "</bdi> عن أمس"; }
+      cells.push(mCell(F(v, ki.d), UNIT_S[k] != null ? UNIT_S[k] : ki.u, E(k === "hum" ? "الرطوبة" : ki.l), b, dl));
     });
+    var t = lastOfKind(s, "temp"), hm = lastOfKind(s, "hum");
+    if (!stale && t != null && hm != null) {
+      var vp = vpdOf(t, hm), vs = stOf("vpd", vp), dp = dewOf(t, hm), mg = t - dp;
+      cells.push(mCell(vp.toFixed(2), "", "VPD", bad(vs), vs === "lo" ? "رطب" : vs === "hi" ? "جاف" : "مثالي"));
+      cells.push(mCell(F(mg, 1), "°", "هامش الندى", mg <= scn("dewGap"), "الندى " + F(dp, 1) + "°"));
+    }
     var pl = posLabel(s), where = s.loc || (pl && pl !== nm(s) ? pl : "") || (secs(s.sec).length ? secs(s.sec).map(function (x) { return x === "g" ? "المعدات" : SECS[x] ? SECS[x].name : x; }).join(" + ") : "");
-    return '<div class="stat sn-card' + (anyBad ? " s-bad" : stale ? " s-warn" : "") + '">' +
-      '<div class="sn-h"><i style="background:' + colorOf(s) + '"></i><b dir="auto">' + E(nm(s)) + "</b></div>" +
-      '<span class="sub">' + (where ? E(where) : '<span class="pill n">لم يُحدَّد الموقع</span>') + "</span>" +
-      '<div class="sn-vals">' + (vals.join("") || '<span class="muted">لا قراءات</span>') + "</div>" +
-      '<span class="sub' + (stale ? " sn-stale" : "") + '">' + (seen ? (stale ? "آخر قراءة " : "") + ago(seen) : "—") +
-      (batt != null ? ' · <span class="' + (batt < 20 ? "sn-low" : "") + '">🔋 ' + F(batt) + "%</span>" : "") + "</span>" + (stale ? "" : vpdHTML(s) + dewHTML(s) + ydayHTML(s)) + "</div>";
+    var meta = '<span class="snc-t' + (stale ? " stale" : "") + '"><i></i>' + (seen ? ago(seen) : "لا قراءات") + "</span>" + (batt != null ? '<span class="snc-b' + (batt < 20 ? " low" : "") + '">🔋' + F(batt) + "%</span>" : "");
+    return '<article class="sncard' + (anyBad ? " bad" : stale ? " stale" : "") + '" id="snc_' + E(s.id) + '"><div class="snc-h"><i class="sw" style="background:' + colorOf(s) + '"></i><div class="snc-n"><b dir="auto">' + E(nm(s)) + "</b><span>" + (where ? E(where) : "لم يُحدَّد الموقع") + '</span></div><div class="snc-meta">' + meta + "</div></div>" +
+      '<div class="snc-m">' + (cells.join("") || '<span class="muted">لا قراءات</span>') + "</div>" + (stale ? '<p class="snc-warn">لم يرسل قراءات منذ أكثر من ' + STALE_H + " ساعات: تحقق من البطارية والاتصال.</p>" : "") + "</article>";
   }
 
   /* ================= أمس في نفس الوقت، والليلة الماضية (للجميع) ================= */
   function docOf(s, date) {
     return (X.all || []).filter(function (d) { return d.deviceId === s.id && d.date === date && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); })[0] || null;
   }
-  function lastOfKind(s, k) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c) === k && l[c] && l[c].v != null) v = +l[c].v; }); return v; }
+  function lastOfKind(s, k) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c) === k && l[c] && l[c].v != null) v = corr(s, k, +l[c].v); }); return v; }
   /* VPD الآن مقارنة بالنطاق المثالي من الإعدادات */
   function vpdHTML(s) {
     var t = lastOfKind(s, "temp"), h = lastOfKind(s, "hum"); if (t == null || h == null) return "";
@@ -587,17 +846,18 @@ var SENS = (function () {
     });
     return out.length ? '<span class="sub sn-yd">أمس في نفس الوقت: ' + out.join(" · ") + "</span>" : "";
   }
-  /* الليلة = من 6 مساءً أمس حتى 6 صباحاً في اليوم المختار (نفس تقسيم النهار والليل في التحليل) */
+  /* الليلة = من نهاية النهار أمس حتى بدايته في اليوم المختار (نفس تقسيم النهار والليل في الحدود والتحليل) */
   function nightHTML(list, date) {
     if (!X.all || typeof addDays !== "function") return "";
-    var prev = addDays(date, -1), t0 = dayStart(prev), endT = Math.min(dayStart(date) + 21600e3, Date.now());
-    if (endT <= t0 + 64800e3) return "";
-    var live = endT < dayStart(date) + 21600e3, lo = num(cfg("airMin")), risk = scn("rhRisk"), rows = [];
+    var dh = DH(), nS = dh[1] * 3600, nE = dh[0] * 3600;
+    var prev = addDays(date, -1), t0 = dayStart(prev), endT = Math.min(dayStart(date) + nE * 1000, Date.now());
+    if (endT <= t0 + nS * 1000) return "";
+    var live = endT < dayStart(date) + nE * 1000, lo = limAt("temp", "00:00")[0], risk = scn("rhRisk"), rows = [];
     list.forEach(function (s) {
       var pick = function (k) {
         var a = [], d1 = docOf(s, prev), d2 = docOf(s, date);
-        if (d1) ptsOf(d1, s, k).forEach(function (p) { if (p.t >= 64800) a.push({ t: t0 + p.t * 1000, v: p.v }); });
-        if (d2) ptsOf(d2, s, k).forEach(function (p) { if (p.t < 21600) a.push({ t: dayStart(date) + p.t * 1000, v: p.v }); });
+        if (d1) ptsOf(d1, s, k).forEach(function (p) { if (p.t >= nS) a.push({ t: t0 + p.t * 1000, v: p.v }); });
+        if (d2) ptsOf(d2, s, k).forEach(function (p) { if (p.t < nE) a.push({ t: dayStart(date) + p.t * 1000, v: p.v }); });
         return a;
       };
       var T = pick("temp"), H = pick("hum"); if (!T.length && !H.length) return;
@@ -606,16 +866,18 @@ var SENS = (function () {
         while (hi + 1 < H.length && H[hi + 1].t <= p.t) hi++; var q = H[hi]; if (!q || q.t > p.t || p.t - q.t > HOLD * 1000) return;
         var g = p.v - dewOf(p.v, q.v); if (!mg || g < mg.v) mg = { t: p.t, v: g };
       }); }
-      var mn = T.reduce(function (b, p) { return !b || p.v < b.v ? p : b; }, null), mx = H.reduce(function (b, p) { return !b || p.v > b.v ? p : b; }, null), parts = [];
-      if (mn) parts.push('أدنى حرارة <b class="num' + (mn.v < lo ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mn.v, 1) + '°</bdi></b> <small class="muted num">' + tLabel(mn.t) + "</small>");
-      if (mx) parts.push('أعلى رطوبة <b class="num' + (mx.v >= risk ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mx.v) + '%</bdi></b> <small class="muted num">' + tLabel(mx.t) + "</small>");
-      if (codesFor(s, "dew").length) { var cc = condOf(s, X.all, date); parts.push("تكثّف محتمل " + (cc.h > 0 ? condTxt(cc) : '<span class="sn-good">لا</span>')); }
-      if (mg) parts.push('أقل هامش ندى <b class="num' + (mg.v <= scn("dewGap") ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(mg.v, 1) + '°</bdi></b> <small class="muted num">' + tLabel(mg.t) + "</small>");
-      rows.push('<li><i style="background:' + colorOf(s) + '"></i><b><bdi>' + E(nm(s)) + "</bdi>:</b> " + parts.join(" · ") + "</li>");
+      var mn = T.reduce(function (b, p) { return !b || p.v < b.v ? p : b; }, null), mx = H.reduce(function (b, p) { return !b || p.v > b.v ? p : b; }, null);
+      var cc = codesFor(s, "dew").length ? condOf(s, X.all, date) : null;
+      var cv = function (v, u, d, isBad, t) { return v == null ? '<td class="muted">—</td>' : '<td><b class="num' + (isBad ? " sn-bad" : "") + '"><bdi dir="ltr">' + F(v, d) + u + "</bdi></b>" + (t ? '<small class="num">' + tLabel(t) + "</small>" : "") + "</td>"; };
+      rows.push({ s: s, c: [cv(mn && mn.v, "°", 1, mn && mn.v < lo, mn && mn.t), cv(mx && mx.v, "%", 0, mx && mx.v >= risk, mx && mx.t), cv(mg && mg.v, "°", 1, mg && mg.v <= scn("dewGap"), mg && mg.t),
+        !cc ? '<td class="muted">—</td>' : cc.h > 0 ? '<td><b class="num sn-bad">' + F(cc.h, cc.h < 10 ? 1 : 0) + ' س</b><small class="num">' + tLabel(cc.spans[0].a) + "</small></td>" : '<td><span class="sn-good">لا</span></td>'] });
     });
     if (!rows.length) return "";
-    return '<section class="sec"><h2>' + (live ? "الليلة حتى الآن" : "الليلة الماضية") + ' <small class="muted">6 مساءً – 6 صباحاً</small></h2><ul class="sn-notes">' + rows.join("") + "</ul>" +
-      '<p class="help sn-hint">الأحمر: حرارة أقل من الحد الأدنى، أو رطوبة ' + F(risk) + "% فأكثر، أو هامش ندى " + F(scn("dewGap")) + "° أو أقل (خطر تكثّف وأمراض فطرية). هامش الندى = حرارة الجو ناقص نقطة الندى. التكثّف المحتمل: هامش " + F(scn("condGap")) + "° أو أقل، لأن الورقة في الليل أبرد من الهواء.</p></section>";
+    var labs = ["أدنى حرارة", "أعلى رطوبة", "أقل هامش ندى", "تكثّف على الأوراق"];
+    rows = labs.map(function (l, i) { return "<tr><td>" + l + "</td>" + rows.map(function (r) { return r.c[i]; }).join("") + "</tr>"; }).concat(['<tr class="hd"><th></th>' + rows.map(function (r) { return '<th><i class="sn-sw" style="background:' + colorOf(r.s) + '"></i><bdi>' + E(nm(r.s)) + "</bdi></th>"; }).join("") + "</tr>"]);
+    rows.unshift(rows.pop());
+    return '<section class="sec"><div class="sec-h"><h2>' + (live ? "الليلة حتى الآن" : "الليلة الماضية") + '</h2><span class="muted" style="font-size:12.5px">من ' + hS(dh[1]) + " إلى " + hS(dh[0]) + '</span></div><div class="tbl-wrap"><table class="sn-tbl sn-night">' + rows.join("") + "</table></div>" +
+      '<p class="help sn-hint">الأحمر: خارج الحد. هامش الندى = حرارة الجو ناقص نقطة الندى، وكلما صغر زاد خطر الأمراض الفطرية. التكثّف المحتمل: هامش ' + F(scn("condGap")) + "° أو أقل، لأن الورقة في الليل أبرد من الهواء.</p></section>";
   }
 
   function summaryHTML(list, ki, R) {
@@ -625,9 +887,10 @@ var SENS = (function () {
       var doc = by[date + "|" + s.id]; if (!doc || !secOk(doc.sec != null && doc.sec !== "" ? doc.sec : s.sec)) return '<td class="muted">—</td>';
       var mn = null, mx = null, sm = 0, n = 0;
       if (X.kind === "dew" || X.kind === "vpd") ptsOf(doc, s, X.kind).forEach(function (p) { mn = mn == null ? p.v : Math.min(mn, p.v); mx = mx == null ? p.v : Math.max(mx, p.v); sm += p.v; n++; });
-      else codesFor(s, X.kind).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
+      else codesFor(s, X.kind).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; q = statOf(s, c, q); mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
       if (!n) return '<td class="muted">—</td>';
-      var b1 = bad(stOf(X.kind, mn, s.sec)), b2 = bad(stOf(X.kind, mx, s.sec));
+      // الأدنى يُقارن بحد الليل والأعلى بحد النهار (حيث يحدث كل منهما عادة)
+      var b1 = bad(stOf(X.kind, mn, "03:00")), b2 = bad(stOf(X.kind, mx, "13:00"));
       return '<td><span class="num"><span class="' + (b1 ? "sn-bad" : "") + '">' + F(mn, ki.d) + '</span> – <span class="' + (b2 ? "sn-bad" : "") + '">' + F(mx, ki.d) + '</span></span><small class="sn-avg">متوسط <b class="num">' + F(sm / n, ki.d) + "</b> · " + n + " قراءة</small></td>";
     };
     var rows = dates.filter(function (dt) { return list.some(function (s) { return by[dt + "|" + s.id]; }); });
@@ -653,9 +916,7 @@ var SENS = (function () {
     var R = rangeOf(), t0 = dayStart(R.from), t1 = dayStart(R.to) + 864e5;
     var W = 420, H = 250, L = 34, Rr = 8, T = 10, B = 26;
     var all = []; series.forEach(function (sr) { all = all.concat(sr.pts, sr.man); });
-    var ys = all.map(function (p) { return p.y; }), lo = null, hi = null, c = KINDS[X.kind] && KINDS[X.kind].c;
-    if (c && typeof cfg === "function" && CHECK[c]) { lo = num(cfg(CHECK[c][0])); hi = num(cfg(CHECK[c][1])); }
-    if (X.kind === "vpd") { lo = scn("vpdMin"); hi = scn("vpdMax"); }
+    var ys = all.map(function (p) { return p.y; }), LS = limSpan(X.kind), lo = LS[0], hi = LS[1];
     var ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys);
     // نُظهر نطاق الحدود فقط إن كان قريباً من القراءات، كي لا تنضغط الخطوط
     var span0 = Math.max(1, ymax - ymin);
@@ -665,8 +926,7 @@ var SENS = (function () {
     var X_ = function (t) { return L + (t - t0) / (t1 - t0) * (W - L - Rr); }, Y = function (y) { return T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B); };
     var g = "", dec = ki.d;
     for (var i = 0; i <= 4; i++) { var v = ymin + (ymax - ymin) * i / 4; g += '<line class="gl" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '"/><text class="ax" x="' + (L - 6) + '" y="' + (Y(v) + 4).toFixed(1) + '" text-anchor="end">' + F(v, (ymax - ymin) < 6 ? 1 : 0) + "</text>"; }
-    var band = "";
-    if (lo != null && hi != null) { var yb1 = Math.max(T, Y(Math.min(hi, ymax))), yb2 = Math.min(H - B, Y(Math.max(lo, ymin))); if (yb2 > yb1) band = '<rect x="' + L + '" width="' + (W - L - Rr) + '" y="' + yb1.toFixed(1) + '" height="' + (yb2 - yb1).toFixed(1) + '" fill="var(--band)"/>'; }
+    var band = bandRects(X.kind, t0, t1, X_, Y, ymin, ymax, T, H - B, L, W - Rr);
     // محور الوقت
     var xs = "", ticks = [];
     if (P() === 1) { for (var hh = 0; hh <= 24; hh += 3) ticks.push([t0 + hh * 3600e3, hh % 6 ? "" : p2(hh) + ":00"]); }
@@ -677,7 +937,7 @@ var SENS = (function () {
     var lines = series.map(function (sr) {
       var path = "", prev = null;
       sr.pts.forEach(function (p) { path += (prev && p.t - prev.t <= GAP ? "L" : "M") + X_(p.t).toFixed(1) + " " + Y(p.y).toFixed(1) + " "; prev = p; });
-      var dots = many ? "" : sr.pts.map(function (p) { return '<circle cx="' + X_(p.t).toFixed(1) + '" cy="' + Y(p.y).toFixed(1) + '" r="2.6" fill="' + (bad(stOf(X.kind, p.y, sr.s.sec)) ? "var(--bad)" : sr.col) + '"/>'; }).join("");
+      var dots = many ? "" : sr.pts.map(function (p) { return '<circle cx="' + X_(p.t).toFixed(1) + '" cy="' + Y(p.y).toFixed(1) + '" r="2.6" fill="' + (bad(stOf(X.kind, p.y, p.t)) ? "var(--bad)" : sr.col) + '"/>'; }).join("");
       var man = sr.man.map(function (p) { return '<rect x="' + (X_(p.t) - 4).toFixed(1) + '" y="' + (Y(p.y) - 4).toFixed(1) + '" width="8" height="8" fill="var(--surface)" stroke="' + sr.col + '" stroke-width="2"/>'; }).join("");
       return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="' + (many ? 1.6 : 2) + '" stroke-linejoin="round" stroke-linecap="round"/>' + dots + man;
     }).join("");
@@ -699,7 +959,7 @@ var SENS = (function () {
       if (!best) { tip.hidden = true; hv.setAttribute("visibility", "hidden"); hd.innerHTML = ""; return; }
       series.forEach(function (sr) {
         var q = near(sr.pts, best.t); if (!q) return;
-        var st = stOf(X.kind, q.y, sr.s.sec);
+        var st = stOf(X.kind, q.y, q.t);
         rows.push('<div><i style="background:' + sr.col + '"></i><bdi>' + E(sr.name) + '</bdi> <b class="num' + (bad(st) ? " sn-bad" : "") + '">' + F(q.y, ki.d) + "</b><bdi>" + E(ki.u) + "</bdi>" + (q.T != null ? ' <small>من <bdi dir="ltr" class="num">' + F(q.T, 1) + '°</bdi> و<bdi dir="ltr" class="num">' + F(q.H) + "%</bdi></small>" : "") + (Math.abs(q.t - best.t) > 5 * 60000 ? ' <small class="num">' + tLabel(q.t) + "</small>" : "") + "</div>");
         dots += '<circle cx="' + X_(q.t).toFixed(1) + '" cy="' + Y(q.y).toFixed(1) + '" r="5" fill="' + sr.col + '" stroke="var(--surface)" stroke-width="2"/>';
         ys.push(Y(q.y) / H * r.height);
@@ -726,8 +986,8 @@ var SENS = (function () {
       var secName = secs(sec).map(function (x) { return x === "g" ? "المعدات" : SECS[x] ? SECS[x].name : x; }).join(" + "), loc = d.loc != null && d.loc !== "" ? d.loc : (s.loc || posLabel(s) || ""), t0 = dayStart(d.date);
       Object.keys(d.p || {}).forEach(function (c) {
         var ki = kindInfo(kindOf(c), s), u = (s.measures && s.measures[c] && s.measures[c].unit) || ki.u;
-        (d.p[c] || []).forEach(function (p) { rows.push([t0 + p.t * 1000, d.date, hm(t0 + p.t * 1000), nm(s), secName, loc, ki.l, p.v, u]); });
-        var q = (d.s || {})[c]; if (q && q.n) sumr.push([d.date, nm(s), ki.l, q.min, Math.round(q.sum / q.n * 100) / 100, q.max, q.n, u]);
+        (d.p[c] || []).forEach(function (p) { rows.push([t0 + p.t * 1000, d.date, hm(t0 + p.t * 1000), nm(s), secName, loc, ki.l, corr(s, kindOf(c), p.v), u]); });
+        var q = (d.s || {})[c]; if (q && q.n) q = statOf(s, c, q); if (q && q.n) sumr.push([d.date, nm(s), ki.l, q.min, Math.round(q.sum / q.n * 100) / 100, q.max, q.n, u]);
       });
     });
     rows.sort(function (a, b) { return a[0] - b[0]; }).forEach(function (r) { raw.push(r.slice(1)); });
@@ -780,11 +1040,11 @@ var SENS = (function () {
   /* ================= التكثّف المحتمل على الأوراق ================= */
   /* الورقة في الليل أبرد من الهواء بدرجة أو درجتين، فيتكثف عليها الماء قبل أن يتشبع الهواء.
      نعدّه محتملاً عندما يكون هامش الندى (حرارة الهواء ناقص نقطة الندى) condGap أو أقل، بعيّنة كل 5 دقائق،
-     وبحرارة ورطوبة متقاربتين في الوقت (30 دقيقة). الليلة = 6 مساءً من اليوم السابق حتى 6 صباحاً. */
+     وبحرارة ورطوبة متقاربتين في الوقت (30 دقيقة). الليلة = من نهاية النهار في اليوم السابق حتى بدايته (إعداد بداية/نهاية النهار). */
   function condOf(s, docs, date) {
     var res = { h: 0, spans: [] }; if (!codesFor(s, "dew").length || typeof addDays !== "function") return res;
-    var gap = scn("condGap"), cur = null, prev = addDays(date, -1);
-    [[prev, 64800, 86400], [date, 0, 21600]].forEach(function (x) {
+    var gap = scn("condGap"), cur = null, prev = addDays(date, -1), dh = DH();
+    [[prev, dh[1] * 3600, 86400], [date, 0, dh[0] * 3600]].forEach(function (x) {
       var d = (docs || []).filter(function (dd) { return dd.deviceId === s.id && dd.date === x[0] && secOk(dd.sec != null && dd.sec !== "" ? dd.sec : s.sec); })[0]; if (!d) return;
       var fT = samplerP(ptsOf(d, s, "temp")), fH = samplerP(ptsOf(d, s, "hum")), end = Math.min(x[2], dayEnd(d.date)), base = dayStart(x[0]);
       for (var t = x[1]; t < end; t += STEP) {
@@ -863,7 +1123,7 @@ var SENS = (function () {
     var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0, vCov: 0, inV: 0, cond: 0 }, tD = [], tN = [], vD = [], dMax = null, nMin = null, minMg = null, dewS = 0, dewN = 0;
     var stat = function (doc, k) {
       var mn = null, mx = null, sm = 0, n = 0;
-      codesFor(s, k).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
+      codesFor(s, k).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; q = statOf(s, c, q); mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
       return n ? { mn: mn, mx: mx, av: sm / n } : null;
     };
     var days = mine.map(function (doc) {
@@ -921,6 +1181,8 @@ var SENS = (function () {
     else if (a === "heat") { X.heat = !X.heat; }
     else if (a === "set") { openSet(); return; }
     else if (a === "saveSet") { saveSet(b); return; }
+    else if (a === "offSave") { saveOff(b); return; }
+    else if (a === "offSug") { [["t", "data-t"], ["h", "data-h"]].forEach(function (x) { var v = b.getAttribute(x[1]), el = document.getElementById("off_" + x[0] + "_" + b.getAttribute("data-id")); if (el && v !== "") el.value = v; }); if (typeof toast === "function") toast("راجع الأرقام ثم اضغط حفظ التصحيح"); return; }
     else if (a === "setDef") { Object.keys(SDEF).forEach(function (k) { var el = document.getElementById("sn_" + k); if (el) el.value = SDEF[k]; }); return; }
     if (typeof render === "function") render(true);
   });
