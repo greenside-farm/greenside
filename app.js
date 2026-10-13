@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.8.0";
+var APP_VERSION = "2.8.1";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -406,6 +406,13 @@ function openSheet(html) {
   if (!NAV.sheet) { NAV.sheet = true; try { history.pushState({ gs: "sheet" }, ""); } catch (e) {} }
   var sh = $("sheetRoot").querySelector(".sheet"); if (sh) sh.scrollTop = 0;
 }
+/* بعض جوالات Android تُبقي أجزاء قديمة من الشاشة بعد إغلاق النافذة أو الرجوع للتطبيق، فتظهر الخانات مكررة فوق بعضها.
+   نُجبر المتصفح على إعادة رسم الصفحة في الإطار التالي (تغيير غير مرئي لإطارين فقط) */
+var RP = 0;
+function repaint() {
+  var v = $("view"); if (!v || RP) return;
+  RP = requestAnimationFrame(function () { v.classList.add("rp"); requestAnimationFrame(function () { v.classList.remove("rp"); RP = 0; }); });
+}
 function closeSheet(fromPop) {
   var had = NAV.sheet;
   var kpw = NAV.kp; NAV.kp = false; kpHide(true); $("sheetRoot").innerHTML = ""; FORM = null; CALC.open = false;
@@ -414,6 +421,7 @@ function closeSheet(fromPop) {
   var steps = (had && !fromPop ? 1 : 0) + (kpw ? 1 : 0);
   if (steps) { NAV.ignore++; history.go(-steps); }
   if (S.dirty) render();
+  repaint();
 }
 function sheetHead(title, sec, icon) {
   return '<div class="sheet-h">' + (icon ? '<span class="e-ic">' + ico(icon, 19) + "</span>" : "") + '<div class="sh-t">' + (sec ? secTag(sec) : "") + "<h2>" + esc(title) + '</h2></div><button class="iconbtn" type="button" data-act="close" aria-label="إغلاق">✕</button></div>';
@@ -608,11 +616,15 @@ function renderNow(force) {
   if (!force && ae && v.contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { S.dirty = true; return; }
   if (!force && NAV.sheet) { S.dirty = true; return; }
   S.dirty = false;
-  if (S.tab === "add" && canAdd()) v.innerHTML = addView();
-  else if (S.tab === "rep" && isSup()) { v.innerHTML = repView(); bindCharts(); }
-  else if (S.tab === "sup" && isSup()) v.innerHTML = supView();
-  else if (S.tab === "sens" && window.SENS) { v.innerHTML = SENS.view(); SENS.bind(v); }
-  else { S.tab = "today"; v.innerHTML = todayView(); }
+  var html, after = null;
+  if (S.tab === "add" && canAdd()) html = addView();
+  else if (S.tab === "rep" && isSup()) { html = repView(); after = bindCharts; }
+  else if (S.tab === "sup" && isSup()) html = supView();
+  else if (S.tab === "sens" && window.SENS) { html = SENS.view(); after = function () { SENS.bind(v); }; }
+  else { S.tab = "today"; html = todayView(); }
+  // تحديثات البيانات التي لا تغيّر شيئاً في الصفحة لا تعيد بناءها (أقل وميضاً وأخف على الجوال). الرسوم تُحدَّث دائماً
+  if (!force && html === v.__h && v.firstElementChild) { if (after) after(); return; }
+  v.innerHTML = html; v.__h = html; if (after) after();
   loadPhotos(v);
 }
 
@@ -1962,7 +1974,7 @@ function kpShow(el) {
 }
 function kpVal() { if (KP.inp) $("kpV").textContent = (KP.inp.value || "—") + (KP.inp.value && KP.unit ? " " + KP.unit : ""); }
 function kpHide(noHist) {
-  if (KP.el && !KP.el.hidden) { KP.el.hidden = true; KP.inp = null; document.documentElement.classList.remove("kp-open"); }
+  if (KP.el && !KP.el.hidden) { KP.el.hidden = true; KP.inp = null; document.documentElement.classList.remove("kp-open"); repaint(); }
   if (NAV.kp) { NAV.kp = false; if (!noHist) { NAV.ignore++; history.back(); } }
 }
 function kpKey(k) {
@@ -1992,7 +2004,8 @@ function caretEnd(t) { setTimeout(function () { try { var n = t.value.length; t.
 var FOCUS_T = 0;
 document.addEventListener("pointerdown", function (ev) { var t = ev.target.closest && ev.target.closest("[data-kp]"); if (!t) return; if (kpOn()) { t.setAttribute("readonly", ""); t.setAttribute("inputmode", "none"); } else { t.removeAttribute("readonly"); t.setAttribute("inputmode", "decimal"); } }, true);
 /* leaving the app (recent apps, home) drops the focus so the phone keyboard does not pop up on return */
-document.addEventListener("visibilitychange", function () { if (document.hidden) { var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); kpHide(); } });
+document.addEventListener("visibilitychange", function () { if (document.hidden) { var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); kpHide(); } else repaint(); });
+window.addEventListener("pageshow", function () { repaint(); });
 document.addEventListener("focusin", function (ev) {
   var t = ev.target; if (!t || !t.matches) return;
   if (t.matches("input.in, textarea.in")) { FOCUS_T = Date.now(); caretEnd(t); }
