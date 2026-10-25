@@ -1,4 +1,4 @@
-/* GREEN SIDE — sticky date header, one working column, bottom tab bar like a phone app. Leaf green on a cool sage neutral. */
+/* GREEN SIDE — responsive Arabic workspace; phase 1 dashboard, version 2.9.0. */
 :root{
   --bg:#F1F4F0; --surface:#FFFFFF; --surface-2:#E7EDE7; --ink:#15231B; --muted:#5A6A60; --line:#D5DED6;
   --accent:#1F5A3F; --accent-2:#2E7A55; --accent-ink:#FFFFFF; --accent-soft:#DCEBE2;
@@ -627,3 +627,50 @@ html.kp-open:not(.lock) .wrap{padding-bottom:320px}
 .snh-act{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
 .snh-man{margin-top:9px;padding-top:8px;border-top:1px dashed var(--line);font-size:13px;line-height:1.7}
 .snh-man small{font-size:11.5px}
+
+/* Phase 1: quiet surfaces, visible state labels and comfortable touch controls. */
+.day-overview .eyebrow{display:block;color:var(--muted);font-size:12px;letter-spacing:.02em;margin-bottom:3px}
+.day-overview h2{font-size:24px;line-height:1.4}
+.day-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.day-overview-tile{display:flex;flex-direction:column;align-items:flex-start;text-align:start;gap:4px;border:1px solid var(--line);border-radius:16px;background:var(--surface);padding:14px;min-height:120px;cursor:pointer}
+.day-overview-tile:disabled{opacity:1;cursor:default;color:var(--ink)}
+.day-overview-tile>span{font-size:13px;font-weight:600}
+.day-overview-tile>b{font-size:29px;line-height:1.3}
+.day-overview-tile>small{font-size:12px;color:var(--muted)}
+.day-overview-tile.warn>b{color:var(--warn)}
+.day-overview-tile.bad>b{color:var(--bad)}
+.dash-groups{display:grid;grid-template-columns:minmax(0,1fr);gap:12px}
+.dash-group{border:1px solid var(--line);border-radius:18px;background:var(--surface);padding:16px;min-width:0}
+.dash-group>header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.dash-group h3{font-size:17px}
+.dash-note{font-size:12px;color:var(--muted);margin:4px 0 12px}
+.dash-device+.dash-device{border-top:1px solid var(--line);margin-top:12px;padding-top:12px}
+.dash-device h4{margin:0 0 8px;font-size:13px;font-weight:600;overflow-wrap:anywhere}
+.dash-readings{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:8px;margin:0}
+.dash-reading{padding:9px 8px;border-radius:10px;background:var(--surface-2);min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:3px}
+.dash-reading dt{font-size:12px;color:var(--muted)}
+.dash-reading dd{font-size:23px;line-height:1.5;font-weight:600;margin:0;max-width:100%;overflow-wrap:anywhere}
+.dash-reading dd small{font-size:11px;margin-inline-start:4px}
+.dash-state{font-size:12px;font-weight:600}
+.dash-age{font-size:11px;color:var(--muted)}
+.dash-reading.bad .dash-state,.dash-reading.bad dd{color:var(--bad)}
+.dash-reading.warn .dash-state{color:var(--warn)}
+.dash-reading.ok .dash-state{color:var(--ok)}
+.dash-attention{padding:12px 14px;border:1px solid var(--warn);border-radius:12px;background:var(--warn-soft);margin-bottom:12px;font-size:13px}
+.dash-attention p{margin:3px 0}
+.dash-attention ul{margin:7px 0 0;padding-inline-start:20px}
+.dash-sensors .sec-h{align-items:center;gap:8px}
+.dash-sensors .sec-h h2{font-size:18px}
+.dash-sensors .sec-h .btn{flex-shrink:0}
+.sensor-group>.help{margin:0 0 10px;font-size:13px}
+.overview-details{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+.overview-details>summary{font-size:14px;font-weight:600;cursor:pointer;min-height:48px;padding:14px 16px}
+.overview-body{padding:0 10px 10px}
+.overview-body>.sec{padding-inline:0}
+.tab,.subtabs button,.seg button{min-height:44px}
+.btn.sm{min-height:44px;padding-block:8px}
+.snc-n b{font-size:15px}
+.snc-n span,.snc-t,.snc-b{font-size:12px}
+@media(min-width:680px){.day-overview-grid{grid-template-columns:repeat(4,minmax(0,1fr))}.dash-groups{grid-template-columns:repeat(2,minmax(0,1fr))}.dash-group[data-sensor-group="air"]{grid-column:1/-1}.dash-group[data-sensor-group="air"] .dash-device-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:14px}.dash-group[data-sensor-group="air"] .dash-device+.dash-device{margin:0;padding:0;border:0}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{animation-duration:.01ms!important;transition-duration:.01ms!important}}
+@media(max-width:360px){.dash-group{padding:12px}.dash-readings{grid-template-columns:repeat(auto-fit,minmax(78px,1fr))}.dash-reading dd{font-size:20px}.dash-sensors .sec-h h2{font-size:16px}}

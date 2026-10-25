@@ -1,4 +1,4 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 2.8.3)
+/* GREEN SIDE — صفحة الحساسات (الإصدار 2.9.0)
    العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
@@ -418,6 +418,70 @@ var SENS = (function () {
       (typeof fold === "function" ? fold("gkHelp", "ماذا تعني هذه المؤشرات؟", '<ul class="gk-help"><li><b>متوسط الحرارة على 24 ساعة</b> هو ما يحدد سرعة نمو الخس وطول الدورة: أعلى من المستهدف = نمو أسرع لكن أوراق أخف وخطر الحرقان والتزهير، وأقل منه = دورة أطول.</li><li><b>DIF</b> = متوسط النهار ناقص متوسط الليل. الموجب الكبير يزيد استطالة الشتلات، والصغير أو السالب يعطي نباتاً مندمجاً.</li><li><b>VPD المثالي</b>: ساعات النهار التي كان فيها النتح جيداً (يصل الكالسيوم للأوراق).</li><li><b>التكثّف والإجهاد الحراري</b> تُحسب إذا حدثت في أي موقع في البيت، لأن أسوأ نقطة هي التي تمرض أو تحترق.</li><li>المقارنة مع أمس ومتوسط الأيام السابقة الكاملة تبيّن هل الأجواء تتحسن أو تسوء.</li></ul>') : "") + "</section>";
   }
 
+  /* Phase 1: read-only overview. Every measurement keeps its own timestamp. */
+  function sensorGroup(s) {
+    if (codesFor(s, "waterTemp").length || codesFor(s, "ph").length || codesFor(s, "tds").length) return "water";
+    if (codesFor(s, "soil").length || codesFor(s, "mediumTemp").length) return "medium";
+    if (climateList([s]).length) return "air";
+    return "other";
+  }
+  var GROUPS = [
+    { id: "air", title: "مناخ البيت", note: "حرارة الهواء ورطوبته", kinds: ["temp", "hum"] },
+    { id: "water", title: "خزان المحلول", note: "حرارة الماء والحموضة والأملاح", kinds: ["waterTemp", "ph", "tds"] },
+    { id: "medium", title: "وسط الزراعة", note: "البلل وحرارة الوسط · لا يثبت تدفق الري", kinds: ["soil", "mediumTemp"] },
+    { id: "other", title: "حساسات أخرى", note: "القياسات المتاحة", kinds: ["lux", "co2"] }
+  ];
+  function liveMetric(s, k) {
+    var out = null, now = Date.now();
+    codesFor(s, k).forEach(function (c) {
+      var q = s.last && s.last[c], at = ms(q && q.at);
+      if (!q || q.v == null || String(q.v).trim() === "" || !Number.isFinite(Number(q.v)) || !at || at > now) return;
+      if (!out || at > out.at) out = { v: corr(s, k, Number(q.v)), at: at };
+    });
+    if (!out) return { v: null, at: null, state: "missing", label: "لا بيانات" };
+    if (now - out.at > STALE_H * 3600e3) { out.state = "stale"; out.label = "قراءة قديمة"; return out; }
+    var limits = limAt(k, now), hasLimit = limits[0] != null || limits[1] != null;
+    out.state = hasLimit ? stOf(k, out.v, now) || "neutral" : "neutral";
+    out.label = out.state === "lo" ? "أقل من الحد" : out.state === "hi" ? "أعلى من الحد" : out.state === "ok" ? "ضمن الحدود" : "قراءة فقط";
+    return out;
+  }
+  function dashboard() {
+    start();
+    var heading = '<div class="sec-h"><h2>القراءات التلقائية الآن</h2><button class="btn sm" type="button" data-act="goSens">كل الحساسات ‹</button></div>';
+    if (!X.user) return '<section class="sec dash-sensors">' + heading + (X.err ? '<p class="banner warn">' + E(X.err) + '</p>' : '<p class="muted">جارٍ الاتصال بالحساسات…</p>') + '</section>';
+    var list = sensorList(), issues = [], outdated = 0, absent = 0;
+    var cards = GROUPS.map(function (g) {
+      var members = list.filter(function (s) { return sensorGroup(s) === g.id; });
+      if (!members.length) return "";
+      var body = members.map(function (s) {
+        var ks = g.id === "other" ? kindsAvail([s]).filter(function (k) { return k !== "batt" && k !== "dew" && k !== "vpd"; }) : g.kinds;
+        var cells = ks.filter(function (k) { return codesFor(s, k).length; }).map(function (k) {
+          var q = liveMetric(s, k), ki = kindInfo(k, s), tone = bad(q.state) ? "bad" : q.state === "stale" || q.state === "missing" ? "warn" : q.state === "ok" ? "ok" : "neutral";
+          if (bad(q.state)) issues.push(nm(s) + ' · ' + ki.l + ': ' + q.label);
+          if (q.state === "stale") outdated++; if (q.state === "missing") absent++;
+          return '<div class="dash-reading ' + tone + '"><dt>' + E(ki.l) + '</dt><dd class="num"><bdi dir="ltr">' + (q.v == null ? '—' : F(q.v, ki.d)) + (q.v == null ? '' : '<small>' + E(ki.u) + '</small>') + '</bdi></dd><span class="dash-state">' + E(q.label) + '</span><time class="dash-age">' + (q.at ? E(ago(q.at)) : 'لم تصل قراءة') + '</time></div>';
+        }).join("");
+        return '<div class="dash-device"><h4 dir="auto">' + E(nm(s)) + '</h4><dl class="dash-readings">' + cells + '</dl></div>';
+      }).join("");
+      return '<article class="dash-group" data-sensor-group="' + g.id + '"><header><h3>' + E(g.title) + '</h3><span class="pill n">' + members.length + ' جهاز</span></header><p class="dash-note">' + E(g.note) + '</p>' + '<div class="dash-device-list">' + body + '</div></article>';
+    }).join("");
+    var note = '';
+    if (issues.length || outdated || absent) {
+      note = '<div class="dash-attention"><b>يحتاج متابعة</b><p>' + (issues.length ? issues.length + ' قياس خارج الحدود. ' : '') + (outdated ? outdated + ' قراءة قديمة. ' : '') + (absent ? absent + ' قياس بلا بيانات. ' : '') + '</p>' + (issues.length ? '<ul>' + issues.slice(0, 3).map(function (x) { return '<li>' + E(x) + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+    }
+    return '<section class="sec dash-sensors">' + heading + statusHTML() + note + (cards ? '<div class="dash-groups">' + cards + '</div>' : '<div class="empty">لا توجد حساسات مفعّلة لهذا القسم.</div>') + '</section>';
+  }
+  function groupedCardsHTML(list) {
+    return GROUPS.map(function (g) {
+      var members = list.filter(function (s) { return sensorGroup(s) === g.id; });
+      if (!members.length) return '';
+      return '<section class="sec sensor-group" data-sensor-group="' + g.id + '"><div class="sec-h"><h2>' + E(g.title) + '</h2><span class="pill n">' + members.length + ' جهاز</span></div><p class="help muted">' + E(g.note) + '</p><div class="sncards">' + members.map(cardHTML).join('') + '</div></section>';
+    }).join('');
+  }
+  function overviewDetails(id, title, body) {
+    return '<details class="overview-details"><summary>' + E(title) + '</summary><div id="' + id + '" class="overview-body">' + body + '</div></details>';
+  }
+
   /* ================= الصفحة: تبويبات الآن · الرسم البياني · التحليل ================= */
   function view() {
     start();
@@ -435,8 +499,9 @@ var SENS = (function () {
 
     if (tab === "now") {
       var airList = climateList(list), al = alertsHTML(airList);
-      h += (al ? '<section class="sec">' + al + "</section>" : "") + mapHTML(list) + (ready ? kpiHTML(airList, R) + nightHTML(airList, R.to) : "");
-      return h + '<section class="sec"><h2>تفاصيل الحساسات</h2><div class="sncards">' + list.map(cardHTML).join("") + "</div></section>";
+      h += groupedCardsHTML(list);
+      if (airList.length) h += '<section class="sec">' + overviewDetails('climateOverview', 'خريطة المناخ ومؤشرات النمو', (al || '') + mapHTML(airList) + (ready ? kpiHTML(airList, R) + nightHTML(airList, R.to) : wait)) + '</section>';
+      return h;
     }
     if (tab === "dev") return h + (ready ? healthHTML(list) : wait);
 
@@ -590,7 +655,7 @@ var SENS = (function () {
     });
     var out = [["hot", "bad", "msgHot"], ["humid", "warn", "msgHumid"], ["cold", "warn", "msgCold"], ["dry", "warn", "msgDry"], ["off", "warn", "msgOff"]].filter(function (x) { return g[x[0]].length; })
       .map(function (x) { return '<div class="alert ' + x[1] + ' sn-alert"><span class="tx"><b>' + E(sc(x[2])) + '</b><small><bdi>' + g[x[0]].map(E).join("</bdi> · <bdi>") + "</bdi></small></span></div>"; });
-    if (!out.length && fresh) return '<div class="banner ok sn-ok"><span>✓ الأجواء ضمن الحدود في كل الحساسات</span></div>';
+    if (!out.length && fresh) return '<div class="banner ok sn-ok"><span>✓ قياسات المناخ الحديثة ضمن الحدود</span></div>';
     return out.length ? '<div class="alerts">' + out.join("") + "</div>" : "";
   }
 
@@ -797,9 +862,11 @@ var SENS = (function () {
     if (X.err) return '<div class="banner warn"><span>' + E(X.err) + "</span></div>";
     var st = X.status; if (!st) return "";
     var t = ms(st.lastRun), late = t && Date.now() - t > 45 * 60000;
+    if (!t) return '<p class="banner warn">لم يصل وقت آخر مزامنة بعد.</p>';
+    if (st.ok === false && !st.error) return '<p class="banner warn">آخر محاولة مزامنة لم تكتمل بنجاح · ' + E(ago(t)) + '</p>';
     if (st.error) return '<div class="banner warn"><span><b>تنبيه من الجامع:</b> ' + E(String(st.error).slice(0, 160)) + " · آخر محاولة " + ago(t) + "</span></div>";
     if (late) return '<div class="banner warn"><span>لم تصل قراءات جديدة ' + ago(t) + ". تأكد أن الجامع يعمل واشتراك Tuya مفعّل.</span></div>";
-    return '<p class="muted sn-status"><span class="sn-dot"></span>التحديث تلقائي كل 15 دقيقة · آخر تحديث ' + ago(t) + "</p>";
+    return '<p class="muted sn-status"><span class="sn-dot"></span>المزامنة كل 15 دقيقة · آخر تشغيل ' + ago(t) + "</p>";
   }
 
   /* بطاقة الحساس: الاسم والموقع وحالة الاتصال في الرأس، ثم القياسات في شبكة واحدة متساوية */
@@ -1211,5 +1278,5 @@ var SENS = (function () {
     if (typeof render === "function") render(true);
   });
 
-  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, _x: X };
+  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, dashboard: dashboard, _x: X };
 })();

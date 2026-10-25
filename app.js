@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.8.3";
+var APP_VERSION = "2.9.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -595,7 +595,7 @@ function renderTop() {
   ["n", "t"].forEach(function (s) { var b = document.querySelector('#secsw [data-sec="' + s + '"] .cnt'); if (b) { var tk = tasksFor(s, S.entries); b.textContent = t && tk.left ? tk.left : ""; } });
 }
 function renderTabs() {
-  var tabs = [["today", "اليوم", "today"]];
+  var tabs = [["today", "الرئيسية", "today"]];
   if (canAdd()) tabs.push(["add", "تسجيل", "add"]);
   if (window.SENS) tabs.push(["sens", "الحساسات", "sens"]);
   if (isSup()) { tabs.push(["rep", "التقارير", "rep"]); tabs.push(["sup", "المشرف", "sup"]); }
@@ -673,6 +673,21 @@ function todayView() {
   var on = S.openNotes.filter(function (e) { return secOf(e) === sec; }), bad = badReadings(SE);
   var alerts = isToday ? equipAlerts().concat(sprayAlerts(sec)) : [];
 
+  /* Read-only dashboard: retains the selected day, role and all task workflows. */
+  h += '<section class="sec day-overview"><div class="sec-h"><div><span class="eyebrow">GREEN SIDE · ' + esc(SECS[sec].name) + '</span><h2>' + (isToday ? 'لوحة اليوم' : 'ملخص ' + esc(fmtShort(S.date))) + '</h2></div>' + (rec ? '<button class="btn pri" type="button" data-act="goTab" data-t="add">+ تسجيل</button>' : '') + '</div><div class="day-overview-grid">';
+  var overviewTiles = [
+    {label:'مهام متبقية',value:mt.need ? mt.left : '—',note:mt.need ? 'من أصل ' + mt.need : 'لا مهام محددة',target:'tasksSec',tone:mt.left ? 'warn' : 'neutral'},
+    {label:'ملاحظات مفتوحة',value:on.length,note:'تحتاج متابعة',target:'notesSec',tone:on.length ? 'warn' : 'neutral'},
+    {label:'قراءات يدوية خارج الحدود',value:bad.length,note:'في اليوم المحدد',target:'alertsSec',tone:bad.length ? 'bad' : 'neutral'}
+  ];
+  if (isSup()) overviewTiles.splice(1,0,{label:'بانتظار المراجعة',value:pend,note:so ? 'اليوم معتمد · راجع أي إضافات' : 'تسجيلات غير مراجعة',target:'logSec',tone:pend ? 'warn' : 'neutral'});
+  overviewTiles.forEach(function (x) {
+    var active = x.value !== '—' && x.value > 0;
+    h += '<button type="button" class="day-overview-tile ' + x.tone + '"' + (active ? ' data-act="jump" data-to="' + x.target + '"' : ' disabled') + '><span>' + x.label + '</span><b class="num">' + x.value + '</b><small>' + x.note + '</small></button>';
+  });
+  h += '</div>' + (!isToday ? '<p class="help muted">تعرض هذه الصفحة سجلات التاريخ المختار؛ القراءات المباشرة متاحة عند الرجوع إلى اليوم.</p>' : '') + '</section>';
+  if (isToday && window.SENS && SENS.dashboard) h += SENS.dashboard();
+
   /* 1. مهام اليوم: التقدم وكل مهمة بزر تسجيل مباشر */
   var nm = nowMin(), rows = "";
   TASKS[sec].forEach(function (x) {
@@ -702,7 +717,7 @@ function todayView() {
   }
 
   /* 3. البيئة الآن من الحساسات */
-  if (isToday && window.SENS && SENS.strip) h += SENS.strip();
+  if (isToday && window.SENS && !SENS.dashboard && SENS.strip) h += SENS.strip();
 
   /* 4. آخر القراءات اليدوية: المتوفر فقط، والناقص في سطر واحد */
   var ecE = lastOf(SE, function (e) { return e.v && num(e.v.ec) != null; }), phE = lastOf(SE, function (e) { return e.v && num(e.v.ph) != null; }), wtE = lastOf(SE, function (e) { return e.v && num(e.v.wt) != null && e.type !== "temp"; });
