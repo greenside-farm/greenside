@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.10.2";
+var APP_VERSION = "2.10.3";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -916,6 +916,11 @@ function summaryChips(e) {
     out += '<span class="chip ' + (isBad(st) ? "bad" : "") + '"><span class="k">' + (fd.cl || fd.l) + '</span><span class="num">' + f(n, dec) + "</span>" + (unitOf(fd) && unitOf(fd) !== "pH" ? " " + unitOf(fd) : "") + extra + "</span>";
   });
   Object.keys(LEGACY).forEach(function (k) { if (keys[k] || v[k] === "" || v[k] == null) return; var L = LEGACY[k]; out += '<span class="chip"><span class="k">' + L[0] + "</span>" + esc(v[k]) + (L[1] ? " " + L[1] : "") + "</span>"; });
+  if(e.type === "refill" && v.waterMethod){
+    out += '<span class="chip"><span class="k">حساب الماء</span>'+esc(v.waterMethod)+(v.waterEstimated?' · تقديري':'')+'</span>';
+    if(v.waterEstimated && v.flowCalibration)out += '<span class="chip">مدة التعبئة: '+esc(v.fillMinutes || 0)+' دقيقة و '+esc(v.fillSeconds || 0)+' ثانية · المعايرة: '+esc(v.flowCalibration.litres)+' لتر / '+esc(v.flowCalibration.minutes)+' دقيقة و '+esc(v.flowCalibration.seconds)+' ثانية</span>';
+    if(v.fullMark)out += '<span class="chip">'+esc(v.fullMark)+'</span>';
+  }
   if (e.type === "irr" && num(v.liters_r) != null && num(v.liters_l) != null) out += '<span class="chip"><span class="k">مجموع الري</span><span class="num">' + f(irrL(v), 1) + "</span> لتر</span>";
   if (e.type === "temp" && num(v.wt) != null) out += '<span class="chip"><span class="k">حرارة الماء</span><span class="num">' + f(num(v.wt), 1) + "</span> °C</span>";
   if (v.batch) { var b = sowBatches().filter(function (x) { return x.id === v.batch; })[0]; if (b) out += '<span class="chip"><span class="k">الدفعة</span>' + esc(b.v.crop) + " · " + fmtShort(b.date) + ' <span class="k">(عمر ' + daysBetween(b.date, e.date) + " يوم)</span></span>"; }
@@ -1008,7 +1013,7 @@ function fieldHTML(fd, v) {
   else if (fd.t === "ta") inp = '<textarea class="in" id="' + id + '">' + esc(val) + "</textarea>";
   else if (fd.t === "t") inp = (fd.opt && !val ? '<span class="muted" style="font-size:12.5px"><input type="checkbox" id="on_' + fd.k + '"> تسجيل هذا الوقت</span>' : "") + timePicker(id, val || (fd.k === "time" && FORM.e ? FORM.e.time : ""));
   else if (fd.t === "x") inp = '<input class="in" id="' + id + '" enterkeyhint="next" value="' + esc(val) + '"' + (fd.list ? ' list="dl_' + fd.list + '"' : "") + (fd.ph ? ' placeholder="' + esc(fd.ph) + '"' : "") + ">";
-  else inp = '<div class="unitwrap"><input class="in num" id="' + id + '" ' + KPA() + ' autocomplete="off" value="' + esc(val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
+  else inp = '<div class="unitwrap"><input class="in num" id="' + id + '" ' + KPA() + ' autocomplete="off"' + (fd.integer ? ' data-integer="1"' : '') + ' value="' + esc(val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
   out += '<label class="f ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><span>' + fd.l + (fd.req ? ' <span class="req">*</span>' : "") + "</span>" + inp + (fd.c || fd.comp ? '<span class="hint" id="h_' + fd.k + '"></span>' : "") + "</label>";
   return out;
 }
@@ -1031,11 +1036,13 @@ function openForm(type, e, prefill) {
     FORM.flow = e && e.v.flowCalibration ? clone(e.v.flowCalibration) : {litres:num(cfg("flowLitres")),minutes:num(cfg("flowMinutes")),seconds:num(cfg("flowSeconds"))};
     FORM.fields = FORM.fields.slice();
     var wi=FORM.fields.findIndex(function(x){return x.k === "waterAdd";});
-    FORM.fields.splice(wi,0,{k:"waterMethod",l:"طريقة حساب الماء",t:"s",o:["بالوقت حتى علامة الامتلاء","إدخال اللترات مباشرة"],w:"full"},
-      {k:"fillMinutes",l:"مدة جريان الماء — دقائق",t:"n"},{k:"fillSeconds",l:"ثوانٍ (من 0 إلى 59)",t:"n"},
+    FORM.fields.splice(wi,0,{k:"waterMethod",l:"طريقة حساب الماء",t:"s",req:1,o:["بالوقت حتى علامة الامتلاء","إدخال اللترات مباشرة"],w:"full"},
+      {k:"fillMinutes",l:"مدة جريان الماء — دقائق",t:"n",integer:true},{k:"fillSeconds",l:"ثوانٍ (من 0 إلى 59)",t:"n",integer:true},
       {k:"fullMark",l:"مستوى الماء بعد التعبئة",t:"s",o:["لم يتم التأكيد","وصل إلى علامة الامتلاء","لم يصل إلى العلامة"],w:"full"});
     if(!v.waterMethod)v.waterMethod=e || prefill ? "إدخال اللترات مباشرة" : "بالوقت حتى علامة الامتلاء";
     FORM.modeTouched=true;
+    FORM.manualWater=v.waterMethod === "إدخال اللترات مباشرة" ? (v.waterAdd == null ? "" : String(v.waterAdd)) : "";
+    FORM.lastWaterMethod=v.waterMethod;
   }
   if (type === "batt" && e) { if (v.start) v.time = tsHM(v.start); if (v.end) v.endTime = tsHM(v.end); }
   var h = '<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + sheetHead(T.label, sec, type) + '<form id="entryForm" class="fgrid" novalidate>';
@@ -1051,7 +1058,7 @@ function openForm(type, e, prefill) {
   if (FORM.split) h += '<p class="help full" style="margin:0">' + (T.photo ? "صوّر كل جهة في خانتها. إذا صوّرت جهة واحدة فقط تُحفظ وحدها." : "عبّئ الجهة التي زرعتها أو الجهتين معاً. كل جهة تُحفظ كتسجيل مستقل.") + "</p>";
   if (type === "mix") h += '<div class="full help" id="mixHint"></div>';
   h += '<datalist id="dl_crops">' + uniqueCrops().map(function (c) { return '<option value="' + esc(c) + '">'; }).join("") + "</datalist>";
-  h += '</form><div class="sheet-actions">' + (e ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
+  h += '</form><div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions">' + (e ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
   openSheet(h);
   var form = $("entryForm");
   form.addEventListener("input", updForm); form.addEventListener("change", updForm);
@@ -1078,9 +1085,9 @@ function formValues() {
 }
 function flowVolume(cal, minutes, seconds) {
   if(minutes === "" && seconds === "")return null;
-  var m=Number(minutes),s=Number(seconds),cm=Number(cal.minutes),cs=Number(cal.seconds),l=Number(cal.litres),t=cm*60+cs;
+  var m=minutes === "" ? 0 : num(minutes),s=seconds === "" ? 0 : num(seconds),cm=num(cal.minutes),cs=num(cal.seconds),l=num(cal.litres),t=cm*60+cs;
   if(![m,s,cm,cs,l].every(Number.isFinite)||!Number.isInteger(m)||!Number.isInteger(s)||m<0||s<0||s>=60||!Number.isInteger(cm)||!Number.isInteger(cs)||cm<0||cs<0||cs>=60||l<=0||t<=0||m*60+s<=0)return null;
-  return Math.round(l/t*(m*60+s)*100)/100;
+  var result=Math.round(l/t*(m*60+s)*100)/100;return Number.isFinite(result) && result>0 ? result : null;
 }
 function refillSuggest(v, sec) {
   var e0 = ec25(num(v.ec0), num(v.wt)); if (e0 == null) return null;
@@ -1093,11 +1100,24 @@ function updForm() {
   if (!FORM) return;
   if(FORM.type === "refill") {
     var timed=$("f_waterMethod").value === "بالوقت حتى علامة الامتلاء", water=$("f_waterAdd");
-    water.readOnly=timed;
-    ["fillMinutes","fillSeconds"].forEach(function(k){$("w_"+k).hidden=!timed;});
+    var method=$("f_waterMethod").value;
+    if(FORM.lastWaterMethod!==method){
+      if(FORM.lastWaterMethod === "إدخال اللترات مباشرة")FORM.manualWater=water.value;
+      if(!timed)water.value=FORM.manualWater || "";
+      FORM.lastWaterMethod=method;
+    }
+    water.toggleAttribute("data-computed",timed);
+    water.readOnly=timed || kpOn(); water.tabIndex=timed ? -1 : 0;
+    water.setAttribute("aria-readonly",String(timed));
+    $("w_waterAdd").querySelector("span").textContent=timed ? "الماء المضاف — نتيجة محسوبة تقديريًا" : "الماء المضاف باللتر *";
+    if(timed && KP.inp===water)kpHide();
+    ["fillMinutes","fillSeconds"].forEach(function(k){$("w_"+k).hidden=!timed;$("f_"+k).setAttribute("inputmode",kpOn()?"none":"numeric");});
     var qty=flowVolume(FORM.flow,$("f_fillMinutes").value,$("f_fillSeconds").value);
     if(timed)water.value=qty===null ? "" : String(qty);
-    $("flowResult").textContent=timed ? (qty===null ? "أدخل مدة صحيحة أكبر من صفر؛ الثواني من 0 إلى 59." : "الماء المضاف تقديريًا: "+f(qty,2)+" لتر. اخلط المحلول ثم سجل القياسات.") : "سجّل كمية الماء المضافة فعليًا.";
+    var flowText=timed ? (qty===null ? "أدخل الدقائق والثواني كعددين صحيحين. مثال: دقيقتان و51 ثانية = 2 في الدقائق و51 في الثواني؛ لا تكتب 2.51. الثواني أقل من 60." : "الماء المضاف تقديريًا: "+f(qty,2)+" لتر. لتعديله مباشرة اختر إدخال اللترات مباشرة.") : "سجّل كمية الماء المضافة فعليًا؛ لا تحتاج إدخال مدة.";
+    $("flowResult").textContent=flowText;
+    var hint=$("waterCalcHint");if(!hint){hint=document.createElement("small");hint.id="waterCalcHint";hint.className="help";$("w_waterAdd").appendChild(hint);}hint.textContent=flowText;
+    ["fillMinutes","fillSeconds"].forEach(function(k){var el=$("f_"+k),n=num(el.value),bad=timed && el.value!=="" && (n===null || !Number.isInteger(n)||n<0||(k==="fillSeconds"&&n>59));el.classList.toggle("bad",bad);el.setAttribute("aria-invalid",String(bad));});
   }
   // حدود الجو تختلف بين النهار والليل: نأخذ وقت التسجيل من خانة الوقت إن وُجدت
   var v = formValues(), sec = FORM.vsec, ts = v.time && /^\d{1,2}:\d{2}$/.test(v.time) ? v.time : Date.now();
@@ -1143,12 +1163,14 @@ function needOneOk(T, v) {
 }
 function saveForm(btn) {
   if(!FORM || FORM.saving || btn.disabled)return;
+  updForm();
   var type = FORM.type, e = FORM.e, T = typeDef(type, FORM.vsec), raw = formValues(), v = {}, miss = [], wasOther = false;
   var sideName = function (fd) { return fd.side ? SIDES[SK.indexOf(fd.side)] + ": " : ""; };
   FORM.fields.forEach(function (fd) {
     if (fd.t === "photo") return;
     if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var x = raw[k]; if (x === "") { v[k] = ""; return; } var n = num(x); if (n == null) miss.push(fd.l + " (رقم غير صحيح)"); else v[k] = n; }); return; }
     var x = raw[fd.k];
+    if(type === "refill" && (fd.k === "fillMinutes" || fd.k === "fillSeconds") && raw.waterMethod !== "بالوقت حتى علامة الامتلاء"){v[fd.k]="";return;}
     if (fd.show && !fd.show(raw)) { v[fd.k] = ""; return; }
     if (fd.t === "n" && x !== "") { var n = num(x); if (n == null) { miss.push(sideName(fd) + (fd.cl || fd.l) + " (رقم غير صحيح)"); return; } x = n; }
     if (fd.req && !fd.side && (x === "" || x == null)) miss.push((fd.pg ? MNAME[fd.pg] + " " : "") + fd.l);
@@ -1157,9 +1179,10 @@ function saveForm(btn) {
   if(type === "refill") {
     if(v.waterMethod === "بالوقت حتى علامة الامتلاء") {
       var amount=flowVolume(FORM.flow,raw.fillMinutes,raw.fillSeconds);
-      if(amount===null)miss.push("مدة التعبئة أو معايرة التدفق غير صحيحة");
+      if(amount===null)miss.push("مدة التعبئة: أدخل دقائق صحيحة وثواني من 0 إلى 59 (مثال 2 و51)، وتحقق من معايرة التدفق في الإعدادات");
       else {v.waterAdd=amount;v.flowCalibration=clone(FORM.flow);v.waterEstimated=true;}
     } else {v.flowCalibration=null;v.waterEstimated=false;v.fillMinutes="";v.fillSeconds="";}
+    ["drained","mlA","mlB","level0","level1"].forEach(function(k){if(num(v[k])!==null&&num(v[k])<0)miss.push("لا تقبل "+FORM.fields.find(function(fd){return fd.k===k;}).l+" قيمة سالبة");});
     if(num(v.waterAdd)===null || num(v.waterAdd)<0)miss.push("كمية الماء يجب ألا تكون سالبة");
   }
   if (type === "note" && v.cat === NOTE_OTHER) { v.cat = v.catX; wasOther = true; }
@@ -1180,7 +1203,8 @@ function saveForm(btn) {
     if (!needOneOk(T, e ? Object.assign({}, e.v, v) : v)) miss.push(type === "irr" ? "كمية الري لجهة واحدة على الأقل" : "قراءة واحدة على الأقل");
     if (T.photo === "req" && !FORM.photos._ && !(e && e.photo)) miss.push("الصورة");
   }
-  if (miss.length) { toast("أكمل: " + miss.join("، ")); return; }
+  if (miss.length) { kpHide();var errorBox=$("formErrors");errorBox.hidden=false;errorBox.textContent="لم يُحفظ التسجيل. صحح التالي: "+Array.from(new Set(miss)).join("، ");errorBox.scrollIntoView({block:"center"});return; }
+  $("formErrors").hidden=true;
   btn.disabled = true; btn.textContent = "جارٍ الحفظ…";
   var wb = S.db.batch(), date = e ? e.date : S.date, col = S.db.collection("entries");
   var putPhoto = function (ph) { var pref = S.db.collection("photos").doc(); wb.set(pref, { data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec }); S.photos[pref.id] = ph.full; return pref.id; };
@@ -1883,7 +1907,7 @@ function supView() {
     '<div class="full"><button class="btn block" type="button" data-act="atcTest">اختبار جهاز القياس (ATC) وحساب معامل الحرارة</button><p class="help" style="margin:4px 0 0">' + (S.settings.atcChecked ? "آخر اختبار: " + esc(S.settings.atcChecked) + " · المعامل " + f(num(cfg("ecCoef")) * 100, 2) + "% لكل درجة" : "لم يُختبر الجهاز بعد.") + '</p></div>' +
     '<label class="f" for="sg_levelUnit">قياس مستوى خزان الأبراج<select class="in" id="sg_levelUnit"><option value="L"' + (cfg("levelUnit") !== "cm" ? " selected" : "") + '>باللتر</option><option value="cm"' + (cfg("levelUnit") === "cm" ? " selected" : "") + ">بالسنتيمتر</option></select></label>" +
     '<label class="f" for="sg_useLearned">معامل الحاسبة<select class="in" id="sg_useLearned"><option value="1"' + (cfg("useLearned") ? " selected" : "") + '>يتعلم من السجلات بعد 3 خلطات</option><option value="0"' + (!cfg("useLearned") ? " selected" : "") + ">من الخلطة فقط</option></select></label>" +
-    g.map(function (x) { return '<label class="f" for="sg_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + KPA() + ' id="sg_' + x[0] + '" value="' + esc(cfg(x[0])) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
+    g.map(function (x) { return '<label class="f" for="sg_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + KPA() + ' id="sg_' + x[0] + '"' + (['flowMinutes','flowSeconds'].indexOf(x[0])>=0 ? ' data-integer="1"' : '') + ' value="' + esc(cfg(x[0])) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
     '<div class="full"><button class="btn pri block" type="button" data-act="saveGlob">حفظ الإعدادات العامة</button></div></form></section>';
   PT.set = h + PT.set;
   var tabs = [["lim", "الحدود والمواعيد"], ["sol", "المحلول"], ["team", "الفريق"], ["set", "الإعدادات"]], tab = subGet("sup", tabs);
@@ -2017,7 +2041,8 @@ function kpBuild() {
   document.body.appendChild(d); KP.el = d; return d;
 }
 function kpShow(el) {
-  kpBuild(); KP.inp = el; el.setAttribute("inputmode", "none"); el.setAttribute("readonly", "");
+  if(el.disabled || el.hasAttribute("data-computed"))return;
+  kpBuild(); KP.el.querySelector('[data-k="."]').disabled=el.hasAttribute("data-integer"); KP.inp = el; el.setAttribute("inputmode", "none"); el.setAttribute("readonly", "");
   if (!NAV.kp) { NAV.kp = true; try { history.pushState({ gs: "kp" }, ""); } catch (x) {} }
   var lab = el.closest("label"), t = el.getAttribute("aria-label") || "";
   if (!t && lab) { var n0 = lab.firstChild; t = n0 && n0.nodeType === 3 ? n0.textContent : ((lab.querySelector(":scope > span") || {}).textContent || ""); }
@@ -2032,13 +2057,13 @@ function kpHide(noHist) {
   if (NAV.kp) { NAV.kp = false; if (!noHist) { NAV.ignore++; history.back(); } }
 }
 function kpKey(k) {
-  var el = KP.inp; if (!el || !document.body.contains(el)) { kpHide(); return; }
+  var el = KP.inp; if (!el || el.disabled || el.hasAttribute("data-computed") || !document.body.contains(el)) { kpHide(); return; }
   if (k === "next") { focusNext(el); return; }
   if (k === "done") { el.blur(); kpHide(); return; }
   var sep = el.hasAttribute("data-sep"), v = sep ? inVal(el) : el.value;
   if (k === "bk") v = v.slice(0, -1);
   else if (k === "clr") v = "";
-  else if (k === ".") { if (sep || v.replace(/[٫,]/g, ".").indexOf(".") >= 0) return; v = (v === "" ? "0" : v) + "."; }
+  else if (k === ".") { if (el.hasAttribute("data-integer") || sep || v.replace(/[٫,]/g, ".").indexOf(".") >= 0) return; v = (v === "" ? "0" : v) + "."; }
   else v += k;
   el.value = sep ? sepFmt(v) : v;
   el.__kp = 1; el.dispatchEvent(new Event("input", { bubbles: true })); el.__kp = 0;
@@ -2047,7 +2072,7 @@ function kpKey(k) {
 /* "next" on the pad or the phone keyboard moves to the next field; after the last one it closes the pad (and shows the calculator result) */
 function focusNext(el) {
   var root = el.closest(".sheet") || el.closest("form") || $("view");
-  var list = Array.prototype.filter.call(root.querySelectorAll("input.in, textarea.in"), function (x) { return !x.disabled && ["hidden", "date", "checkbox", "radio", "file"].indexOf(x.type) < 0 && x.offsetParent !== null; });
+  var list = Array.prototype.filter.call(root.querySelectorAll("input.in, textarea.in"), function (x) { return !x.disabled && !x.hasAttribute("data-computed") && ["hidden", "date", "checkbox", "radio", "file"].indexOf(x.type) < 0 && x.offsetParent !== null; });
   var nx = list[list.indexOf(el) + 1];
   if (nx) { nx.focus(); if (nx.matches("[data-kp]") && kpOn()) kpShow(nx); else kpHide(); return true; }
   el.blur(); kpHide();
@@ -2056,7 +2081,7 @@ function focusNext(el) {
 }
 function caretEnd(t) { setTimeout(function () { try { var n = t.value.length; t.setSelectionRange(n, n); } catch (x) {} }, 0); }
 var FOCUS_T = 0;
-document.addEventListener("pointerdown", function (ev) { var t = ev.target.closest && ev.target.closest("[data-kp]"); if (!t) return; if (kpOn()) { t.setAttribute("readonly", ""); t.setAttribute("inputmode", "none"); } else { t.removeAttribute("readonly"); t.setAttribute("inputmode", "decimal"); } }, true);
+document.addEventListener("pointerdown", function (ev) { var t = ev.target.closest && ev.target.closest("[data-kp]"); if (!t || t.hasAttribute("data-computed") || t.disabled) return; if (kpOn()) { t.setAttribute("readonly", ""); t.setAttribute("inputmode", "none"); } else { t.removeAttribute("readonly"); t.setAttribute("inputmode", "decimal"); } }, true);
 /* leaving the app (recent apps, home) drops the focus so the phone keyboard does not pop up on return */
 document.addEventListener("visibilitychange", function () { if (document.hidden) { var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); kpHide(); } else repaint(); });
 window.addEventListener("pageshow", function () { repaint(); });
@@ -2271,10 +2296,12 @@ document.addEventListener("click", function (ev) {
       var ns = Object.assign({}, S.settings); if (S.sec === "t") ns.tw = Object.assign({}, S.settings.tw || {}, o); else Object.assign(ns, o);
       db.collection("config").doc("settings").set(ns).then(function () { toast("حُفظت حدود " + SECS[S.sec].name); }).catch(fail); break;
     case "saveGlob":
+      var flowValid=["flowLitres","flowMinutes","flowSeconds"].every(function(k){return $("sg_"+k).value.trim()!=="" && num($("sg_"+k).value)!==null;});
+      if(!flowValid){toast("أكمل حجم وزمن معايرة التدفق بأرقام صحيحة؛ يمكن كتابة صفر للدقائق أو الثواني");return;}
       var og = { atc: $("sg_atc").value === "1", levelUnit: $("sg_levelUnit").value, useLearned: $("sg_useLearned").value === "1" };
       document.querySelectorAll("#setGlob input[id^=sg_]").forEach(function (el) { var n = num(el.value); if (n != null) og[el.id.slice(3)] = n; });
       if(flowVolume({litres:og.flowLitres,minutes:og.flowMinutes,seconds:og.flowSeconds},1,0)===null){toast("صحح معايرة التدفق: حجم موجب وزمن موجب، والثواني 0–59");return;}
-      db.collection("config").doc("settings").set(Object.assign({}, S.settings, og)).then(function () { toast("حُفظت الإعدادات"); }).catch(fail); break;
+      GSUI.commit(db.collection("config").doc("settings").set(Object.assign({}, S.settings, og)),b,function(){toast("حُفظت الإعدادات");}); break;
   }
 });
 document.addEventListener("keydown", function (e) {
