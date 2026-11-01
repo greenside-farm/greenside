@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.9.0";
+var APP_VERSION = "2.10.2";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -13,7 +13,7 @@ var DEF = {
   /* حدود النهار والليل للجو (المشتل = مرحلة الشتلة) */
   airDayMin: 18, airDayMax: 28, airNightMin: 12, airNightMax: 22, rhDayMin: 50, rhDayMax: 85, rhNightMin: 55, rhNightMax: 92, avgMin: 18, avgMax: 23, dayFrom: 6, dayTo: 18,
   nMix: 1, nEcph: 3, nTemp: 5, nLight: 5, nIrr: 3, nPhoto: 1, nNote: 1, pumpL: 20, tankL: 25, zoneNote: "",
-  atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, capR: 3000, capL: 3000, daysToTransplant: 21,
+  flowLitres: 60, flowMinutes: 1, flowSeconds: 6, atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, capR: 3000, capL: 3000, daysToTransplant: 21,
   levelUnit: "L", lPerCm: 10, useLearned: true, noteCats: [], atcChecked: "",
   caFirst: 7, caEvery: 7, caUntil: 42, insEvery: 0, fungEvery: 0,
   doses: [2.5, 5, 7.5, 10, 12.5], fullDose: 12.5,
@@ -175,7 +175,7 @@ var TYPES_T = {
   refill: { label: "تعويض الخزان", short: "تعويض الخزان", desc: "مستوى الماء، الأملاح قبل وبعد، نوع التعويض", target: "nRefill", fields: [
     { k: "time", l: "وقت التعويض", t: "t", req: 1, w: "full" },
     { k: "wt", l: "حرارة الماء", t: "n", u: "°C", req: 1, c: "wt", grp: "1. قبل التعويض" },
-    { k: "level0", l: "مستوى الماء", t: "n", u: lvlUnit, req: 1 },
+    { k: "level0", l: "مستوى الماء قبل التعويض (اختياري)", t: "n", u: lvlUnit },
     { k: "ec0", l: "الأملاح قبل التعويض", t: "n", u: "µS/cm", req: 1, c: "ec", comp: "ec" },
     { k: "ph0", l: "pH قبل التعويض", t: "n", u: "pH", comp: "ph" },
     { k: "mode", l: "نوع التعويض", t: "s", o: REFILL_MODES, req: 1, w: "full", grp: "2. التعويض" },
@@ -272,14 +272,15 @@ function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function pad(n) { return (n < 10 ? "0" : "") + n; }
-function todayStr(d) { d = d || new Date(); return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate()); }
-function nowTime() { var d = new Date(); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
-function addDays(s, n) { var d = new Date(s + "T12:00:00"); d.setDate(d.getDate() + n); return todayStr(d); }
+function farmDate(d){return new Date((d?d.getTime():Date.now())+10800000);}
+function todayStr(d){return farmDate(d).toISOString().slice(0,10);}
+function nowTime(){return farmDate().toISOString().slice(11,16);}
+function addDays(s,n){return todayStr(new Date(Date.parse(s+'T12:00:00+03:00')+n*864e5));}
 function daysBetween(a, b) { return Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 864e5); }
 function fmtDate(s, opt) { try { return new Date(s + "T12:00:00").toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", opt || { weekday: "long", day: "numeric", month: "long" }); } catch (e) { return s; } }
 function fmtShort(s) { return fmtDate(s, { day: "numeric", month: "short" }); }
 function fmtTime(t) { if (!t) return ""; var p = String(t).split(":"); var h = +p[0]; if (isNaN(h)) return t; return (h % 12 || 12) + ":" + p[1] + " " + (h < 12 ? "ص" : "م"); }
-function tsHM(ts) { var d = new Date(ts); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }
+function tsHM(ts) { return farmDate(new Date(ts)).toISOString().slice(11,16); }
 function tsTime(ts) { return fmtTime(tsHM(ts)); }
 function fmtAgo(h) { if (h == null) return "—"; if (h < 1) return "أقل من ساعة"; if (h < 48) return Math.round(h) + " ساعة"; return Math.round(h / 24) + " يوم"; }
 function safeImg(v) { v = String(v || ""); return /^data:image\/(jpeg|png|gif|webp);base64,[A-Za-z0-9+\/=]+$/.test(v) ? v : ""; }
@@ -373,7 +374,7 @@ function tasksFor(sec, entries) {
   TASKS[sec].forEach(function (x) { var n = needOf(sec, x); need += n; done += Math.min(n, doneOf(E, x[0])); });
   return { need: need, done: done, left: Math.max(0, need - done) };
 }
-function nowMin() { var d = new Date(); return d.getHours() * 60 + d.getMinutes(); }
+function nowMin() { return tMin(nowTime()); }
 function tMin(t) { var p = String(t).split(":"); return (+p[0]) * 60 + (+p[1] || 0); }
 
 /* ================= navigation (Android back button) ================= */
@@ -397,7 +398,7 @@ function showExit() { var b = $("exitbar"); b.hidden = false; clearTimeout(NAV.e
 function hideExit() { $("exitbar").hidden = true; }
 function setTab(t, fromPop) {
   if (!fromPop && t !== S.tab) { NAV.tabs.push(S.tab); try { history.pushState({ gs: "tab" }, ""); } catch (e) {} }
-  S.tab = t; if (t === "rep") loadReport(); render(true); window.scrollTo(0, 0);
+  S.tab = t; if (t === "repLegacy") loadReport(); render(true); window.scrollTo(0, 0);
 }
 function openSheet(html) {
   if (NAV.kp) kpHide();
@@ -440,7 +441,7 @@ function boot() {
   if (!window.firebase || !cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
   withAppCheck(firebase.initializeApp(cfgF));
   S.auth = firebase.auth(); S.db = firebase.firestore();
-  S.db.enablePersistence({ synchronizeTabs: true }).catch(function () {});
+  S.db.enablePersistence({ synchronizeTabs: true }).then(function(){S.persistence=true;}).catch(function(){S.persistence=false;});
   applySec(); bindTop();
   window.addEventListener("online", netState); window.addEventListener("offline", netState);
   window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); S.installEvt = e; });
@@ -452,7 +453,7 @@ function boot() {
   });
 }
 function netState() { var nb = $("netbar"); if (nb) nb.hidden = navigator.onLine; }
-function stopAll() { unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; }
+function stopAll() { if(window.GSUI)GSUI.stop(); unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; }
 function applySec() {
   document.body.classList.toggle("sec-t", S.sec === "t"); document.body.classList.toggle("sec-n", S.sec === "n");
   document.querySelectorAll("#secsw [data-sec]").forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-sec") === S.sec); });
@@ -597,8 +598,9 @@ function renderTop() {
 function renderTabs() {
   var tabs = [["today", "الرئيسية", "today"]];
   if (canAdd()) tabs.push(["add", "تسجيل", "add"]);
-  if (window.SENS) tabs.push(["sens", "الحساسات", "sens"]);
-  if (isSup()) { tabs.push(["rep", "التقارير", "rep"]); tabs.push(["sup", "المشرف", "sup"]); }
+  if (window.SENS) tabs.push(["sens", "المراقبة", "sens"]);
+  tabs.push(["ops","العمليات","today"]);
+  if (isSup()) { tabs.push(["rep", "التقارير", "rep"]);  }
   $("tabs").innerHTML = tabs.map(function (x) { return '<button class="tab" type="button" data-tab="' + x[0] + '" ' + (S.tab === x[0] ? 'aria-current="page"' : "") + ">" + ico(x[2]) + "<span>" + x[1] + "</span></button>"; }).join("");
 }
 
@@ -618,10 +620,13 @@ function renderNow(force) {
   S.dirty = false;
   var html, after = null;
   if (S.tab === "add" && canAdd()) html = addView();
-  else if (S.tab === "rep" && isSup()) { html = repView(); after = bindCharts; }
+  else if(S.tab === "rep" && isSup()) html=GSUI.reports();
+  else if(S.tab === "repLegacy" && isSup()){html='<p class="banner warn">قسم الحساسات يستبعد فترات الصيانة المسجلة. التسجيلات اليدوية تبقى كما أدخلها المستخدم؛ راجع ملاحظاتها وسياقها.</p>'+repView();after=bindCharts;}
   else if (S.tab === "sup" && isSup()) html = supView();
   else if (S.tab === "sens" && window.SENS) { html = SENS.view(); after = function () { SENS.bind(v); }; }
-  else { S.tab = "today"; html = todayView(); }
+  else if(S.tab === "ops") html=GSUI.operations();
+  else if(S.tab === "legacy") html=legacyTodayView();
+  else { S.tab = "today"; html = GSUI.home(); }
   // تحديثات البيانات التي لا تغيّر شيئاً في الصفحة لا تعيد بناءها (أقل وميضاً وأخف على الجوال). الرسوم تُحدَّث دائماً
   if (!force && html === v.__h && v.firstElementChild) { if (after) after(); return; }
   v.innerHTML = html; v.__h = html; if (after) after();
@@ -666,7 +671,7 @@ function badReadings(E) {
   });
   return out;
 }
-function todayView() {
+function legacyTodayView() {
   var sec = S.sec, E = viewEntries(), SE = secEntries(S.entries, sec), isToday = S.date === todayStr(), past = S.date < todayStr(), h = "";
   var mt = tasksFor(sec, S.entries), mp = mt.need ? Math.min(100, mt.done / mt.need * 100) : 100, rec = canAdd() && (isToday || isSup());
   var so = signoffOf(sec), pend = SE.filter(function (e) { return !e.review; }).length, flags = SE.filter(function (e) { return e.review && e.review.s === "flag"; }).length;
@@ -1022,9 +1027,20 @@ function openForm(type, e, prefill) {
   FORM = { type: type, e: e, sec: sec, vsec: vsec, photos: {}, modeTouched: !!e, split: !!(T.split && !e) };
   FORM.fields = buildFields(T, FORM.split);
   var v = e ? clone(e.v || {}) : (prefill || {});
+  if(type === "refill") {
+    FORM.flow = e && e.v.flowCalibration ? clone(e.v.flowCalibration) : {litres:num(cfg("flowLitres")),minutes:num(cfg("flowMinutes")),seconds:num(cfg("flowSeconds"))};
+    FORM.fields = FORM.fields.slice();
+    var wi=FORM.fields.findIndex(function(x){return x.k === "waterAdd";});
+    FORM.fields.splice(wi,0,{k:"waterMethod",l:"طريقة حساب الماء",t:"s",o:["بالوقت حتى علامة الامتلاء","إدخال اللترات مباشرة"],w:"full"},
+      {k:"fillMinutes",l:"مدة جريان الماء — دقائق",t:"n"},{k:"fillSeconds",l:"ثوانٍ (من 0 إلى 59)",t:"n"},
+      {k:"fullMark",l:"مستوى الماء بعد التعبئة",t:"s",o:["لم يتم التأكيد","وصل إلى علامة الامتلاء","لم يصل إلى العلامة"],w:"full"});
+    if(!v.waterMethod)v.waterMethod=e || prefill ? "إدخال اللترات مباشرة" : "بالوقت حتى علامة الامتلاء";
+    FORM.modeTouched=true;
+  }
   if (type === "batt" && e) { if (v.start) v.time = tsHM(v.start); if (v.end) v.endTime = tsHM(v.end); }
   var h = '<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + sheetHead(T.label, sec, type) + '<form id="entryForm" class="fgrid" novalidate>';
   if (T.fields.some(function (x) { return x.t === "grid"; })) { var zn = cfg("zoneNote", vsec); if (zn) h += '<div class="zone-note" style="margin:0">' + esc(zn) + "</div>"; }
+  if(type === "refill")h += '<p class="help full">التعبئة مباشرة إلى خزان الري. أوقف الماء عند علامة الماسورة المثبتة في الموضع والعمق نفسيهما. احسب وقت جريان الماء فقط. الكمية تقديرية وتعتمد على ثبات التدفق. معايرة هذه العملية: '+esc(FORM.flow.litres)+' لتر / '+esc(FORM.flow.minutes)+' دقيقة و '+esc(FORM.flow.seconds)+' ثانية.</p><p class="help full" id="flowResult" aria-live="polite"></p>';
   var fl = FORM.fields;
   fl.forEach(function (fd, i) {
     if (!fd.blk) { h += fieldHTML(fd, v); return; }
@@ -1060,6 +1076,12 @@ function formValues() {
   });
   return v;
 }
+function flowVolume(cal, minutes, seconds) {
+  if(minutes === "" && seconds === "")return null;
+  var m=Number(minutes),s=Number(seconds),cm=Number(cal.minutes),cs=Number(cal.seconds),l=Number(cal.litres),t=cm*60+cs;
+  if(![m,s,cm,cs,l].every(Number.isFinite)||!Number.isInteger(m)||!Number.isInteger(s)||m<0||s<0||s>=60||!Number.isInteger(cm)||!Number.isInteger(cs)||cm<0||cs<0||cs>=60||l<=0||t<=0||m*60+s<=0)return null;
+  return Math.round(l/t*(m*60+s)*100)/100;
+}
 function refillSuggest(v, sec) {
   var e0 = ec25(num(v.ec0), num(v.wt)); if (e0 == null) return null;
   if (e0 > num(cfg("ecMax", sec))) return REFILL_MODES[0];
@@ -1069,6 +1091,14 @@ function refillSuggest(v, sec) {
 function compTag(fd, n, cv) { return fd.comp === "ph" ? "مصحح ≈" + f(cv, 2) : "≈" + f(cv, 0) + " عند 25°"; }
 function updForm() {
   if (!FORM) return;
+  if(FORM.type === "refill") {
+    var timed=$("f_waterMethod").value === "بالوقت حتى علامة الامتلاء", water=$("f_waterAdd");
+    water.readOnly=timed;
+    ["fillMinutes","fillSeconds"].forEach(function(k){$("w_"+k).hidden=!timed;});
+    var qty=flowVolume(FORM.flow,$("f_fillMinutes").value,$("f_fillSeconds").value);
+    if(timed)water.value=qty===null ? "" : String(qty);
+    $("flowResult").textContent=timed ? (qty===null ? "أدخل مدة صحيحة أكبر من صفر؛ الثواني من 0 إلى 59." : "الماء المضاف تقديريًا: "+f(qty,2)+" لتر. اخلط المحلول ثم سجل القياسات.") : "سجّل كمية الماء المضافة فعليًا.";
+  }
   // حدود الجو تختلف بين النهار والليل: نأخذ وقت التسجيل من خانة الوقت إن وُجدت
   var v = formValues(), sec = FORM.vsec, ts = v.time && /^\d{1,2}:\d{2}$/.test(v.time) ? v.time : Date.now();
   if (FORM.type === "refill" && !FORM.modeTouched) { var sg = refillSuggest(v, sec); if (sg && $("f_mode")) { $("f_mode").value = sg; v.mode = sg; } }
@@ -1112,6 +1142,7 @@ function needOneOk(T, v) {
   return T.needOne.some(function (k) { var keys = NK[k] ? gridKeys(k).concat(NK[k]) : [k]; return keys.some(function (kk) { return num(v[kk]) != null; }); });
 }
 function saveForm(btn) {
+  if(!FORM || FORM.saving || btn.disabled)return;
   var type = FORM.type, e = FORM.e, T = typeDef(type, FORM.vsec), raw = formValues(), v = {}, miss = [], wasOther = false;
   var sideName = function (fd) { return fd.side ? SIDES[SK.indexOf(fd.side)] + ": " : ""; };
   FORM.fields.forEach(function (fd) {
@@ -1123,6 +1154,14 @@ function saveForm(btn) {
     if (fd.req && !fd.side && (x === "" || x == null)) miss.push((fd.pg ? MNAME[fd.pg] + " " : "") + fd.l);
     v[fd.k] = x;
   });
+  if(type === "refill") {
+    if(v.waterMethod === "بالوقت حتى علامة الامتلاء") {
+      var amount=flowVolume(FORM.flow,raw.fillMinutes,raw.fillSeconds);
+      if(amount===null)miss.push("مدة التعبئة أو معايرة التدفق غير صحيحة");
+      else {v.waterAdd=amount;v.flowCalibration=clone(FORM.flow);v.waterEstimated=true;}
+    } else {v.flowCalibration=null;v.waterEstimated=false;v.fillMinutes="";v.fillSeconds="";}
+    if(num(v.waterAdd)===null || num(v.waterAdd)<0)miss.push("كمية الماء يجب ألا تكون سالبة");
+  }
   if (type === "note" && v.cat === NOTE_OTHER) { v.cat = v.catX; wasOther = true; }
   delete v.catX;
   var groups = [];
@@ -1162,12 +1201,11 @@ function saveForm(btn) {
   }
   if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) wb.update(S.db.collection("config").doc("settings"), { noteCats: (S.settings.noteCats || []).concat([v.cat]) });
   /* الصورة والتسجيل يُحفظان معاً أو لا يُحفظ أيٌّ منهما */
-  wb.commit().catch(function (err) { console.warn(err); toast("لم يُحفظ التسجيل: " + errMsg(err)); });
-  var where = FORM.sec === "g" ? "" : " في " + SECS[FORM.sec].name;
-  closeSheet();
-  toast(navigator.onLine ? "تم الحفظ" + where + (groups.length > 1 ? " · الجهتان" : "") : "حُفظ في الجوال وسيُرسل عند رجوع الإنترنت");
+  var submitted=FORM,where=FORM.sec==='g'?'':' في '+SECS[FORM.sec].name;
+  submitted.saving=true;
+  GSUI.commit(wb.commit(),btn,function(){submitted.saving=false;if(FORM===submitted)closeSheet();toast('تم تأكيد الحفظ'+where);}).then(function(){submitted.saving=false;});
 }
-function hmToTs(date, hm, after) { var d = new Date(date + "T" + hm + ":00").getTime(); if (after && d < after) d += 864e5; return d; }
+function hmToTs(date, hm, after) { var d = new Date(date + "T" + hm + ":00+03:00").getTime(); if (after && d < after) d += 864e5; return d; }
 function shrink(file) {
   return new Promise(function (res) {
     var img = new Image(), u = URL.createObjectURL(file);
@@ -1512,7 +1550,8 @@ function workersHTML(ws) {
 /* البيئة من الحساسات للفترة نفسها (تُحمَّل مرة لكل فترة وتُعاد عند "تحديث") */
 function sensRep(rows) {
   if (!window.SENS || !SENS.report || !S.rep || !S.rep.all) return null;
-  var key = S.rep.start + "|" + S.rep.end + "|" + S.sec;
+  if(window.GSUI&&!GSUI.ready())return {loading:true};
+  var key = S.rep.start + "|" + S.rep.end + "|" + S.sec + "|" + (window.GSUI?GSUI.careKey():"");
   if (!S.repSens || S.repSens.key !== key) {
     var force = !!S.repSensForce; S.repSensForce = false; S.repSens = { key: key, loading: true };
     SENS.report(S.rep.start, S.rep.end, rows, force).then(function (d) { if (S.repSens && S.repSens.key === key) { S.repSens = { key: key, data: d }; render(); } })
@@ -1837,7 +1876,7 @@ function supView() {
     '<label class="f full" for="ss_zoneNote">تعريف المناطق (يظهر بخط صغير تحت القياسات)<input class="in" id="ss_zoneNote" value="' + esc(cfg("zoneNote", sec)) + '"></label>' +
     '<div class="full"><button class="btn pri block" type="button" data-act="saveSec">حفظ حدود ' + SECS[sec].name + "</button></div></form></section>";
   PT.lim = h; h = "";
-  var g = [["dayFrom", "بداية النهار (للحدود والتحليل)", "ساعة"], ["dayTo", "نهاية النهار", "ساعة"], ["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"],
+  var g = [["flowLitres", "معايرة تدفق التعبئة: حجم الماء", "لتر"], ["flowMinutes", "زمن المعايرة: دقائق", "دقيقة"], ["flowSeconds", "زمن المعايرة: ثوانٍ (0–59)", "ثانية"], ["dayFrom", "بداية النهار (للحدود والتحليل)", "ساعة"], ["dayTo", "نهاية النهار", "ساعة"], ["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"],
     ["caFirst", "أول رش كالسيوم بعد النقل للأبراج", "يوم"], ["caEvery", "تكرار رش الكالسيوم كل", "يوم"], ["caUntil", "التوقف عن تذكير الكالسيوم بعد النقل بـ", "يوم"], ["insEvery", "الرش الوقائي الحشري كل (0 = بدون تذكير)", "يوم"], ["fungEvery", "الرش الوقائي الفطري كل (0 = بدون تذكير)", "يوم"]];
   h += '<section class="sec"><h2>إعدادات عامة</h2><form class="card fgrid" id="setGlob" novalidate>' +
     '<label class="f full" for="sg_atc">جهاز القياس يعوّض الحرارة تلقائياً (ATC)<select class="in" id="sg_atc"><option value="0"' + (!cfg("atc") ? " selected" : "") + '>لا · التطبيق يصحح القراءات إلى 25°</option><option value="1"' + (cfg("atc") ? " selected" : "") + ">نعم · لا حاجة للتصحيح</option></select></label>" +
@@ -2182,17 +2221,17 @@ document.addEventListener("click", function (ev) {
     case "new": openForm(b.getAttribute("data-type")); break;
     case "edit": var e1 = findEntry(id); if (e1) openForm(e1.type, e1); break;
     case "save": saveForm(b); break;
-    case "del": if (!armDelete(b, id)) return; db.collection("entries").doc(id).delete().catch(fail); closeSheet(); toast("تم الحذف"); break;
+    case "del": if (!armDelete(b, id)) return; GSUI.commit(db.collection("entries").doc(id).delete(),b,function(){closeSheet();toast("تم الحذف");}); break;
     case "move": var em = findEntry(id); if (!em) return; var to = secOf(em) === "n" ? "t" : "n"; db.collection("entries").doc(id).update({ sec: to }).then(function () { toast("نُقل التسجيل إلى " + SECS[to].name); }).catch(fail); break;
     case "approve": db.collection("entries").doc(id).update({ review: { s: "ok", by: S.uid, at: Date.now(), c: "" } }).catch(fail); break;
     case "flag": openFlag(id); break;
-    case "saveFlag": var c = $("flagTxt").value.trim(); if (!c) { toast("اكتب الملاحظة"); return; } db.collection("entries").doc(id).update({ review: { s: "flag", by: S.uid, at: Date.now(), c: c } }).catch(fail); closeSheet(); toast("حُفظت ملاحظة المشرف"); break;
+    case "saveFlag": var c = $("flagTxt").value.trim(); if (!c) { toast("اكتب الملاحظة"); return; } GSUI.commit(db.collection("entries").doc(id).update({ review: { s: "flag", by: S.uid, at: Date.now(), c: c } }),b,function(){closeSheet();toast("حُفظت ملاحظة المشرف");}); break;
     case "toggleNote": var e2 = findEntry(id); if (e2) db.collection("entries").doc(id).update({ open: !e2.open }).catch(fail); break;
     case "signoff":
       b.disabled = true; var batch = db.batch(), sec = S.sec;
       secEntries(S.entries, sec).filter(function (x) { return !x.review; }).forEach(function (x) { batch.update(db.collection("entries").doc(x.id), { review: { s: "ok", by: S.uid, at: Date.now(), c: "" } }); });
       batch.set(db.collection("signoffs").doc(S.date + "_" + sec), { by: S.uid, at: Date.now(), sec: sec });
-      batch.commit().then(function () { toast("تم اعتماد " + SECS[sec].name); }).catch(fail); break;
+      GSUI.commit(batch.commit(),b,function(){toast("تم اعتماد " + SECS[sec].name);}); break;
     case "battStart":
       var now = Date.now(), nt = nowTime();
       db.collection("entries").add({ type: "batt", sec: "g", date: todayStr(), time: nt, ts: now, by: S.uid, v: { time: nt, start: now, end: null } }).catch(fail);
@@ -2234,6 +2273,7 @@ document.addEventListener("click", function (ev) {
     case "saveGlob":
       var og = { atc: $("sg_atc").value === "1", levelUnit: $("sg_levelUnit").value, useLearned: $("sg_useLearned").value === "1" };
       document.querySelectorAll("#setGlob input[id^=sg_]").forEach(function (el) { var n = num(el.value); if (n != null) og[el.id.slice(3)] = n; });
+      if(flowVolume({litres:og.flowLitres,minutes:og.flowMinutes,seconds:og.flowSeconds},1,0)===null){toast("صحح معايرة التدفق: حجم موجب وزمن موجب، والثواني 0–59");return;}
       db.collection("config").doc("settings").set(Object.assign({}, S.settings, og)).then(function () { toast("حُفظت الإعدادات"); }).catch(fail); break;
   }
 });
@@ -2243,4 +2283,5 @@ document.addEventListener("keydown", function (e) {
 });
 try { for (var i = localStorage.length - 1; i >= 0; i--) { var k = localStorage.key(i); if (k && (k.indexOf("gs_fired_") === 0 || k === "gs_alarm" || k === "gs_wake")) localStorage.removeItem(k); } } catch (e) {}
 if ("serviceWorker" in navigator) window.addEventListener("load", function () { navigator.serviceWorker.register("sw.js").catch(function () {}); });
+if(window.GSUI)GSUI.init();
 boot();
