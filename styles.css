@@ -683,3 +683,11 @@ body{font-size:16px}.btn,.iconbtn,.tab{min-height:44px}.btn{white-space:normal}b
 :root[data-theme] .top{background:var(--surface);color:var(--ink);border-bottom:1px solid var(--line)}:root[data-theme] .brand .wm{color:var(--accent)}:root[data-theme] .brand small{color:var(--muted)}:root[data-theme] .sec-t{--accent:#176b4a;--accent-2:#176b4a;--accent-ink:#fff;--accent-soft:#e0f0e7}:root[data-theme="dark"] .sec-t{--accent:#8bd5ad;--accent-2:#8bd5ad;--accent-ink:#10281b;--accent-soft:#234331}.ux-live small{font-size:13px;line-height:1.6}.ux-kpis>div{min-height:100px}
 
 .form-errors{border:2px solid #c87056;padding:14px;border-radius:12px;line-height:1.8}input[data-computed]{background:var(--surface);border-style:dashed;cursor:default}.f .help{display:block;line-height:1.7}
+@media(max-width:420px){.tabs-in .tab{min-width:0;font-size:11px;flex:1}}
+@media print{
+ @page{size:A4;margin:14mm;@bottom-center{content:"GREEN SIDE · " counter(page)}}
+ html,body,.wrap,.card,.sec,.ux-heading,.ux-row{background:#fff!important;color:#181818!important;box-shadow:none!important;overflow:visible!important}
+ #view{direction:rtl}#view button,#view .ux-status,#view .ux-filters,.toast{display:none!important}
+ .ux-report-grid,.ux-kpis{display:block!important}.ux-chart{width:100%;max-height:180px}
+ .card,.ux-row,h2,h3{break-inside:avoid}#view:before{content:attr(data-print-title);display:block;font-weight:bold;padding-bottom:8mm}
+}

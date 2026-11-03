@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.10.3";
+var APP_VERSION = "2.11.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -253,6 +253,11 @@ var TYPES_G = {
     { k: "result", l: "النتيجة", t: "s", o: ["ناجحة", "تحتاج إعادة", "الجهاز يحتاج صيانة أو استبدال"], req: 1, w: "full" },
     MEMO] }
 };
+TYPES_T.pump.fields.splice(2,0,{k:"gauge1",l:"عداد ١",t:"n",u:"بار"},{k:"gauge2",l:"عداد ٢",t:"n",u:"بار"});
+TYPES_N.sow.fields.splice(-1,0,{k:"usable",l:"شتلات صالحة تم عدها",t:"n",ps:1},{k:"lossAfter",l:"فاقد بعد عد الصالح",t:"n",ps:1});
+TYPES_T.xplant.fields.find(x=>x.k==="batch").req=1;
+TYPES_T.harvest.fields.splice(1,0,{k:"batch",l:"دفعة البذر",t:"batch"},{k:"saleable",l:"رؤوس قابلة للبيع",t:"n"},{k:"rejected",l:"رؤوس مستبعدة",t:"n"});
+[TYPES_N.irr,TYPES_N.mix,TYPES_T.mix,TYPES_T.refill].forEach(function(type){if(!type.fields.some(f=>f.k==='stockSource'))type.fields.splice(1,0,{k:'stockSource',l:'مصدر الماء لهذه العملية',t:'s',req:1,w:'full',o:()=>Farm.sourceOptions(type===TYPES_N.irr?'irr':'mix')});});
 var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "note", "spray", "photo"], t: ["refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
 var TASKS = { n: [["mix", "nMix"], ["temp", "nTemp"], ["irr", "nIrr"], ["light", "nLight"], ["note", "nNote"], ["photo", "nPhoto"]],
   t: [["refill", "nRefill"], ["ecph", "nEcph"], ["temp", "nTemp"], ["light", "nLight"], ["pump", "nPump"], ["photo", "nPhoto"]] };
@@ -314,6 +319,7 @@ function errMsg(e) {
 
 /* ================= settings ================= */
 function cfg(k, sec) {
+  if(k==="atc")return true; // Operational readings are recorded as displayed.
   sec = sec || S.sec;
   if (sec === "t" && Object.prototype.hasOwnProperty.call(DEF_T, k)) { var tw = S.settings.tw || {}; return tw[k] != null && tw[k] !== "" ? tw[k] : DEF_T[k]; }
   var v = S.settings[k]; return v != null && v !== "" ? v : DEF[k];
@@ -340,9 +346,9 @@ function isBad(st) { return st === "lo" || st === "hi"; }
 function lvlToL(x) { if (x == null) return null; return cfg("levelUnit") === "cm" ? x * num(cfg("lPerCm")) : x; }
 
 /* temperature compensation (reference 25 °C) */
-function ec25(ec, t) { if (ec == null) return null; if (cfg("atc") || t == null) return ec; return ecTo25(ec, t, num(cfg("ecCoef"))); }
-function ph25(ph, t) { if (ph == null) return null; if (cfg("atc") || t == null) return ph; return phTo25(ph, t); }
-function phAt(p25, t) { if (p25 == null) return null; if (cfg("atc") || t == null) return p25; return 7 + (p25 - 7) * (t + 273.15) / 298.15; }
+function ec25(ec, t) { return ec; }
+function ph25(ph, t) { return ph; }
+function phAt(p25, t) { return p25; }
 function compVal(fd, raw, v) { var n = num(raw); if (n == null) return null; var t = num(v.wt); if (fd.comp === "ec") return ec25(n, t); if (fd.comp === "ph") return ph25(n, t); return n; }
 function unitOf(fd) { return typeof fd.u === "function" ? fd.u() : (fd.u || ""); }
 
@@ -397,6 +403,7 @@ function onPop() {
 function showExit() { var b = $("exitbar"); b.hidden = false; clearTimeout(NAV.exitTimer); NAV.exitTimer = setTimeout(hideExit, 2500); }
 function hideExit() { $("exitbar").hidden = true; }
 function setTab(t, fromPop) {
+  if(S.tab==='rep'&&t!=='rep')GSUI.endReport();
   if (!fromPop && t !== S.tab) { NAV.tabs.push(S.tab); try { history.pushState({ gs: "tab" }, ""); } catch (e) {} }
   S.tab = t; if (t === "repLegacy") loadReport(); render(true); window.scrollTo(0, 0);
 }
@@ -453,7 +460,7 @@ function boot() {
   });
 }
 function netState() { var nb = $("netbar"); if (nb) nb.hidden = navigator.onLine; }
-function stopAll() { if(window.GSUI)GSUI.stop(); unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; }
+function stopAll() { if(window.Farm)Farm.stop(); if(window.GSUI)GSUI.stop(); unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; }
 function applySec() {
   document.body.classList.toggle("sec-t", S.sec === "t"); document.body.classList.toggle("sec-n", S.sec === "n");
   document.querySelectorAll("#secsw [data-sec]").forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-sec") === S.sec); });
@@ -521,7 +528,7 @@ function startSession() {
     }, function () { S.role = null; onRole(); }));
   }).catch(function (e) { console.warn(e); $("view").innerHTML = '<div class="sec"><div class="empty">تعذّر الاتصال. تحقق من الإنترنت ثم أعد فتح التطبيق.<button class="btn" data-act="logout">تسجيل الخروج</button></div></div>'; });
 }
-function onRole() {
+function onRole() { if(window.Farm)Farm.start();
   if (!S.role) {
     unsubDay.forEach(function (u) { u(); }); unsubDay = []; memberSubs = false;
     $("top").hidden = true; $("tabsNav").hidden = true;
@@ -563,7 +570,7 @@ function subDay() {
   S.entries = []; S.signoff = {};
   unsubDay.push(S.db.collection("entries").where("date", "==", S.date).onSnapshot(function (q) {
     S.entries = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.time || "").localeCompare(b.time || "") || (a.ts - b.ts); });
-    render();
+    GSUI.invalidate();render();
   }, logErr));
   [["n", S.date + "_n"], ["n0", S.date], ["t", S.date + "_t"]].forEach(function (p) {
     unsubDay.push(S.db.collection("signoffs").doc(p[1]).onSnapshot(function (s) { S.signoff[p[0]] = s.exists ? s.data() : null; render(); }, logErr));
@@ -600,7 +607,7 @@ function renderTabs() {
   if (canAdd()) tabs.push(["add", "تسجيل", "add"]);
   if (window.SENS) tabs.push(["sens", "المراقبة", "sens"]);
   tabs.push(["ops","العمليات","today"]);
-  if (isSup()) { tabs.push(["rep", "التقارير", "rep"]);  }
+  if (isSup()) tabs.push(["rep","التقارير","rep"],["sup","الإعدادات","sup"]);
   $("tabs").innerHTML = tabs.map(function (x) { return '<button class="tab" type="button" data-tab="' + x[0] + '" ' + (S.tab === x[0] ? 'aria-current="page"' : "") + ">" + ico(x[2]) + "<span>" + x[1] + "</span></button>"; }).join("");
 }
 
@@ -622,7 +629,8 @@ function renderNow(force) {
   if (S.tab === "add" && canAdd()) html = addView();
   else if(S.tab === "rep" && isSup()) html=GSUI.reports();
   else if(S.tab === "repLegacy" && isSup()){html='<p class="banner warn">قسم الحساسات يستبعد فترات الصيانة المسجلة. التسجيلات اليدوية تبقى كما أدخلها المستخدم؛ راجع ملاحظاتها وسياقها.</p>'+repView();after=bindCharts;}
-  else if (S.tab === "sup" && isSup()) html = supView();
+  else if (S.tab === "sup" && isSup()) html = Farm.settings()+supView();
+  else if(Farm.pages.includes(S.tab))html=Farm.view(S.tab);
   else if (S.tab === "sens" && window.SENS) { html = SENS.view(); after = function () { SENS.bind(v); }; }
   else if(S.tab === "ops") html=GSUI.operations();
   else if(S.tab === "legacy") html=legacyTodayView();
@@ -666,7 +674,7 @@ function badReadings(E) {
         return;
       }
       var n = compVal(fd, v[fd.k], v), st = chk(fd.c, n, sec, e.time);
-      if (isBad(st)) out.push(fmtTime(e.time) + " · " + T.short + ": " + (fd.pg ? MNAME[fd.pg] + " " : "") + (fd.cl || fd.l) + " " + f(n, fd.c === "ph" ? 2 : 0) + " " + unitOf(fd) + (fd.comp && !cfg("atc") ? (fd.comp === "ph" ? " (مصحح)" : " (عند 25°)") : "") + " — " + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec, e.time));
+      if (isBad(st)) out.push(fmtTime(e.time) + " · " + T.short + ": " + (fd.pg ? MNAME[fd.pg] + " " : "") + (fd.cl || fd.l) + " " + f(n, fd.c === "ph" ? 2 : 0) + " " + unitOf(fd) + (fd.comp && !cfg("atc") ? (fd.comp === "ph" ? " (مصحح)" : "") : "") + " — " + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec, e.time));
     });
   });
   return out;
@@ -788,7 +796,7 @@ function sideBody(SE) {
     row("حرارة °C", te, "air", 1) + row("رطوبة %", te, "rh", 0) + row("ضوء lux", le, "lux", 0) +
     (anyIrr ? "<tr><td>الري اليوم (لتر)</td>" + il.map(function (x) { return "<td>" + f(x, 1) + "</td>"; }).join("") + "<td><b>" + f(il[0] + il[1], 1) + "</b></td></tr>" : "") + "</tbody></table></div>";
 }
-function sowBatches() { return S.meta.filter(function (e) { return e.type === "sow"; }); }
+function sowBatches() { return (window.Farm && Farm.cropReady()?Farm.crops():S.meta).filter(function (e) { return e.type === "sow"; }); }
 function transplanted(id) { return sum(S.meta.filter(function (e) { return e.type === "xplant" && e.v && e.v.batch === id; }).map(function (e) { return num(e.v.count); })); }
 function sowBody() {
   var m = S.date.slice(0, 7), caps = [num(cfg("capR")) || 0, num(cfg("capL")) || 0], sow = sowBatches().filter(function (e) { return (e.date || "").slice(0, 7) === m; });
@@ -916,6 +924,7 @@ function summaryChips(e) {
     out += '<span class="chip ' + (isBad(st) ? "bad" : "") + '"><span class="k">' + (fd.cl || fd.l) + '</span><span class="num">' + f(n, dec) + "</span>" + (unitOf(fd) && unitOf(fd) !== "pH" ? " " + unitOf(fd) : "") + extra + "</span>";
   });
   Object.keys(LEGACY).forEach(function (k) { if (keys[k] || v[k] === "" || v[k] == null) return; var L = LEGACY[k]; out += '<span class="chip"><span class="k">' + L[0] + "</span>" + esc(v[k]) + (L[1] ? " " + L[1] : "") + "</span>"; });
+  if(e.type==="pump" && v.pressureSpecs){for(const k of ['gauge1','gauge2'])if(num(v[k])!==null&&v.pressureSpecs[k])out+='<span class="chip">'+esc(v.pressureSpecs[k].name)+' · المرجع '+esc(v.pressureSpecs[k].ideal)+' بار · '+(num(v[k])===v.pressureSpecs[k].ideal?'مطابق للمرجع':num(v[k])>v.pressureSpecs[k].ideal?'أعلى من المرجع':'أقل من المرجع')+'</span>';}
   if(e.type === "refill" && v.waterMethod){
     out += '<span class="chip"><span class="k">حساب الماء</span>'+esc(v.waterMethod)+(v.waterEstimated?' · تقديري':'')+'</span>';
     if(v.waterEstimated && v.flowCalibration)out += '<span class="chip">مدة التعبئة: '+esc(v.fillMinutes || 0)+' دقيقة و '+esc(v.fillSeconds || 0)+' ثانية · المعايرة: '+esc(v.flowCalibration.litres)+' لتر / '+esc(v.flowCalibration.minutes)+' دقيقة و '+esc(v.flowCalibration.seconds)+' ثانية</span>';
@@ -928,7 +937,7 @@ function summaryChips(e) {
   if (e.type === "batt") { out += '<span class="chip"><span class="k">بدء الشحن</span>' + tsTime(v.start || e.ts) + "</span>" + (v.end ? '<span class="chip"><span class="k">انتهاء الشحن</span>' + tsTime(v.end) + ' <span class="k">(' + f((v.end - (v.start || e.ts)) / 36e5, 1) + " ساعة)</span></span>" : '<span class="chip bad">جارٍ الشحن</span>'); }
   return out;
 }
-function canEditEntry(e) { return isSup() || (isWorker() && e.by === S.uid && !e.review && (e.date === todayStr() || e.type === "batt")); }
+function canEditEntry(e) { return isSup() || (isWorker() && e.by === S.uid && !e.review && e.date <= todayStr()); }
 function entryCard(e, showDate) {
   var sec = secOf(e), T = typeDef(e.type, sec) || { label: e.type }, v = e.v || {}, txt = [];
   if (e.type === "sow" || e.type === "harvest") { if (v.crop) txt.push(v.crop + (v.lot ? " · " + v.lot : "")); }
@@ -942,6 +951,7 @@ function entryCard(e, showDate) {
     foot += '<button class="btn sm warn" data-act="flag" data-id="' + esc(e.id) + '">ملاحظة</button>';
     if (e.type === "note" && !noneNote) foot += '<button class="btn sm" data-act="toggleNote" data-id="' + esc(e.id) + '">' + (e.open ? "تم الحل" : "إعادة فتح") + "</button>";
   }
+  if(isWorker() && e.by===S.uid && e.review)foot+=Farm.action("تصحيح سجل معتمد","correct",e.id);
   if (canEditEntry(e)) foot += '<button class="btn sm ghost" data-act="edit" data-id="' + esc(e.id) + '">تعديل</button>';
   var chips = summaryChips(e), img = e.thumb ? '<img class="e-thumb" alt="صورة" src="' + safeImg(e.thumb) + '" data-act="lightbox" data-pid="' + esc(e.photo || "") + '">' : (e.photo ? '<img class="e-photo" alt="صورة" data-photo="' + esc(e.photo) + '">' : "");
   return '<article class="entry ' + (rev && rev.s === "flag" ? "flag" : "") + '"><div class="e-head"><span class="e-ic">' + ico(e.type, 19) + '</span><div class="e-t"><b>' + esc(T.label) + "</b><span>" + (showDate ? esc(fmtShort(e.date)) + " · " : "") + fmtTime(e.time) + " · " + esc(nameOf(e.by)) + "</span></div>" + (sec === "g" ? secTag("g") : "") + '<div class="e-pills">' + pills + "</div></div>" +
@@ -959,7 +969,7 @@ function loadPhotos(root) {
 /* ---------- add ---------- */
 function addView() {
   var sec = S.sec;
-  if (S.date !== todayStr() && !isSup()) return '<div class="sec"><div class="empty">التسجيل متاح لليوم الحالي فقط.<button class="btn pri" data-act="gotoday">الانتقال إلى اليوم</button></div></div>';
+  if (S.date > todayStr() && !isSup()) return '<div class="sec"><div class="empty">لا يمكن التسجيل بتاريخ مستقبلي.<button class="btn pri" data-act="gotoday">الانتقال إلى اليوم</button></div></div>';
   var h = '<section class="sec"><div class="sec-h"><h2>تسجيل جديد · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2><span class="muted" style="font-size:13px">' + (S.date === todayStr() ? "لليوم" : "للتاريخ " + esc(S.date)) + "</span></div>";
   h += '<button class="tile" style="min-height:0;flex-direction:row;align-items:center;width:100%;border-color:var(--accent-2)" data-act="calc"><span class="e-ic">' + ico("calc", 22) + '</span><span style="margin:0 12px 0 0;display:flex;flex-direction:column;align-items:flex-start"><b style="color:var(--ink)">حاسبة المحلول · ' + SECS[sec].name + "</b><span>" + (sec === "t" ? "تعويض الخزان أو تجهيز خزان جديد (نظام مغلق)" : "خلطة جديدة حسب الجرعة أو الأملاح المستهدفة (نظام مفتوح)") + "</span></span></button>";
   h += '<div class="tiles">' + ORDER[sec].map(function (t) {
@@ -980,7 +990,7 @@ function timePicker(id, val) {
 }
 function readTime(id) { var el = $(id); if (!el) return ""; var h = +el.querySelector(".tp-h").value, m = +el.querySelector(".tp-m").value, ap = el.getAttribute("data-ap"); return pad(h % 12 + (ap === "pm" ? 12 : 0)) + ":" + pad(m); }
 function batchOptions(val) {
-  var list = sowBatches().filter(function (e) { return daysBetween(e.date, todayStr()) <= 90 || e.id === val; }).slice().reverse();
+  var list = sowBatches().filter(function (e) { return e.date<=S.date || e.id===val; }).slice().reverse();
   return '<option value="">—</option>' + list.map(function (e) { return '<option value="' + esc(e.id) + '"' + (e.id === val ? " selected" : "") + ">" + esc(fmtShort(e.date) + " · " + (e.v.crop || "") + " · " + f(num(e.v.seeds)) + " بذرة · عمر " + daysBetween(e.date, todayStr()) + " يوم") + "</option>"; }).join("");
 }
 function gridHTML(fd, v) {
@@ -1008,13 +1018,14 @@ function fieldHTML(fd, v) {
   var id = "f_" + fd.k, val = v[fd.k], inp, out = "";
   if (val == null) val = fd.def ? cfg(fd.def, FORM.vsec) : "";
   if (fd.grp) out += '<div class="grp-h">' + fd.grp + "</div>";
-  if (fd.t === "s") { var o = opts(fd); if (val && o.indexOf(val) < 0) o = o.concat([val]); inp = '<select class="in" id="' + id + '"><option value="">—</option>' + o.map(function (x) { return "<option" + (x === val ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select>"; }
+  if(fd.k==="gauge1"||fd.k==="gauge2"){var choices=Farm.gaugeChoices(FORM.pressureSpecs[fd.k],val);inp='<select class="in" id="'+id+'"><option value="">لم يُقَس</option>'+choices.map(n=>'<option value="'+n+'" '+(val!==""&&val!=null&&num(val)===n?'selected':'')+'>'+String(n)+' بار</option>').join('')+'</select>';}
+  else if (fd.t === "s") { var o = opts(fd); if (val && o.indexOf(val) < 0) o = o.concat([val]); inp = '<select class="in" id="' + id + '"><option value="">—</option>' + o.map(function (x) { return "<option" + (x === val ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select>"; }
   else if (fd.t === "batch") inp = '<select class="in" id="' + id + '">' + batchOptions(val) + "</select>";
   else if (fd.t === "ta") inp = '<textarea class="in" id="' + id + '">' + esc(val) + "</textarea>";
   else if (fd.t === "t") inp = (fd.opt && !val ? '<span class="muted" style="font-size:12.5px"><input type="checkbox" id="on_' + fd.k + '"> تسجيل هذا الوقت</span>' : "") + timePicker(id, val || (fd.k === "time" && FORM.e ? FORM.e.time : ""));
   else if (fd.t === "x") inp = '<input class="in" id="' + id + '" enterkeyhint="next" value="' + esc(val) + '"' + (fd.list ? ' list="dl_' + fd.list + '"' : "") + (fd.ph ? ' placeholder="' + esc(fd.ph) + '"' : "") + ">";
   else inp = '<div class="unitwrap"><input class="in num" id="' + id + '" ' + KPA() + ' autocomplete="off"' + (fd.integer ? ' data-integer="1"' : '') + ' value="' + esc(val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
-  out += '<label class="f ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><span>' + fd.l + (fd.req ? ' <span class="req">*</span>' : "") + "</span>" + inp + (fd.c || fd.comp ? '<span class="hint" id="h_' + fd.k + '"></span>' : "") + "</label>";
+  out += '<label class="f ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><span>' + esc(fd.l) + (fd.req ? ' <span class="req">*</span>' : "") + "</span>" + inp + (fd.c || fd.comp ? '<span class="hint" id="h_' + fd.k + '"></span>' : "") + "</label>";
   return out;
 }
 /* the list of inputs on the form. Split records (sowing, daily photo) repeat the per-side fields for the right and left side. */
@@ -1047,7 +1058,11 @@ function openForm(type, e, prefill) {
   if (type === "batt" && e) { if (v.start) v.time = tsHM(v.start); if (v.end) v.endTime = tsHM(v.end); }
   var h = '<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + sheetHead(T.label, sec, type) + '<form id="entryForm" class="fgrid" novalidate>';
   if (T.fields.some(function (x) { return x.t === "grid"; })) { var zn = cfg("zoneNote", vsec); if (zn) h += '<div class="zone-note" style="margin:0">' + esc(zn) + "</div>"; }
+  if(isWorker()&&e&&e.review)h+='<p class="help full">هذا السجل معتمد. حفظ التعديل يرسل طلب تصحيح للمشرف.</p>';
   if(type === "refill")h += '<p class="help full">التعبئة مباشرة إلى خزان الري. أوقف الماء عند علامة الماسورة المثبتة في الموضع والعمق نفسيهما. احسب وقت جريان الماء فقط. الكمية تقديرية وتعتمد على ثبات التدفق. معايرة هذه العملية: '+esc(FORM.flow.litres)+' لتر / '+esc(FORM.flow.minutes)+' دقيقة و '+esc(FORM.flow.seconds)+' ثانية.</p><p class="help full" id="flowResult" aria-live="polite"></p>';
+  if(isWorker() && (e || S.date<todayStr()))h+='<label class="f full">سبب التعديل أو التسجيل المتأخر<input class="in" id="changeReason" maxlength="300"></label>';
+  if(type==="pump"){FORM.pressureSpecs=clone(e?.v.pressureSpecs||{gauge1:Farm.gaugeSpec('gauge1'),gauge2:Farm.gaugeSpec('gauge2')});FORM.fields=FORM.fields.map(fd=>FORM.pressureSpecs[fd.k]?Object.assign({},fd,{l:FORM.pressureSpecs[fd.k].name+" · المثالي "+FORM.pressureSpecs[fd.k].ideal+" بار"}):fd);}
+  if(['refill','mix','irr'].includes(type)&&!v.stockSource)v.stockSource=Farm.sourceDefault(type,!!e);
   var fl = FORM.fields;
   fl.forEach(function (fd, i) {
     if (!fd.blk) { h += fieldHTML(fd, v); return; }
@@ -1058,7 +1073,7 @@ function openForm(type, e, prefill) {
   if (FORM.split) h += '<p class="help full" style="margin:0">' + (T.photo ? "صوّر كل جهة في خانتها. إذا صوّرت جهة واحدة فقط تُحفظ وحدها." : "عبّئ الجهة التي زرعتها أو الجهتين معاً. كل جهة تُحفظ كتسجيل مستقل.") + "</p>";
   if (type === "mix") h += '<div class="full help" id="mixHint"></div>';
   h += '<datalist id="dl_crops">' + uniqueCrops().map(function (c) { return '<option value="' + esc(c) + '">'; }).join("") + "</datalist>";
-  h += '</form><div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions">' + (e ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
+  h += '</form><div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions">' + ((e && (!isWorker() || (!e.review && e.date===todayStr()))) ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
   openSheet(h);
   var form = $("entryForm");
   form.addEventListener("input", updForm); form.addEventListener("change", updForm);
@@ -1151,7 +1166,7 @@ function mixExpect(v) {
   var raw25 = rr != null ? ec25(rr, wt) : (num(lastRaw()) != null ? num(lastRaw()) : num(formula().ecRaw));
   var e25 = raw25 + kUse().k * perL, dev = function (x) { return atc || wt == null ? x : x * (1 + coef * (wt - 25)); };
   var exp = dev(e25), lo = exp * 0.95, hi = exp * 1.05, nd = doses().filter(function (d) { return Math.abs(d - perL) <= 0.15; })[0];
-  var where = !atc && wt != null ? " على جهازك عند " + f(wt, 1) + "°" : " (عند 25°)";
+  var where = !atc && wt != null ? " على جهازك عند " + f(wt, 1) + "°" : "";
   mh.innerHTML = "المعدل: A <b class=\"num\">" + f(perL, 2) + "</b> مل/لتر · B <b class=\"num\">" + f(b / w, 2) + "</b> مل/لتر" + (nd != null ? " · يحاكي <b>جرعة " + fml(nd) + " مل</b>" : "");
   var n = num(v.ec), txt = "المتوقع لهذه الخلطة" + where + ": " + f(lo) + " – " + f(hi) + " (≈ " + f(exp) + ")", cls = "hint";
   if (n != null) { var dp = (n / exp - 1) * 100; if (Math.abs(dp) <= 5) { txt = "✓ مطابقة · " + txt; cls = "hint ok"; } else { txt = "قراءتك " + (dp > 0 ? "أعلى" : "أقل") + " من المتوقع بـ " + f(Math.abs(dp), 0) + "% · " + txt; cls = "hint " + (dp > 0 ? "hi" : "lo"); } }
@@ -1203,31 +1218,38 @@ function saveForm(btn) {
     if (!needOneOk(T, e ? Object.assign({}, e.v, v) : v)) miss.push(type === "irr" ? "كمية الري لجهة واحدة على الأقل" : "قراءة واحدة على الأقل");
     if (T.photo === "req" && !FORM.photos._ && !(e && e.photo)) miss.push("الصورة");
   }
+  if(isWorker() && (e?.date||S.date)>todayStr())miss.push("لا يمكن تسجيل عملية بتاريخ مستقبلي");
+  Farm.validateEntry(type,v,miss);
+  var reason=$("changeReason");
+  if(e && isWorker() && e.review && Object.keys(FORM.photos).length)miss.push("للصورة المعتمدة اطلب من المشرف تعديل الصورة مباشرة");
+  if(reason && !reason.value.trim())miss.push("سبب التعديل أو التسجيل المتأخر");
   if (miss.length) { kpHide();var errorBox=$("formErrors");errorBox.hidden=false;errorBox.textContent="لم يُحفظ التسجيل. صحح التالي: "+Array.from(new Set(miss)).join("، ");errorBox.scrollIntoView({block:"center"});return; }
   $("formErrors").hidden=true;
   btn.disabled = true; btn.textContent = "جارٍ الحفظ…";
   var wb = S.db.batch(), date = e ? e.date : S.date, col = S.db.collection("entries");
   var putPhoto = function (ph) { var pref = S.db.collection("photos").doc(); wb.set(pref, { data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec }); S.photos[pref.id] = ph.full; return pref.id; };
   if (type === "batt") { v.start = hmToTs(date, v.time); v.end = v.endTime ? hmToTs(date, v.endTime, v.start) : null; delete v.endTime; }
+  Farm.setStockTime(e,type,date,v);
   if (e) {
     var nv = Object.assign(clone(e.v || {}), v), up = { v: nv, time: nv.time };
     if (FORM.photos._) { up.photo = putPhoto(FORM.photos._); up.thumb = FORM.photos._.thumb; }
     if (type === "note" && nv.cat === NOTE_NONE) up.open = false;
-    wb.update(col.doc(e.id), up);
+    if(reason) Farm.audit(wb,e.id,e,nv,reason.value);
+    if(!(isWorker() && e.review))wb.update(col.doc(e.id), up);
   } else if (FORM.split) {
     var grp = col.doc().id;
-    groups.forEach(function (g) { var d = { type: type, sec: FORM.sec, date: date, time: g.v.time, ts: Date.now(), by: S.uid, v: g.v, grp: grp }; if (g.photo) { d.photo = putPhoto(g.photo); d.thumb = g.photo.thumb; } wb.set(col.doc(), d); });
+    groups.forEach(function (g) { var d = { type: type, sec: FORM.sec, date: date, time: g.v.time, ts: Date.now(), by: S.uid, v: g.v, grp: grp }; if (g.photo) { d.photo = putPhoto(g.photo); d.thumb = g.photo.thumb; } var ref=col.doc();if(reason)Farm.audit(wb,ref.id,null,d.v,reason.value);wb.set(ref,d); });
   } else {
     var d = { type: type, sec: FORM.sec, date: date, time: v.time, ts: Date.now(), by: S.uid, v: v };
     if (FORM.photos._) { d.photo = putPhoto(FORM.photos._); d.thumb = FORM.photos._.thumb; }
     if (type === "note") d.open = v.cat !== NOTE_NONE;
-    wb.set(col.doc(), d);
+    var ref=col.doc();if(reason)Farm.audit(wb,ref.id,null,d.v,reason.value);wb.set(ref,d);
   }
   if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) wb.update(S.db.collection("config").doc("settings"), { noteCats: (S.settings.noteCats || []).concat([v.cat]) });
   /* الصورة والتسجيل يُحفظان معاً أو لا يُحفظ أيٌّ منهما */
   var submitted=FORM,where=FORM.sec==='g'?'':' في '+SECS[FORM.sec].name;
   submitted.saving=true;
-  GSUI.commit(wb.commit(),btn,function(){submitted.saving=false;if(FORM===submitted)closeSheet();toast('تم تأكيد الحفظ'+where);}).then(function(){submitted.saving=false;});
+  GSUI.commit(wb.commit(),btn,function(){submitted.saving=false;if(FORM===submitted)closeSheet();toast(e&&isWorker()&&e.review?'أُرسل طلب التصحيح للمشرف':'تم تأكيد الحفظ'+where);}).then(function(){submitted.saving=false;});
 }
 function hmToTs(date, hm, after) { var d = new Date(date + "T" + hm + ":00+03:00").getTime(); if (after && d < after) d += 864e5; return d; }
 function shrink(file) {
@@ -1307,11 +1329,10 @@ function openCalc() {
   h += '<div class="grp-h">الهدف</div><div class="full c-fresh"><div class="stagebar" id="c_stages"><button type="button" data-act="cstage" data-s="ec" aria-pressed="true">حسب الأملاح<b>المستهدفة</b></button>' + DS.map(function (d) { return '<button type="button" data-act="cstage" data-s="' + d + '" aria-pressed="false"><span class="num">' + fml(d) + ' مل</span><b class="num" data-dexp="' + d + '">—</b></button>'; }).join("") + '<button type="button" data-act="cstage" data-s="custom" aria-pressed="false">جرعة أخرى<b>اكتبها</b></button></div>' +
     '<p class="help" style="margin:6px 0 0">الجرعة = مل من A ' + (Math.abs(ratio0 - 1) < 1e-6 ? "ومثلها من B" : "ومعها B بنسبة الخلطة") + ' لكل لتر ماء. الرقم تحتها = الأملاح المتوقعة على جهازك (µS/cm).' + (isSup() ? ' <button type="button" class="linkbtn" data-act="editDoses" data-from="calc">تعديل الجرعات</button>' : "") + "</p></div>";
   h += '<label class="f full c-fresh" for="c_dose" id="w_c_dose" hidden>جرعة A لكل لتر<div class="unitwrap"><input class="in num" id="c_dose" ' + KPA() + '><span class="u">مل/لتر</span></div><span class="hint">B تُحسب تلقائياً بنسبة الخلطة (' + fml(ratio0) + " مل B لكل 1 مل A)</span></label>";
-  h += '<label class="f full" for="c_target" id="w_c_target">الأملاح المستهدفة (عند 25°)<div class="unitwrap"><input class="in num" id="c_target" ' + KPA() + ' value="' + esc(cfg("ecTarget", sec)) + '"><span class="u">µS/cm</span></div><span class="hint">الحدود لـ' + SECS[sec].name + ": " + rangeTxt("ec", sec) + "</span></label>";
+  h += '<label class="f full" for="c_target" id="w_c_target">الأملاح المستهدفة<div class="unitwrap"><input class="in num" id="c_target" ' + KPA() + ' value="' + esc(cfg("ecTarget", sec)) + '"><span class="u">µS/cm</span></div><span class="hint">الحدود لـ' + SECS[sec].name + ": " + rangeTxt("ec", sec) + "</span></label>";
   h += '</form><div id="calcOut" style="margin-top:14px"></div>';
   h += '<div class="card" style="margin-top:12px"><h3>ضبط pH</h3><div class="fgrid" style="margin-top:8px"><label class="f full" for="c_ph">قراءة pH بعد إضافة السماد<div class="unitwrap"><input class="in num" id="c_ph" ' + KPA() + '><span class="u">pH</span></div></label></div><div id="phOut" class="help" style="margin-top:8px"></div></div>';
-  h += '<p class="help" style="margin-top:10px">أساس الحساب: ' + esc(F.name) + " · كل 1 مل A + " + fml(num(F.fullB) / num(F.fullA)) + " مل B لكل لتر يرفع الأملاح ≈ <b>" + f(ki.k) + "</b> µS/cm " + (ki.src === "learned" ? "(محسوب من آخر " + ki.n + " خلطات مسجلة)" : "(من الخلطة المعتمدة)") + ". " + (cfg("atc") ? "جهازك يعوّض الحرارة تلقائياً (ATC)، لذلك تُستخدم القراءة كما هي." : "الأملاح تُحوَّل إلى 25° بمعامل " + f(num(cfg("ecCoef")) * 100, 2) + "% لكل درجة، والحاسبة تعرض القراءة المتوقعة على جهازك عند حرارة الماء الحالية.") + "</p>" +
-    (S.settings.atcChecked ? "" : '<div class="banner warn" style="margin-top:8px"><span>لم يُختبر جهاز القياس بعد لمعرفة هل يعوّض الحرارة (ATC). ' + (isSup() ? '<button type="button" class="linkbtn" data-act="atcTest">اختبر الجهاز الآن</button>' : "اطلب من المشرف إجراء الاختبار.") + "</span></div>");
+  h += '<p class="help" style="margin-top:10px">أساس الحساب: ' + esc(F.name) + " · كل 1 مل A + " + fml(num(F.fullB) / num(F.fullA)) + " مل B لكل لتر يرفع الأملاح ≈ <b>" + f(ki.k) + "</b> µS/cm " + (ki.src === "learned" ? "(محسوب من آخر " + ki.n + " خلطات مسجلة)" : "(من الخلطة المعتمدة)") + ". تُستخدم قراءة الجهاز كما سُجّلت.</p>";
   h += '<div class="sheet-actions"><button class="btn pri" type="button" data-act="calcToForm">تسجيل بهذه الكميات</button></div></div></div>';
   openSheet(h);
   $("calcForm").addEventListener("input", calcRun); $("c_ph").addEventListener("input", calcRun);
@@ -1343,7 +1364,7 @@ function calcRun() {
       var FM = freshMath(raw, t25, V, k, ratio), mlA = FM.mlA, mlB = FM.mlB, st = chk("ec", t25, sec); Vph = V;
       res = { kind: "fresh", water: V, ecRaw: rawR, wt: wt, mlA: Math.round(mlA * 10) / 10, mlB: Math.round(mlB * 10) / 10 };
       h = '<div class="res-big"><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول A</span><span class="val num">' + fml(mlA) + ' <small>مل</small></span><span class="sub num">' + f(perL, 2) + ' مل لكل لتر</span></div><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول B</span><span class="val num">' + fml(mlB) + ' <small>مل</small></span><span class="sub num">' + f(perL * ratio, 2) + " مل لكل لتر</span></div></div>" +
-        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الجرعة</dt><dd class="num">' + fml(perL) + " مل A + " + fml(perL * ratio) + " مل B لكل لتر</dd><dt>الأملاح المتوقعة (عند 25°)</dt><dd><b class=\"num\">" + f(t25) + "</b> µS/cm " + (st === "ok" ? '<span class="pill ok">ضمن الحد</span>' : '<span class="pill bad">خارج الحد ' + rangeTxt("ec", sec) + "</span>") + "</dd>" +
+        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الجرعة</dt><dd class="num">' + fml(perL) + " مل A + " + fml(perL * ratio) + " مل B لكل لتر</dd><dt>الأملاح المتوقعة</dt><dd><b class=\"num\">" + f(t25) + "</b> µS/cm " + (st === "ok" ? '<span class="pill ok">ضمن الحد</span>' : '<span class="pill bad">خارج الحد ' + rangeTxt("ec", sec) + "</span>") + "</dd>" +
         (!atc && wt != null ? "<dt>القراءة المتوقعة على جهازك</dt><dd><b class=\"num\">" + f(expRead(t25)) + "</b> µS/cm عند " + f(wt, 1) + "°</dd>" : "") + "</dl></div>" +
         '<div class="card" style="margin-top:10px"><h3>خطوات الخلط</h3><ol class="cal-steps"><li>ضع <b class="num">' + f(V) + "</b> لتر ماء أولاً، ولا تضف المركّز لإناء فارغ.</li><li>أضف <b>A</b>: <b class=\"num\">" + fml(mlA * .9) + "</b> مل (90%) وحرّك جيداً.</li><li>أضف <b>B</b>: <b class=\"num\">" + fml(mlB * .9) + "</b> مل وحرّك. لا تخلط A و B مركّزين أبداً.</li><li>قِس الأملاح. إذا كانت أقل من <b class=\"num\">" + f(expRead(t25)) + "</b> أكمل الـ 10% الباقية (" + fml(mlA * .1) + " مل A ثم " + fml(mlB * .1) + " مل B).</li><li>اضبط pH بعد ضبط الأملاح، ثم سجّل الكميات الفعلية.</li></ol></div>";
     }
@@ -1362,7 +1383,7 @@ function calcRun() {
         '<div class="res-big">' + (drain > 0 ? '<div class="stat" style="border-color:var(--bad)"><span class="lab">صرّف أولاً</span><span class="val num">' + f(drain) + " <small>لتر</small></span></div>" : "") +
         '<div class="stat" style="border-color:var(--accent-2)"><span class="lab">الماء المضاف</span><span class="val num">' + f(water) + ' <small>لتر</small></span><span class="sub">الحجم بعدها ' + f(finalV) + " لتر</span></div>" +
         (mA > 0 ? '<div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول A</span><span class="val num">' + fml(mA) + ' <small>مل</small></span><span class="sub num">' + (water > 0 ? f(perAddL, 2) + " مل لكل لتر مضاف" : "") + '</span></div><div class="stat" style="border-color:var(--accent-2)"><span class="lab">محلول B</span><span class="val num">' + fml(mB) + " <small>مل</small></span></div>" : "") + "</div>" +
-        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الأملاح الآن (عند 25°)</dt><dd class="num">' + f(cur) + "</dd><dt>الأملاح المتوقعة بعد التعويض</dt><dd><b class=\"num\">" + f(tgt) + "</b> µS/cm</dd>" + (!atc && wt != null ? "<dt>القراءة المتوقعة على جهازك</dt><dd><b class=\"num\">" + f(expRead(tgt)) + "</b> عند " + f(wt, 1) + "°</dd>" : "") + "</dl></div>" +
+        '<div class="card" style="margin-top:10px"><dl class="kv"><dt>الأملاح الآن</dt><dd class="num">' + f(cur) + "</dd><dt>الأملاح المتوقعة بعد التعويض</dt><dd><b class=\"num\">" + f(tgt) + "</b> µS/cm</dd>" + (!atc && wt != null ? "<dt>القراءة المتوقعة على جهازك</dt><dd><b class=\"num\">" + f(expRead(tgt)) + "</b> عند " + f(wt, 1) + "°</dd>" : "") + "</dl></div>" +
         '<div class="card" style="margin-top:10px"><h3>الخطوات</h3><ol class="cal-steps">' + (drain > 0 ? "<li>صرّف <b class=\"num\">" + f(drain) + "</b> لتر من الخزان.</li>" : "") + "<li>أضف <b class=\"num\">" + f(water) + "</b> لتر من ماء المصدر وشغّل المضخة للتقليب.</li>" + (mA > 0 ? "<li>أضف <b>A</b>: <b class=\"num\">" + fml(mA * .9) + "</b> مل (90%) في الخزان مع التقليب.</li><li>أضف <b>B</b>: <b class=\"num\">" + fml(mB * .9) + "</b> مل بعد امتزاج A.</li><li>بعد 10–15 دقيقة تقليب قِس الأملاح، وأكمل الباقي إن لزم.</li>" : "<li>بعد 10–15 دقيقة تقليب قِس الأملاح.</li>") + "<li>اضبط pH ثم سجّل التعويض.</li></ol></div>";
     }
   }
@@ -1796,7 +1817,7 @@ function exportXlsx(btn) {
   try {
     var sec = S.sec, rows = S.rep.all.filter(function (r) { return secOf(r) === sec; }), wb = XLSX.utils.book_new(); wb.Workbook = { Views: [{ RTL: true }] };
     var names = {}, add = function (name, aoa) { name = name.slice(0, 31); if (names[name]) name = name.slice(0, 28) + " " + (++names[name]); names[name] = 1; var ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = aoa[0].map(function (_, i) { return { wch: Math.min(40, Math.max.apply(null, [10].concat(aoa.map(function (r) { return String(r[i] == null ? "" : r[i]).length + 2; })))) }; }); XLSX.utils.book_append_sheet(wb, ws, name); };
-    add("الملخص اليومي", [["التاريخ", "خلط/تعويض", "A مل", "B مل", "متوسط EC (25°)", "متوسط pH", "حرارة الماء", "حرارة الجو", "الرطوبة", "الضوء", "ريات", "لتر", "بذور", "حصاد كغ", "ملاحظات", "بانتظار المراجعة"]].concat(daily(rows).map(function (r) { return [r.d, r.mix, r.mlA, r.mlB, r.ec && Math.round(r.ec), r.ph && +r.ph.toFixed(2), r.wt && +r.wt.toFixed(1), r.air && +r.air.toFixed(1), r.rh && Math.round(r.rh), r.lux && Math.round(r.lux), r.irr, r.lit, r.seeds, r.kg, r.notes, r.pend]; })));
+    add("الملخص اليومي", [["التاريخ", "خلط/تعويض", "A مل", "B مل", "متوسط EC المقاس", "متوسط pH", "حرارة الماء", "حرارة الجو", "الرطوبة", "الضوء", "ريات", "لتر", "بذور", "حصاد كغ", "ملاحظات", "بانتظار المراجعة"]].concat(daily(rows).map(function (r) { return [r.d, r.mix, r.mlA, r.mlB, r.ec && Math.round(r.ec), r.ph && +r.ph.toFixed(2), r.wt && +r.wt.toFixed(1), r.air && +r.air.toFixed(1), r.rh && Math.round(r.rh), r.lux && Math.round(r.lux), r.irr, r.lit, r.seeds, r.kg, r.notes, r.pend]; })));
     var types = ORDER[sec].slice(); rows.forEach(function (r) { if (types.indexOf(r.type) < 0 && r.type !== "selftest" && typeDef(r.type, sec) && !TYPES_G[r.type]) types.push(r.type); });
     types.forEach(function (t) {
       var T = typeDef(t, sec), cols = [], head = ["التاريخ"];
@@ -1903,8 +1924,6 @@ function supView() {
   var g = [["flowLitres", "معايرة تدفق التعبئة: حجم الماء", "لتر"], ["flowMinutes", "زمن المعايرة: دقائق", "دقيقة"], ["flowSeconds", "زمن المعايرة: ثوانٍ (0–59)", "ثانية"], ["dayFrom", "بداية النهار (للحدود والتحليل)", "ساعة"], ["dayTo", "نهاية النهار", "ساعة"], ["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"],
     ["caFirst", "أول رش كالسيوم بعد النقل للأبراج", "يوم"], ["caEvery", "تكرار رش الكالسيوم كل", "يوم"], ["caUntil", "التوقف عن تذكير الكالسيوم بعد النقل بـ", "يوم"], ["insEvery", "الرش الوقائي الحشري كل (0 = بدون تذكير)", "يوم"], ["fungEvery", "الرش الوقائي الفطري كل (0 = بدون تذكير)", "يوم"]];
   h += '<section class="sec"><h2>إعدادات عامة</h2><form class="card fgrid" id="setGlob" novalidate>' +
-    '<label class="f full" for="sg_atc">جهاز القياس يعوّض الحرارة تلقائياً (ATC)<select class="in" id="sg_atc"><option value="0"' + (!cfg("atc") ? " selected" : "") + '>لا · التطبيق يصحح القراءات إلى 25°</option><option value="1"' + (cfg("atc") ? " selected" : "") + ">نعم · لا حاجة للتصحيح</option></select></label>" +
-    '<div class="full"><button class="btn block" type="button" data-act="atcTest">اختبار جهاز القياس (ATC) وحساب معامل الحرارة</button><p class="help" style="margin:4px 0 0">' + (S.settings.atcChecked ? "آخر اختبار: " + esc(S.settings.atcChecked) + " · المعامل " + f(num(cfg("ecCoef")) * 100, 2) + "% لكل درجة" : "لم يُختبر الجهاز بعد.") + '</p></div>' +
     '<label class="f" for="sg_levelUnit">قياس مستوى خزان الأبراج<select class="in" id="sg_levelUnit"><option value="L"' + (cfg("levelUnit") !== "cm" ? " selected" : "") + '>باللتر</option><option value="cm"' + (cfg("levelUnit") === "cm" ? " selected" : "") + ">بالسنتيمتر</option></select></label>" +
     '<label class="f" for="sg_useLearned">معامل الحاسبة<select class="in" id="sg_useLearned"><option value="1"' + (cfg("useLearned") ? " selected" : "") + '>يتعلم من السجلات بعد 3 خلطات</option><option value="0"' + (!cfg("useLearned") ? " selected" : "") + ">من الخلطة فقط</option></select></label>" +
     g.map(function (x) { return '<label class="f" for="sg_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + KPA() + ' id="sg_' + x[0] + '"' + (['flowMinutes','flowSeconds'].indexOf(x[0])>=0 ? ' data-integer="1"' : '') + ' value="' + esc(cfg(x[0])) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
@@ -2298,7 +2317,7 @@ document.addEventListener("click", function (ev) {
     case "saveGlob":
       var flowValid=["flowLitres","flowMinutes","flowSeconds"].every(function(k){return $("sg_"+k).value.trim()!=="" && num($("sg_"+k).value)!==null;});
       if(!flowValid){toast("أكمل حجم وزمن معايرة التدفق بأرقام صحيحة؛ يمكن كتابة صفر للدقائق أو الثواني");return;}
-      var og = { atc: $("sg_atc").value === "1", levelUnit: $("sg_levelUnit").value, useLearned: $("sg_useLearned").value === "1" };
+      var og = { levelUnit: $("sg_levelUnit").value, useLearned: $("sg_useLearned").value === "1" };
       document.querySelectorAll("#setGlob input[id^=sg_]").forEach(function (el) { var n = num(el.value); if (n != null) og[el.id.slice(3)] = n; });
       if(flowVolume({litres:og.flowLitres,minutes:og.flowMinutes,seconds:og.flowSeconds},1,0)===null){toast("صحح معايرة التدفق: حجم موجب وزمن موجب، والثواني 0–59");return;}
       GSUI.commit(db.collection("config").doc("settings").set(Object.assign({}, S.settings, og)),b,function(){toast("حُفظت الإعدادات");}); break;
