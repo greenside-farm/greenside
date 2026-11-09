@@ -1,5 +1,5 @@
 rules_version = '2';
-// GREEN SIDE 2.15.0 — green-side-2d792
+// GREEN SIDE 3.2.0 — green-side-2d792 (الجديد: farmSeen لعلامة قراءة الرسائل ✓✓)
 // انسخ هذا الملف كاملاً إلى Firebase ← Firestore Database ← Rules ثم Publish.
 service cloud.firestore {
  match /databases/{database}/documents {
@@ -102,6 +102,12 @@ match /farmJobs/{id} {
 match /farmMessages/{id} {
  allow read: if gs11Member() && (resource.data.audience=='team' || resource.data.by==request.auth.uid || resource.data.audience==request.auth.uid);
  allow create: if gs11New() && request.resource.data.keys().hasOnly(['by','audience','task','body','created']) && request.resource.data.body is string && request.resource.data.body.size()>0 && request.resource.data.body.size()<=2000 && (request.resource.data.audience=='team' || exists(/databases/$(database)/documents/users/$(request.resource.data.audience)));
+}
+// 3.2.0: آخر وقت قرأ فيه كل عضو محادثاته (لعلامة ✓✓). كل عضو يكتب وثيقته فقط.
+match /farmSeen/{uid} {
+ allow read: if gs11Member();
+ allow create, update: if gs11Member() && request.auth.uid == uid && request.resource.data.keys().hasOnly(['rooms','at']) && request.resource.data.rooms is map && request.resource.data.at == request.time;
+ allow delete: if gs11Member() && request.auth.uid == uid;
 }
 match /farmLedger/{id} {
  allow read: if gs11Owner();

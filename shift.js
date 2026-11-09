@@ -1,4 +1,4 @@
-/* GREEN SIDE 2.16.0 — واجهة الوردية وإيصال تعويض الماء */
+/* GREEN SIDE 3.2.0 — إيصال تعويض الماء وقائمة الإرسال المحلية (واجهة الوردية القديمة محفوظة للرجوع) */
 var Shift=(()=>{
 'use strict';
 const sending=new Set(), errors=new Map();
@@ -137,5 +137,5 @@ document.addEventListener('click',ev=>{
  else GSUI.reviewQueue(cmd);
 });
 window.addEventListener('online',()=>flush());
-return {home,flush,hasPending,showPending,draft,remember,enqueue,stateOf,action};
+return {home,flush,hasPending,showPending,receipts,draft,remember,enqueue,stateOf,action};
 })();

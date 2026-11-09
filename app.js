@@ -1,9 +1,9 @@
-/* GREEN SIDE 2.0 — متابعة المشتل والأبراج في البيت المحمي
+/* GREEN SIDE 3.2.0 — متابعة المشتل والأبراج في البيت المحمي
    البيانات في Firebase Firestore، والدخول عبر Firebase Authentication.
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.16.0";
+var APP_VERSION = "3.2.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -312,7 +312,7 @@ function isSup() { return S.role === "sup"; }
 function isWorker() { return S.role === "worker"; }
 function canAdd() { return isSup() || isWorker(); }
 function secOf(e) { return e.sec || "n"; }
-function secTag(s) { return '<span class="sectag s-' + s + '">' + (s === "g" ? "⚙️ المعدات" : SECS[s].icon + " " + SECS[s].name) + "</span>"; }
+function secTag(s) { return '<span class="sectag s-' + s + '"><i></i>' + (s === "g" ? "المعدات" : SECS[s].name) + "</span>"; }
 function toEmail(id) { id = id.trim().toLowerCase(); return id.indexOf("@") >= 0 ? id : id.replace(/\s+/g, "") + "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"); }
 function showLogin(id) { if (!id) return ""; var d = "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"); return id.slice(-d.length) === d ? id.slice(0, -d.length) : id; }
 function errMsg(e) {
@@ -469,11 +469,19 @@ function boot() {
   });
 }
 function netState() { var nb = $("netbar"); if (nb) nb.hidden = navigator.onLine; }
-function stopAll() { if(window.Farm)Farm.stop(); if(window.GSUI)GSUI.stop(); unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; }
+function stopAll() { if(window.Team)Team.stop(); if(window.Rec)Rec.stop(); if(window.Farm)Farm.stop(); if(window.GSUI)GSUI.stop(); unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; }
 function applySec() {
   document.body.classList.toggle("sec-t", S.sec === "t"); document.body.classList.toggle("sec-n", S.sec === "n");
   document.querySelectorAll("#secsw [data-sec]").forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-sec") === S.sec); });
-  var m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute("content", S.sec === "t" ? "#1E6278" : "#1F5A3F");
+  chrome();
+}
+/* 3.0: الشريط العلوي بلون القسم في اللوحة، وبلون الصفحة في غيرها. لون شريط الجوال (theme-color) يتبعه */
+function chrome() {
+  var home = !!S.role && S.tab === "today", dark = document.documentElement.dataset.theme === "dark";
+  document.body.classList.toggle("on-home", home);
+  document.body.classList.toggle("in-chat", !!S.role && S.tab === "chat");
+  var c = home ? (dark ? (S.sec === "t" ? "#163F4C" : "#173F2D") : (S.sec === "t" ? "#1E6278" : "#1F5A3F")) : (dark ? "#19211D" : "#FFFFFF");
+  var m = document.querySelector('meta[name="theme-color"]'); if (m && m.getAttribute("content") !== c) m.setAttribute("content", c);
 }
 
 /* ================= auth screens ================= */
@@ -537,7 +545,7 @@ function startSession() {
     }, function () { S.role = null; onRole(); }));
   }).catch(function (e) { console.warn(e); $("view").innerHTML = '<div class="sec"><div class="empty">تعذّر الاتصال. تحقق من الإنترنت ثم أعد فتح التطبيق.<button class="btn" data-act="logout">تسجيل الخروج</button></div></div>'; });
 }
-function onRole() { if(window.Farm)Farm.start(); if(S.role && window.Shift)Shift.flush();
+function onRole() { if(window.Farm)Farm.start(); if(S.role && window.Shift)Shift.flush(); if(S.role && window.Rec)Rec.start(); if(S.role && window.Team)Team.start();
   if (!S.role) {
     unsubDay.forEach(function (u) { u(); }); unsubDay = []; memberSubs = false;
     $("top").hidden = true; $("tabsNav").hidden = true;
@@ -591,10 +599,10 @@ function signoffOf(sec) { return S.signoff[sec] || (sec === "n" ? S.signoff.n0 :
 /* ================= top bar & tabs ================= */
 function bindTop() {
   var dp = $("datePick"); dp.value = S.date;
-  function go(d) { S.date = d; dp.value = d; subDay(); if (S.tab === "rep") loadReport(); render(true); }
-  dp.addEventListener("change", function () { if (dp.value) go(dp.value); });
-  $("prevDay").onclick = function () { go(addDays(S.date, -1)); };
-  $("nextDay").onclick = function () { go(addDays(S.date, 1)); };
+  function go(d) { if (!d || d === S.date) return; S.date = d; dp.value = d; subDay(); if (S.tab === "repLegacy") loadReport(); render(true); window.scrollTo(0, 0); }
+  dp.addEventListener("change", function () { go(dp.value); });
+  /* على الحاسوب: فتح التقويم بالضغط على أي مكان في شريحة التاريخ */
+  dp.addEventListener("click", function () { try { if (dp.showPicker && window.matchMedia && matchMedia("(pointer:fine)").matches) dp.showPicker(); } catch (e) {} });
   $("goToday").onclick = function () { go(todayStr()); };
   $("tabs").addEventListener("click", function (e) { var b = e.target.closest("[data-tab]"); if (b) setTab(b.getAttribute("data-tab")); });
   $("secsw").addEventListener("click", function (e) { var b = e.target.closest("[data-sec]"); if (b) switchSec(b.getAttribute("data-sec")); });
@@ -606,19 +614,41 @@ function switchSec(s) {
   if (S.tab === "rep" && !(S.rep && S.rep.all)) loadReport(); render(true); window.scrollTo(0, 0);
 }
 function renderTop() {
-  var t = S.date === todayStr();
-  $("dateLabel").textContent = (t ? "اليوم · " : "") + fmtDate(S.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
-  $("who").innerHTML = '<span class="av">' + initials(S.uid) + '</span><span class="nm"></span><span class="pill ' + (isSup() ? "ok" : "n") + '">' + (isSup() ? "مشرف" : "عامل") + "</span>";
-  $("who").querySelector(".nm").textContent = nameOf(S.uid);
-  ["n", "t"].forEach(function (s) { var b = document.querySelector('#secsw [data-sec="' + s + '"] .cnt'); if (b) { var tk = tasksFor(s, S.entries); b.textContent = t && tk.left ? tk.left : ""; } });
+  var t = S.date === todayStr(), dp = $("datePick");
+  $("dateLabel").textContent = t ? "اليوم" : fmtDate(S.date, { day: "numeric", month: "long" });
+  $("datechip").classList.toggle("past", !t);
+  $("datechip").title = fmtDate(S.date, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  dp.setAttribute("aria-label", "التاريخ: " + fmtDate(S.date) + ". اختر يوماً آخر");
+  if (dp.value !== S.date) dp.value = S.date;
+  $("goToday").hidden = t;
+  $("who").innerHTML = '<span class="av">' + initials(S.uid) + "</span>";
+  $("who").setAttribute("aria-label", "حسابي · " + nameOf(S.uid));
+  var other = S.sec === "n" ? "t" : "n", flag = !!(window.Board && Board.dot(other));
+  ["n", "t"].forEach(function (s) {
+    var b = document.querySelector('#secsw [data-sec="' + s + '"]'); if (!b) return;
+    var d = b.querySelector(".dot"), on = s === other && flag; if (d) d.hidden = !on;
+    b.setAttribute("aria-label", SECS[s].name + (on ? " · فيه تنبيه" : ""));
+  });
 }
+/* الشريط السفلي: اللوحة · الفريق · سجّل (الزر الأوسط) · المزرعة · التقارير (للعامل: حسابي) */
+var NAV_OF = { chat: "team", recType: "add", recDetail: "add", review: "today", sens: "farm", ops: "farm", sup: "farm", legacy: "farm", equipment: "farm", deliveries: "farm", crop: "farm", finance: "farm", changes: "farm", jobs: "farm", repLegacy: "rep" };
+var MAIN_TABS = ["today", "team", "add", "farm", "rep"];
 function renderTabs() {
-  var tabs = [["today", "الرئيسية", "today"]];
-  if (canAdd()) tabs.push(["add", "تسجيل", "add"]);
-  if (window.SENS) tabs.push(["sens", "المراقبة", "sens"]);
-  tabs.push(["ops","العمليات","today"]);
-  if (isSup()) tabs.push(["rep","التقارير","rep"],["sup","الإعدادات","sup"]);
-  $("tabs").innerHTML = tabs.map(function (x) { return '<button class="tab" type="button" data-tab="' + x[0] + '" ' + (S.tab === x[0] ? 'aria-current="page"' : "") + ">" + ico(x[2]) + "<span>" + x[1] + "</span></button>"; }).join("");
+  var cur = NAV_OF[S.tab] || S.tab, un = window.Team ? Team.unread() : window.Farm ? Farm.unread() : 0, I = Board.icon;
+  var it = function (id, label, icon, badge) {
+    return '<button class="tab" type="button" data-tab="' + id + '"' + (cur === id ? ' aria-current="page"' : "") + (badge ? ' aria-label="' + label + " · " + badge + ' غير مقروءة"' : "") + ">" + I(icon, 22) + "<span>" + label + "</span>" + (badge ? '<b class="tab-badge" aria-hidden="true">' + (badge > 99 ? "99+" : badge) + "</b>" : "") + "</button>";
+  };
+  var h = it("today", "اللوحة", "grid") + it("team", "الفريق", "chat", un);
+  h += canAdd() ? '<button class="tab fab" type="button" data-tab="add" aria-label="سجّل عملية جديدة"' + (cur === "add" ? ' aria-current="page"' : "") + '><span class="fab-c">' + I("plus", 28, 2.4) + "</span><span>سجّل</span></button>" : "<span></span>";
+  h += it("farm", "المزرعة", "sprout");
+  h += isSup() ? it("rep", "التقارير", "chart") : '<button class="tab" type="button" data-act="account">' + I("user", 22) + "<span>حسابي</span></button>";
+  if ($("tabs").__h !== h) { $("tabs").innerHTML = h; $("tabs").__h = h; }
+}
+/* الفريق: الرسائل والمهام (المرحلة الثالثة تعيد تصميم المحادثات) */
+function teamView() {
+  var jobs = Farm.shiftJobs().length, un = Farm.unread(), list = [["msg", "المحادثات", un || ""], ["jobs", "المهام", jobs || ""]];
+  var cur = subGet("team", list);
+  return '<header class="bd-page"><h1>الفريق</h1><p>الرسائل والمهام بين المشرف والعمال</p></header>' + subTabs("team", list) + Farm.view(cur === "jobs" ? "jobs" : "team");
 }
 
 /* ================= render ================= */
@@ -632,22 +662,30 @@ function renderNow(force) {
   if (!S.role) return;
   renderTop(); renderTabs();
   var v = $("view"), ae = document.activeElement;
-  if (!force && ae && v.contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { S.dirty = true; return; }
+  if (!force && ae && v.contains(ae) && /INPUT|TEXTAREA|SELECT/.test(ae.tagName)) { S.dirty = true; if (S.tab === "chat" && window.Team) Team.patch(); return; }
   if (!force && NAV.sheet) { S.dirty = true; return; }
   S.dirty = false;
   var html, after = null;
-  if (S.tab === "add" && canAdd()) html = addView();
+  if (window.Rec) Rec.leave(S.tab);
+  if (S.tab === "add" && canAdd()) html = Rec.view();
+  else if (S.tab === "recType" && canAdd()) html = Rec.typeLog();
+  else if (S.tab === "recDetail") { html = Rec.detail(); }
+  else if (S.tab === "review" && isSup()) html = Rec.review();
   else if(S.tab === "rep" && isSup()) html=GSUI.reports();
   else if(S.tab === "repLegacy" && isSup()){html='<p class="banner warn">قسم الحساسات يستبعد فترات الصيانة المسجلة. التسجيلات اليدوية تبقى كما أدخلها المستخدم؛ راجع ملاحظاتها وسياقها.</p>'+repView();after=bindCharts;}
   else if (S.tab === "sup" && isSup()) html = Farm.settings()+supView();
+  else if (S.tab === "farm") html = Board.hub();
+  else if (S.tab === "team") html = window.Team ? Team.view() : teamView();
+  else if (S.tab === "chat" && window.Team) { html = Team.roomView(); after = Team.after; }
   else if(Farm.pages.includes(S.tab))html=Farm.view(S.tab);
   else if (S.tab === "sens" && window.SENS) { html = SENS.view(); after = function () { SENS.bind(v); }; }
   else if(S.tab === "ops") html=GSUI.operations();
   else if(S.tab === "legacy") html=legacyTodayView();
-  else { S.tab = "today"; html = GSUI.home(); }
+  else { S.tab = "today"; html = isSup() ? Board.home() : Board.worker(); }
+  chrome();
   // تحديثات البيانات التي لا تغيّر شيئاً في الصفحة لا تعيد بناءها (أقل وميضاً وأخف على الجوال). الرسوم تُحدَّث دائماً
   /* الصفحات الفرعية (المعدات، المهام، الفريق، التقارير التفصيلية…) ليس لها زر في الشريط السفلي: زر رجوع ظاهر أعلاها */
-  if ((Farm.pages.includes(S.tab) || S.tab === "repLegacy" || S.tab === "legacy") && NAV.tabs.length) html = '<div class="backbar"><button class="btn sm" type="button" data-act="goBack">→ رجوع</button></div>' + html;
+  if (MAIN_TABS.indexOf(S.tab) < 0 && S.tab !== "chat" && NAV.tabs.length) html = '<div class="backbar"><button class="backbtn" type="button" data-act="goBack">' + Board.icon("back", 18, 2.2) + "<span>رجوع</span></button></div>" + html;
   if (!force && html === v.__h && v.firstElementChild) { if (after) after(); return; }
   v.innerHTML = html; v.__h = html; if (after) after();
   loadPhotos(v);
@@ -829,7 +867,7 @@ function sowBody() {
 
 /* ---------- equipment ---------- */
 function lastBatt() { return lastOf(S.meta, function (e) { return e.type === "batt"; }); }
-function lastCal() { return lastOf(S.meta, function (e) { return e.type === "cal"; }); }
+function lastCal() { return lastOf(S.meta, function (e) { return e.type === "cal" && !(e.v && e.v.careKind); }); }
 function battInfo() {
   var b = lastBatt(), now = Date.now();
   if (!b) return { state: "none" };
@@ -1025,12 +1063,14 @@ function photoHTML(fd) {
     '<input type="file" accept="image/*" capture="environment" id="f_cam' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden><input type="file" accept="image/*" id="f_gal' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden>' +
     '<img class="photo-prev" id="f_prev' + sx + '" alt="" ' + (cur ? (e.thumb ? 'src="' + safeImg(e.thumb) + '"' : 'data-photo="' + esc(e.photo) + '"') : "hidden") + "></div>";
 }
+/* «1. قراءة المحلول» ← رقم في دائرة + العنوان */
+function numTitle(t) { var m = /^(\d+)\.\s*(.*)$/.exec(String(t || "")); return m ? '<i class="n">' + m[1] + "</i>" + esc(m[2]) : esc(t); }
 function fieldHTML(fd, v) {
   if (fd.t === "grid") return gridHTML(fd, v);
   if (fd.t === "photo") return photoHTML(fd);
   var id = "f_" + fd.k, val = v[fd.k], inp, out = "";
   if (val == null) val = fd.def ? cfg(fd.def, FORM.vsec) : "";
-  if (fd.grp) out += '<div class="grp-h">' + fd.grp + "</div>";
+  if (fd.grp) out += '<div class="grp-h">' + numTitle(fd.grp) + "</div>";
   if(fd.k==="gauge1"||fd.k==="gauge2"){var choices=Farm.gaugeChoices(FORM.pressureSpecs[fd.k],val);inp='<select class="in" id="'+id+'"><option value="">لم يُقَس</option>'+choices.map(n=>'<option value="'+n+'" '+(val!==""&&val!=null&&num(val)===n?'selected':'')+'>'+String(n)+' بار</option>').join('')+'</select>';}
   else if (fd.t === "s") { var o = opts(fd); if (val && o.indexOf(val) < 0) o = o.concat([val]); inp = '<select class="in" id="' + id + '"><option value="">—</option>' + o.map(function (x) { return "<option" + (x === val ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select>"; }
   else if (fd.t === "batch") inp = '<select class="in" id="' + id + '">' + batchOptions(val) + "</select>";
@@ -1075,7 +1115,7 @@ function openForm(type, e, prefill) {
     FORM.lastWaterMethod=v.waterMethod;
   }
   if (type === "batt" && e) { if (v.start) v.time = tsHM(v.start); if (v.end) v.endTime = tsHM(v.end); }
-  var h = '<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + sheetHead(T.label, sec, type) + '<form id="entryForm" class="fgrid" novalidate>';
+  var h = '<div class="sheet-bg" data-close><div class="sheet form-sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + (window.Rec ? Rec.formHead(T, sec, type, e) : sheetHead(T.label, sec, type)) + '<form id="entryForm" class="fgrid" novalidate>';
   if (T.fields.some(function (x) { return x.t === "grid"; })) { var zn = cfg("zoneNote", vsec); if (zn) h += '<div class="zone-note" style="margin:0">' + esc(zn) + "</div>"; }
   if(type==="xplant")h+='<p class="help full">يتطلب النقل اتصالًا وجردًا معتمدًا. لإلغاء نقل مسجل بعد الجرد صحّح عدده إلى صفر.</p>';
   if(isWorker()&&e&&e.review)h+='<p class="help full">حفظ التعديل يعيد السجل للمشرف مع السبب والقيم الجديدة.</p>';
@@ -1090,7 +1130,7 @@ function openForm(type, e, prefill) {
   var fl = FORM.fields;
   fl.forEach(function (fd, i) {
     if (!fd.blk) { h += fieldHTML(fd, v); return; }
-    if (!fl[i - 1] || fl[i - 1].blk !== fd.blk) h += '<div class="blk full blk-' + fd.blk + '"><div class="blk-h">' + fd.blkT + '</div><div class="fgrid">';
+    if (!fl[i - 1] || fl[i - 1].blk !== fd.blk) h += '<div class="blk full blk-' + fd.blk + '"><div class="blk-h">' + numTitle(fd.blkT) + '</div><div class="fgrid">';
     h += fieldHTML(fd, v);
     if (!fl[i + 1] || fl[i + 1].blk !== fd.blk) h += "</div></div>";
   });
@@ -2071,9 +2111,17 @@ function copyCred() {
   function fallback() { var a = document.createElement("textarea"); a.value = txt; a.style.position = "fixed"; a.style.opacity = "0"; document.body.appendChild(a); a.select(); try { document.execCommand("copy"); ok(); } catch (e) { toast("لم يتم النسخ — اضغط مطوّلاً على البيانات لتحديدها"); } a.remove(); }
   if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(txt).then(ok, fallback); else fallback();
 }
+/* 3.0: المظهر الداكن، وتخصيص اللوحة، والإعدادات من «حسابي» */
+function accPrefs() {
+  var dark = document.documentElement.dataset.theme === "dark", I = Board.icon, ch = I("chev", 18, 2);
+  return '<div class="acc-list"><button type="button" class="acc-row" role="switch" aria-checked="' + dark + '" data-bd="theme">' + I("moon", 20) + '<span>الوضع الداكن</span><span class="acc-sw" aria-hidden="true"><i></i></span></button>' +
+    (isSup() ? '<button type="button" class="acc-row" data-bd="customize">' + I("sliders", 20) + "<span>تخصيص اللوحة</span>" + ch + "</button>" +
+      '<button type="button" class="acc-row" data-bd="tab" data-t="sup">' + I("settings", 20) + "<span>الإعدادات</span>" + ch + "</button>" : "") + "</div>";
+}
 function openAccount() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("حسابي") +
     '<div class="card"><dl class="kv"><dt>الاسم</dt><dd>' + esc(nameOf(S.uid)) + '</dd><dt>الدخول</dt><dd class="num">' + esc(showLogin(S.user.email)) + "</dd><dt>الصلاحية</dt><dd>" + (isSup() ? "مشرف" : "عامل") + "</dd></dl></div>" +
+    accPrefs() +
     '<form class="fgrid" id="pwForm" style="margin-top:14px" novalidate><label class="f full" for="p_new">تغيير كلمة المرور<input class="in" id="p_new" type="password" dir="ltr" autocomplete="new-password" placeholder="كلمة المرور الجديدة"></label><button class="btn full" type="button" data-act="changePw">حفظ كلمة المرور</button></form>' +
     (showLogin(S.user.email) !== S.user.email ? "" : '<form class="fgrid" style="margin-top:14px" novalidate><label class="f full" for="e_new">تغيير البريد الإلكتروني<input class="in" id="e_new" type="email" dir="ltr" autocomplete="email" placeholder="البريد الجديد"></label><button class="btn full" type="button" data-act="changeEmail">إرسال رابط التأكيد</button><p class="muted full" style="font-size:12.5px;margin:0">يصل رابط تأكيد إلى البريد الجديد، وبعد فتحه يتغيّر بريد الدخول. سجّل الدخول بعدها بالبريد الجديد.</p></form>') +
     '<div class="f full" style="margin-top:14px"><span>لوحة الأرقام في خانات القياس</span><div class="seg" id="kp_on" role="group"><button type="button" data-v="1" aria-pressed="' + kpOn() + '">لوحة GREEN SIDE الكبيرة</button><button type="button" data-v="0" aria-pressed="' + !kpOn() + '">لوحة الجوال</button></div></div>' +
@@ -2229,6 +2277,12 @@ async function runSelfTest() {
       try { var bs = (await wdb.collection("entries").doc(br.id).get({ source: "server" })).data(); await wdb.collection("entries").doc(br.id).update({ v: Object.assign({}, bs.v, { end: Date.now(), endBy: wuid }) }); }
       catch (e) { await br.delete(); if (e && e.code === "permission-denied") { var er = new Error("مُنع: انشر ملف firestore.rules الجديد في Firebase"); er.code = "rules"; throw er; } throw e; }
       await br.delete(); return "مسموح";
+    });
+    await step("علامة قراءة الرسائل ✓✓", async function () {
+      try { await wdb.collection("farmSeen").doc(wuid).set({ rooms: { team: Date.now() }, at: firebase.firestore.FieldValue.serverTimestamp() }); }
+      catch (e) { if (e && e.code === "permission-denied") { var er = new Error("غير مفعّلة: انشر ملف firestore.rules الجديد في Firebase"); er.code = "rules"; throw er; } throw e; }
+      await expectDenied(wdb.collection("farmSeen").doc(uid).set({ rooms: { team: 1 }, at: firebase.firestore.FieldValue.serverTimestamp() }));
+      await wdb.collection("farmSeen").doc(wuid).delete(); return "تعمل · كل عضو يكتب قراءته فقط";
     });
     await step("إيقاف الحساب يمنع الوصول فوراً", async function () { await db.collection("users").doc(wuid).update({ role: "disabled" }); return expectDenied(wdb.collection("entries").limit(1).get({ source: "server" })); });
   }

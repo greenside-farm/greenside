@@ -1,4 +1,4 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 2.16.0)
+/* GREEN SIDE — صفحة الحساسات (الإصدار 3.0.0)
    العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
@@ -89,7 +89,7 @@ var SENS = (function () {
     if (m < 1) return "الآن"; if (m < 60) return "منذ " + cnt(m, "دقيقة", "دقيقتين", "دقائق");
     var h = Math.round(m / 60); if (h < 48) return "منذ " + cnt(h, "ساعة", "ساعتين", "ساعات"); return "منذ " + cnt(Math.round(h / 24), "يوم", "يومين", "أيام");
   }
-  function rr() { if (window.S && (S.tab === "sens" || S.tab === "rep" || (S.tab === "today" && S.date === dkey(Date.now()))) && typeof render === "function") render(); }
+  function rr() { if (window.S && (S.tab === "sens" || S.tab === "rep" || S.tab === "today") && typeof render === "function") render(); }
 
   /* ================= الاتصال ================= */
   function start() {
@@ -514,6 +514,67 @@ var SENS = (function () {
     var limits = limAt(k, now), hasLimit = limits[0] != null || limits[1] != null;
     out.state = hasLimit ? stOf(k, out.v, now) || "neutral" : "neutral";
     out.label = out.state === "lo" ? "أقل من الحد" : out.state === "hi" ? "أعلى من الحد" : out.state === "ok" ? "ضمن الحدود" : "قراءة فقط";
+    return out;
+  }
+  /* ================= 3.0: بيانات اللوحة الرئيسية لقسم واحد في يوم واحد =================
+     تُعيد أرقاماً فقط (بدون HTML): القراءة الحية الأهم، ومؤشرات اليوم مقارنة بأمس حتى نفس الساعة،
+     ومنحنى متوسط الحرارة كل 15 دقيقة لليوم وأمس، وصحة الحساسات. تقرأ وثيقتي اليوم وأمس فقط. */
+  function dayPairDocs(date) {
+    var prev = addDays(date, -1);
+    var inAll = X.from0 && X.key && X.all && X.from0 <= prev && date <= X.key.split("|")[1];
+    if (!inAll && !(KH.have[date] && KH.have[prev])) { kpiFetch([prev, date]); return null; }
+    var by = {};
+    (X.all || []).concat(KH.docs).forEach(function (d) { if (d.date === date || d.date === prev) by[d.date + "|" + d.deviceId] = d; });
+    return Object.keys(by).map(function (k) { return by[k]; });
+  }
+  function dashSeries(list, docs, w0, w1) {
+    var ss = list.map(function (s) { return samplerP(absPts(s, "temp", myDocs(s, docs))); }), out = [], lo = null, hi = null;
+    for (var t = Math.ceil(w0 / 1000 / 900) * 900, e = Math.floor(w1 / 1000); t <= e; t += 900) {
+      var vs = [];
+      ss.forEach(function (fn) { var q = fn(t); if (q) vs.push(q.v); });
+      if (vs.length) { var m = mean(vs); out.push({ h: (t - w0 / 1000) / 3600, v: m }); vs.forEach(function (v) { lo = lo == null ? v : Math.min(lo, v); hi = hi == null ? v : Math.max(hi, v); }); }
+    }
+    return { pts: out, min: lo, max: hi };
+  }
+  function dash(date, lite) {
+    start();
+    var out = { access: access(), air: [], live: null, water: null, kpi: null, prevKpi: null, today: null, yday: null, health: null, loading: false, hasLux: false };
+    if (out.access) return out;
+    date = date || dkey(Date.now());
+    var now = Date.now(), list = sensorList();
+    var air = list.filter(function (s) { return sensorGroup(s) === "air" && codesFor(s, "temp").length; });
+    out.air = air.map(function (s) { return { id: s.id, name: nm(s) }; });
+    out.hasLux = air.some(function (s) { return codesFor(s, "lux").length; });
+    /* القراءة الحية: الحساس الأبعد عن الحدود الآن، وإلا أول حساس في القسم (حسب الموقع) */
+    var best = null;
+    air.forEach(function (s) {
+      if (window.GSUI && GSUI.maintained(s.id, now)) return;
+      var t = liveMetric(s, "temp"), h = liveMetric(s, "hum");
+      var score = (bad(t.state) ? 4 : 0) + (bad(h.state) ? 2 : 0) + (t.state === "ok" || t.state === "neutral" ? 1 : 0) - (t.state === "stale" || t.state === "missing" ? 3 : 0);
+      if (!best || score > best.score) best = { score: score, name: nm(s), id: s.id, temp: t, hum: h, at: Math.max(t.at || 0, h.at || 0) || null };
+    });
+    out.live = best;
+    var wtr = list.filter(function (s) { return sensorGroup(s) === "water"; })[0];
+    if (wtr) out.water = { name: nm(wtr), wt: liveMetric(wtr, "waterTemp"), ph: liveMetric(wtr, "ph"), tds: liveMetric(wtr, "tds") };
+    /* صحة الحساسات: المتوقفة، والبطاريات الضعيفة، وآخر تشغيل للجامع */
+    var stale = [], lowBatt = [];
+    list.forEach(function (s) {
+      var seen = ms(s.lastSeen); if (!seen || now - seen > STALE_H * 3600e3) stale.push(nm(s));
+      var b = lastOfKind(s, "batt"); if (b != null && b <= 20) lowBatt.push({ name: nm(s), v: b });
+    });
+    var st = X.status, run = st && ms(st.lastRun);
+    out.health = { n: list.length, stale: stale, lowBatt: lowBatt, lastRun: run, late: !run || now - run > 45 * 60000, error: st && (st.error || (st.ok === false ? "آخر مزامنة لم تكتمل" : "")) || "", cached: !!X.devicesCached };
+    /* lite: القراءة الحية وصحة الحساسات فقط (للتنبيهات)، بدون حساب منحنى اليوم */
+    if (!air.length || lite) return out;
+    var docs = dayPairDocs(date);
+    if (!docs) { out.failed = !!KH.fail && Date.now() - KH.fail < 60000; out.loading = !out.failed; return out; }
+    var d0 = dayStart(date), p0 = dayStart(addDays(date, -1)), live = date === dkey(now), w1 = live ? now : d0 + 864e5;
+    out.kpi = houseKPI(air, docs, d0, w1);
+    out.prevKpi = houseKPI(air, docs, p0, p0 + (w1 - d0));
+    out.today = dashSeries(air, docs, d0, w1);
+    out.yday = dashSeries(air, docs, p0, p0 + 864e5);
+    var ySame = dashSeries(air, docs, p0, p0 + (w1 - d0));
+    out.yday.minSame = ySame.min; out.yday.maxSame = ySame.max;
     return out;
   }
   function dashboard() {
@@ -1379,5 +1440,5 @@ var SENS = (function () {
     if (typeof render === "function") render(true);
   });
 
-  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, dashboard: dashboard, api:{age:ago,access:access,retry:retry,list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms}, _x: X };
+  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, dashboard: dashboard, api:{age:ago,access:access,retry:retry,list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms,dash:dash,name:nm,scn:scn}, _x: X };
 })();
