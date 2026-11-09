@@ -1,4 +1,4 @@
-/* GREEN SIDE 2.14.1 — واجهة الوردية وإيصال تعويض الماء */
+/* GREEN SIDE 2.16.0 — واجهة الوردية وإيصال تعويض الماء */
 var Shift=(()=>{
 'use strict';
 const sending=new Set(), errors=new Map();
@@ -62,8 +62,8 @@ async function flush(){
 function showPending(){toast('هناك تعويض بانتظار التأكيد. افتح إيصال الإرسال في الرئيسية.');setTab('today');flush();}
 function receipts(){
  const items=pending(),last=read(key('receipt'));if(!items.length&&!last)return '';
- if(!items.length)return '<p class="shift-receipt">✓ آخر إيصال ماء مؤكد على هذا الجهاز · '+E(last.qty)+' لتر · '+E(last.date+' '+last.time)+'</p>';
- return items.map(x=>'<div class="banner warn"><span>تعويض '+E(x.data.v.waterAdd)+' لتر · '+E(x.data.date+' '+x.data.time)+' · '+E(errors.get(key('send:'+x.id))||'محفوظ على هذا الجهاز بانتظار الخادم')+'</span>'+action('تحقق وأعد الإرسال','retry')+'</div>').join('');
+ if(!items.length)return '<p class="shift-receipt">✓ آخر إيصال ماء مؤكد على هذا الجهاز · '+E(last.qty)+' لتر · '+E(fmtDate(last.date,{day:'numeric',month:'long'})+' · '+fmtTime(last.time))+'</p>';
+ return items.map(x=>'<div class="banner warn"><span>تعويض '+E(x.data.v.waterAdd)+' لتر · '+E(fmtDate(x.data.date,{day:'numeric',month:'long'})+' · '+fmtTime(x.data.time))+' · '+E(errors.get(key('send:'+x.id))||'محفوظ على هذا الجهاز بانتظار الخادم')+'</span>'+action('تحقق وأعد الإرسال','retry')+'</div>').join('');
 }
 function stateOf(e){
  if(Farm.pendingChange(e.id))return 'again';
@@ -85,7 +85,7 @@ function climate(){
  return null;
 }
 function priority(rows,todo,live){
- if(!live)return {title:'ملخص يوم '+S.date,detail:'السجلات والمهام تخص التاريخ المختار.',cta:'فتح سجل اليوم',page:'ops'};
+ if(!live)return {title:'ملخص يوم '+fmtDate(S.date,{day:'numeric',month:'long'}),detail:'السجلات والمهام تخص التاريخ المختار.',cta:'فتح سجل اليوم',page:'ops'};
  const jobs=Farm.shiftJobs().filter(j=>j.due<=S.date).sort((a,b)=>a.due.localeCompare(b.due));
  const leak=jobs.find(j=>j.title.startsWith('إصلاح تسريب'));
  if(leak)return {title:leak.title,detail:'مهمة إصلاح مفتوحة · '+leak.due,cta:'متابعة الإصلاح',page:'jobs'};
@@ -97,7 +97,7 @@ function priority(rows,todo,live){
  if(!S.dayLoaded||S.dayCached||S.dayError)return {title:'سجل الوردية قيد التحقق',detail:S.dayError||'آخر اتصال بالسجل لم يؤكَّد بعد.',cta:'فتح السجل',page:'ops'};
  if(!isSup()&&todo.length)return {title:typeDef(todo[0][0],S.sec).label,detail:'جولة متبقية لهذا اليوم · '+SECS[S.sec].name,cta:'تسجيل الجولة',type:todo[0][0]};
  const waiting=rows.filter(e=>stateOf(e)==='pending').length;
- if(isSup()&&waiting)return {title:waiting+' تسجيل بانتظار المراجعة',detail:'سجل القسم · '+S.date,cta:'مراجعة السجلات',filter:'pending'};
+ if(isSup()&&waiting)return {title:waiting+' تسجيل بانتظار المراجعة',detail:'سجل القسم · '+fmtDate(S.date,{day:'numeric',month:'long'}),cta:'مراجعة السجلات',filter:'pending'};
  return {title:'متابعة '+SECS[S.sec].name,detail:'راجع القراءات المؤرخة وآخر تدخل مسجل أدناه.',cta:'فتح المراقبة',page:'sens'};
 }
 function production(){
@@ -106,7 +106,7 @@ function production(){
  const all=Farm.crops(),summary=Farm.harvestSummary(all,S.date,S.date);
  const kg=summary.records.length>summary.missing?f(summary.total,2):'—',unlinked=summary.unlinked,missing=summary.missing;
  const moved=all.filter(e=>e.type==='xplant'&&e.date===S.date).reduce((n,e)=>n+(num(e.v.count)||0),0);
- return '<section class="shift-panel"><small>إنتاج البيت · '+E(S.date)+'</small><p>'+E(status)+'</p><h3>الحصاد المسجّل</h3><strong class="shift-value">'+kg+' <small>كغ</small></strong><p>'+f(unlinked,1)+' كغ دون دفعة معروفة · نُقلت '+moved+' شتلة'+(missing?' · '+missing+' سجلات دون وزن صالح':'')+'</p>'+route('تفاصيل الدفعات','crop')+'</section>';
+ return '<section class="shift-panel"><small>إنتاج البيت · '+E(fmtDate(S.date,{day:'numeric',month:'long'}))+'</small><p>'+E(status)+'</p><h3>الحصاد المسجّل</h3><strong class="shift-value">'+kg+' <small>كغ</small></strong><p>'+f(unlinked,1)+' كغ دون دفعة معروفة · نُقلت '+moved+' شتلة'+(missing?' · '+missing+' سجلات دون وزن صالح':'')+'</p>'+route('تفاصيل الدفعات','crop')+'</section>';
 }
 function home(tools){
  const live=S.date===todayStr(), owner=!!S.uid&&S.uid===S.ownerUid,rows=secEntries(S.entries,S.sec);
@@ -115,7 +115,7 @@ function home(tools){
  let cta=p.type?newEntry(p.cta,p.type):p.filter?action(p.cta,p.filter):route(p.cta,p.page);
  const water=S.sec==='t'&&live?newEntry('＋ تعويض ماء فقط','waterOnly'):'';
  const kpis=[['تسجيلات القسم',rows.length],['جولات متبقية',tasksFor(S.sec,S.entries).left],['تحتاج تصحيحًا',rows.filter(e=>stateOf(e)==='fix').length]];
- let h='<section class="shift-head"><div class="shift-id"><span dir="ltr">GREEN SIDE</span><span>'+E(owner?'لوحة المالك':isSup()?'لوحة المشرف':'وردية العامل')+'</span></div><h2>'+E(SECS[S.sec].name)+' <small> / '+(live?'اليوم':'الأرشيف')+'</small></h2>'+tools.status()+'</section>';
+ let h='<section class="shift-head"><div class="shift-id"><span>'+E(owner?'لوحة المالك':isSup()?'لوحة المشرف':'وردية العامل')+'</span></div><h2>'+E(SECS[S.sec].name)+' <small> / '+(live?'اليوم':'الأرشيف')+'</small></h2>'+tools.status()+'</section>';
  if(live)h+=receipts();
  h+=notice+'<section class="shift-focus"><small>'+(!live?'التاريخ المختار':isSup()?'أولوية المتابعة':'الخطوة التالية')+'</small><h2>'+E(p.title)+'</h2><p>'+E(p.detail)+'</p>'+cta+'</section>';
  h+='<div class="shift-metrics">'+kpis.map(([l,v])=>'<div><small>'+l+'</small><strong>'+(!S.dayLoaded?'—':v)+'</strong></div>').join('')+'</div>';
@@ -125,9 +125,9 @@ function home(tools){
  if(!owner&&!isWorker())h+=production();
  h+='<section class="shift-panel"><h3>جولات القسم</h3>'+(!S.dayLoaded||S.dayError?'<p>لم يكتمل تحميل سجل الجولات.</p>':todo.length?todo.map(x=>'<div class="ux-row"><span>'+E(typeDef(x[0],S.sec).label)+' · '+doneOf(rows,x[0])+' / '+needOf(S.sec,x)+'</span>'+newEntry('سجّل',x[0])+'</div>').join(''):'<p>لا جولات متبقية بحسب السجل المحمّل.</p>')+'</section>';
  const last=rows.filter(e=>['waterOnly','refill','mix','irr','pump','harvest'].includes(e.type)).at(-1);
- if(last)h+='<section class="shift-panel"><small>آخر تدخل مسجّل في القسم</small><h3>'+E(typeDef(last.type,S.sec).label)+'</h3><p>'+E(last.time)+' · '+E(nameOf(last.by))+'</p>'+route('فتح سجل القسم','ops')+'</section>';
+ if(last)h+='<section class="shift-panel"><small>آخر تدخل مسجّل في القسم</small><h3>'+E(typeDef(last.type,S.sec).label)+'</h3><p>'+E(fmtTime(last.time))+' · '+E(nameOf(last.by))+'</p>'+route('فتح سجل القسم','ops')+'</section>';
  h+='<details class="shift-panel"><summary>أدوات المزرعة وبقية الملخصات</summary>'+Farm.home(live)+'</details>';
- return h+action('عرض الرئيسية السابقة','classic');
+ return h+'<p class="shift-alt"><button type="button" class="linkbtn" data-shift="classic">التبديل إلى الواجهة السابقة للرئيسية</button></p>';
 }
 document.addEventListener('click',ev=>{
  const b=ev.target.closest?.('[data-shift]');if(!b)return;

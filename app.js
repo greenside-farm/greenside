@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.14.1";
+var APP_VERSION = "2.16.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -298,7 +298,8 @@ function fmtAgo(h) { if (h == null) return "—"; if (h < 1) return "أقل من
 function safeImg(v) { v = String(v || ""); return /^data:image\/(jpeg|png|gif|webp);base64,[A-Za-z0-9+\/=]+$/.test(v) ? v : ""; }
 function esc(v) { return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
 function num(v) { if (v === "" || v == null) return null; if (typeof v === "number") return isFinite(v) ? v : null; var s = String(v).replace(/[٠-٩]/g, function (d) { return "٠١٢٣٤٥٦٧٨٩".indexOf(d); }).replace(/[٫,]/g, ".").trim(); if (s === "") return null; var n = Number(s); return isFinite(n) ? n : null; }
-function f(n, d) { if (n == null || !isFinite(n)) return "—"; return Number(n).toLocaleString("en-US", { maximumFractionDigits: d || 0, minimumFractionDigits: 0 }); }
+/* الأرقام للعرض. القيمة التي تُقرَّب إلى صفر تظهر «0» وليس «-0» */
+function f(n, d) { if (n == null || !isFinite(n)) return "—"; var r = Number(Number(n).toFixed(Math.min(20, d || 0))); if (r === 0) r = 0; return r.toLocaleString("en-US", { maximumFractionDigits: d || 0, minimumFractionDigits: 0 }); }
 function fml(n) { return f(n, Math.abs(n) < 20 ? 1 : 0); }
 function avg(a) { a = a.filter(function (x) { return x != null && isFinite(x); }); return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : null; }
 function sum(a) { return a.filter(function (x) { return x != null && isFinite(x); }).reduce(function (s, x) { return s + x; }, 0); }
@@ -645,6 +646,8 @@ function renderNow(force) {
   else if(S.tab === "legacy") html=legacyTodayView();
   else { S.tab = "today"; html = GSUI.home(); }
   // تحديثات البيانات التي لا تغيّر شيئاً في الصفحة لا تعيد بناءها (أقل وميضاً وأخف على الجوال). الرسوم تُحدَّث دائماً
+  /* الصفحات الفرعية (المعدات، المهام، الفريق، التقارير التفصيلية…) ليس لها زر في الشريط السفلي: زر رجوع ظاهر أعلاها */
+  if ((Farm.pages.includes(S.tab) || S.tab === "repLegacy" || S.tab === "legacy") && NAV.tabs.length) html = '<div class="backbar"><button class="btn sm" type="button" data-act="goBack">→ رجوع</button></div>' + html;
   if (!force && html === v.__h && v.firstElementChild) { if (after) after(); return; }
   v.innerHTML = html; v.__h = html; if (after) after();
   loadPhotos(v);
@@ -2150,7 +2153,7 @@ document.addEventListener("focusout", function () { setTimeout(function () { if 
 document.addEventListener("click", function (ev) { var t = ev.target; if (t && t.matches && t.matches("input.in, textarea.in") && Date.now() - FOCUS_T < 700) caretEnd(t); }, true);
 
 /* ================= system check (owner) ================= */
-function expectDenied(p) { return p.then(function () { var e = new Error("سُمح بالعملية ولم تُمنع"); e.code = "allowed"; throw e; }, function (e) { if (e && e.code === "permission-denied") return "مُنع كما يجب"; throw e; }); }
+function expectDenied(p) { return p.then(function () { var e = new Error("سُمح بالعملية ولم تُمنع (ثغرة في قواعد الحماية)"); throw e; }, function (e) { if (e && e.code === "permission-denied") return "مُنع كما يجب"; throw e; }); }
 function near(a, b, tol) { return Math.abs(a - b) <= (tol || 0.6); }
 async function runSelfTest() {
   var res = [], db = S.db, uid = S.uid, today = todayStr(), cfgF = window.GS_CONFIG.firebase;
@@ -2187,6 +2190,33 @@ async function runSelfTest() {
     await step("العامل يسجّل قراءة", async function () { wref = wdb.collection("entries").doc(); await wref.set({ type: "selftest", sec: "t", date: today, time: nowTime(), ts: Date.now(), by: wuid, v: { ec: 1 } }); return "مسموح"; });
     await step("العامل يقرأ السجلات", async function () { await wdb.collection("entries").where("date", "==", today).get({ source: "server" }); return "مسموح"; });
     await step("العامل يعدّل تسجيله قبل المراجعة", async function () { await wref.update({ v: { ec: 2 } }); return "مسموح"; });
+    /* تسجيلات حقيقية بنوع ملاحظة (مغلقة حتى لا تظهر في الملاحظات المفتوحة) تُحذف في آخر الفحص */
+    var wNote = function (date) { return { type: "note", sec: "n", date: date, time: nowTime(), ts: Date.now(), by: wuid, open: false, v: { time: nowTime(), memo: "فحص النظام" } }; };
+    var stRefs = [];
+    await step("العامل يسجّل ويعدّل تسجيلاً عادياً مع سبب التعديل", async function () {
+      var r = wdb.collection("entries").doc(), d = wNote(today); await r.set(d); stRefs.push(r.id);
+      var a = wdb.collection("farmChanges").doc(), nv = Object.assign({}, d.v, { memo: "فحص النظام · معدّل", auditId: a.id });
+      var b = wdb.batch();
+      b.set(a, { entry: r.id, by: wuid, date: today, type: "note", sec: "n", before: d.v, after: nv, requested: false, reason: "فحص النظام", created: firebase.firestore.FieldValue.serverTimestamp() });
+      b.update(r, { v: nv, time: nv.time }); await b.commit();
+      var s = await wdb.collection("entries").doc(r.id).get({ source: "server" }); if (s.data().v.memo !== nv.memo) throw new Error("لم يُحفظ التعديل"); return "مسموح ويُسجَّل في تنبيهات المشرف";
+    });
+    await step("تسجيل محفوظ بدون إنترنت يصل بعد منتصف الليل", async function () {
+      var r = wdb.collection("entries").doc();
+      try { await r.set(wNote(addDays(today, -1))); } catch (e) { if (e && e.code === "permission-denied") { var er = new Error("يُرفض: انشر ملف firestore.rules الجديد (2.15.0) في Firebase"); er.code = "rules"; throw er; } throw e; }
+      stRefs.push(r.id); return "يُقبل تسجيل الأمس";
+    });
+    await step("العامل لا يسجّل بتاريخ أقدم دون سبب", function () { return expectDenied(wdb.collection("entries").doc().set(wNote(addDays(today, -3)))); });
+    await step("العامل يقرأ سجلات المزرعة", async function () {
+      var c = function (k) { return wdb.collection(k); }, w0 = addDays(today, -120);
+      await Promise.all([c("cropBalances").limit(1).get({ source: "server" }), c("farmLevels").orderBy("observed", "desc").limit(1).get({ source: "server" }),
+        c("farmWater").where("date", ">=", w0).orderBy("date", "desc").limit(1).get({ source: "server" }), c("farmJobs").orderBy("created", "desc").limit(1).get({ source: "server" }),
+        c("farmService").where("date", ">=", w0).orderBy("date", "desc").limit(1).get({ source: "server" }), c("farmMessages").where("audience", "==", "team").limit(1).get({ source: "server" }),
+        c("farmChanges").where("by", "==", wuid).get({ source: "server" })]);
+      return "المعدات والمهام والتوريدات والرسائل والدفعات";
+    });
+    await step("العامل لا يرى التكاليف", function () { return expectDenied(wdb.collection("farmLedger").limit(1).get({ source: "server" })); });
+    await step("العامل يحذف تسجيلاته العادية", async function () { for (var i = 0; i < stRefs.length; i++) await wdb.collection("entries").doc(stRefs[i]).delete(); stRefs = []; return "مسموح"; });
     await step("العامل لا يعدّل الإعدادات", function () { return expectDenied(wdb.collection("config").doc("settings").update({ x: 1 })); });
     await step("العامل لا يعتمد التسجيلات", function () { return expectDenied(wref.update({ review: { s: "ok", by: wuid } })); });
     await step("العامل لا يعدّل تسجيل غيره", function () { return expectDenied(wdb.collection("entries").doc(ownerRef.id).update({ v: { ec: 5 } })); });
@@ -2205,6 +2235,7 @@ async function runSelfTest() {
   await step("تنظيف بيانات الاختبار", async function () {
     if (ownerRef) await ownerRef.delete();
     if (wref) await db.collection("entries").doc(wref.id).delete();
+    if (typeof stRefs !== "undefined") for (var i = 0; i < stRefs.length; i++) await db.collection("entries").doc(stRefs[i]).delete();
     if (wApp && wApp.auth().currentUser) { try { await wApp.auth().currentUser.delete(); } catch (e) { await wApp.auth().signOut(); } }
     if (wApp) await wApp.delete(); if (anon) await anon.delete();
     return "حُذفت بيانات وحساب الاختبار";
@@ -2355,6 +2386,7 @@ document.addEventListener("click", function (ev) {
     case "delRecipe": if (!armDelete(b, id)) return; db.collection("recipes").doc(id).delete().catch(fail); closeSheet(); break;
     case "newUser": openNewUser(); break;
     case "selfTest": runSelfTest(); break;
+    case "goBack": history.back(); break;
     case "createUser": createUser(b); break;
     case "setRole": db.collection("users").doc(id).update({ role: b.getAttribute("data-r") }).then(function () { toast("تم تحديث الصلاحية"); }).catch(fail); break;
     case "saveSec":

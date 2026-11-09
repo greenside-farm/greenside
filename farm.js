@@ -1,4 +1,4 @@
-/* GREEN SIDE 2.14.1 — تشغيل المزرعة */
+/* GREEN SIDE 2.16.0 — تشغيل المزرعة */
 var Farm=(()=>{
 'use strict';
 const pages=['equipment','deliveries','crop','finance','team','jobs','changes'];
@@ -7,29 +7,37 @@ const cycles={'فحص تسريبات خطوط الري':1,'تنظيف الفلت
 const categories=['بذور','أسمدة ومحاليل','ماء الري','ماء الخلايا','رواتب','كهرباء','صيانة','تعبئة وتسويق','مشتريات أخرى'];
 let identity='',off=[],data={},errors={},cropID='',financeID='',room='team',deliveryFilter='',waterFrom='',waterTo='';
 const E=x=>esc(String(x??''));
+/* التاريخ للعرض: «9 نوفمبر» ويُضاف العام إن لم يكن العام الحالي. القيم المخزنة تبقى YYYY-MM-DD */
+const D=d=>{if(!d||!/^\d{4}-\d{2}-\d{2}$/.test(d))return d||'';return fmtDate(d,d.slice(0,4)===todayStr().slice(0,4)?{day:'numeric',month:'long'}:{day:'numeric',month:'long',year:'numeric'});};
 const owner=()=>S.ownerUid===S.uid;
 const action=(label,key,id='')=>'<button type="button" class="btn" data-farm="'+E(key)+'" data-id="'+E(id)+'">'+E(label)+'</button>';
 const rows=k=>data[k]||[];
 let cached={};
 let stockOff=null,stockDay='',stockRevision=0;
 function stop(){stockOff?.();stockOff=null;stockDay='';stockRevision++;off.forEach(f=>f());off=[];identity='';data={};errors={};cached={};cropID=financeID='';room='team';}
-function watch(key,query,after){
+function watch(key,query,after,fallback){
  const token=identity;
- off.push(query.onSnapshot({includeMetadataChanges:true},q=>{if(identity!==token)return;cached[key]=!!q.metadata?.fromCache;data[key]=q.docs.map(d=>({...d.data(),id:d.id}));delete errors[key];if(after)after(data[key]);render();},e=>{if(identity!==token)return;delete data[key];errors[key]=errMsg(e);render();}));
+ off.push(query.onSnapshot({includeMetadataChanges:true},q=>{if(identity!==token)return;cached[key]=!!q.metadata?.fromCache;data[key]=q.docs.map(d=>({...d.data(),id:d.id}));delete errors[key];if(after)after(data[key]);render();},e=>{if(identity!==token)return;
+  /* الاستعلام المحدود بالتاريخ يحتاج فهرس (type ↑, date ↑). إن لم يوجد نرجع للقراءة الكاملة حتى يُنشأ */
+  if(fallback&&e?.code==='failed-precondition'){watch(key,fallback,after);return;}
+  delete data[key];errors[key]=errMsg(e);render();}));
 }
+/* حدود القراءة: كل فتح للتطبيق يقرأ هذه المدة فقط بدل السجل كله، فلا تقترب القراءات من الحد المجاني مع مرور الأشهر */
+const CROP_DAYS=180, LOG_DAYS=120, LIST_MAX=300;
+const since=n=>addDays(todayStr(),-n);
 function start(){
  const key=[S.uid,S.role,S.ownerUid].join('/');
  if(identity===key)return;stop();if(!S.db||!S.role||!S.uid)return;identity=key;
  const c=k=>S.db.collection(k);
  watch('balances',c('cropBalances'));
- watch('crop',c('entries').where('type','in',['sow','xplant','harvest']));
+ watch('crop',c('entries').where('type','in',['sow','xplant','harvest']).where('date','>=',since(CROP_DAYS)),null,c('entries').where('type','in',['sow','xplant','harvest']));
  watch('levels',c('farmLevels').orderBy('observed','desc').limit(1),subscribeStock);
- watch('water',c('farmWater').orderBy('date','desc'));
- watch('jobs',c('farmJobs').orderBy('created','desc'));
- watch('service',c('farmService').orderBy('date','desc'));
+ watch('water',c('farmWater').where('date','>=',since(LOG_DAYS)).orderBy('date','desc'));
+ watch('jobs',c('farmJobs').orderBy('created','desc').limit(LIST_MAX));
+ watch('service',c('farmService').where('date','>=',since(LOG_DAYS)).orderBy('date','desc'));
  watch('messages',c('farmMessages').where('audience','==','team'));
  watch('sent',c('farmMessages').where('by','==',S.uid));watch('received',c('farmMessages').where('audience','==',S.uid));
- watch('changes',isSup()?c('farmChanges'):c('farmChanges').where('by','==',S.uid));
+ watch('changes',isSup()?c('farmChanges').orderBy('created','desc').limit(LIST_MAX):c('farmChanges').where('by','==',S.uid));
  if(owner())watch('ledger',c('farmLedger').orderBy('date','desc'));
 }
 function notice(...keys){return keys.map(k=>errors[k]?'<p class="banner warn">'+E(errors[k])+'</p>':!data[k]?'<p class="muted">جارٍ تحميل السجل…</p>':'').join('');}
@@ -58,7 +66,8 @@ const stamp=()=>firebase.firestore.FieldValue.serverTimestamp();
 const dates=(a,b)=>String(b.date).localeCompare(String(a.date))||String(b.time||'').localeCompare(String(a.time||''));
 const members=()=>Object.keys(S.users).filter(k=>['worker','sup'].includes(S.users[k].role)||k===S.ownerUid).map(k=>[k,nameOf(k)]);
 const sowings=()=>rows('crop').filter(e=>e.type==='sow').sort(dates);
-const batchName=e=>e?(e.v.crop+' · '+e.date+' · '+(e.v.side||'جهة غير محددة')+' · '+e.id.slice(-5)):'دفعة غير مرتبطة';
+/* اسم الدفعة: الصنف · التاريخ · الجهة. إن تكررت دفعتان بنفس اليوم والجهة يُضاف رقم ترتيبها بدل رمز تقني */
+const batchName=e=>{if(!e)return 'دفعة غير مرتبطة';const same=rows('crop').filter(x=>x.type==='sow'&&x.date===e.date&&(x.v.side||'')===(e.v.side||'')).sort((a,b)=>(a.ts||0)-(b.ts||0)||a.id.localeCompare(b.id));const i=same.findIndex(x=>x.id===e.id);return (e.v.crop||'صنف غير محدد')+' · '+D(e.date)+' · '+(e.v.side||'جهة غير محددة')+(same.length>1&&i>=0?' · الدفعة '+(i+1):'');};
 const batchList=()=>sowings().map(e=>[e.id,batchName(e)]);
 function movementError(message){return Object.assign(new Error(message),{code:'crop-balance'});}
 const balanceOf=id=>rows('balances').find(x=>x.id===id);
@@ -128,10 +137,10 @@ function harvestWeeks(){
    const from=addDays(end,-6),h=harvestSummary(rows('crop'),from,end);
    const label=h.records.length&&h.missing<h.records.length?f(h.total,2)+' كغ موزونة':'لا وزن مسجّل';
    const share=h.total>0?f(100*h.linked/h.total,1)+'%':'—';
-   return card(from+' إلى '+end,info(label+' · أيام بها تسجيل حصاد '+h.days+' من ٧')+
+   return card(D(from)+' – '+D(end),info(label+' · أيام بها تسجيل حصاد '+h.days+' من 7')+
      info('منسوب إلى دفعات '+f(h.linked,2)+' كغ · غير منسوب '+f(h.unlinked,2)+' كغ · نسبة الإسناد بالوزن '+share)+
      info('سجلات بلا وزن صالح '+h.missing)+'<details><summary>سجلات الحصاد ('+h.records.length+')</summary>'+
-     h.records.map(e=>{const s=sowings().find(x=>x.id===e.v?.batch);return info(e.date+' · '+(e.time||'')+' · '+(num(e.v?.weight)>=0&&num(e.v?.weight)!==null?e.v.weight+' كغ':'وزن غير معلوم')+' · '+(s?batchName(s):'غير منسوب')+' · رقم '+e.id);}).join('')+'</details>');
+     h.records.map(e=>{const s=sowings().find(x=>x.id===e.v?.batch);return info(D(e.date)+' · '+(e.time?fmtTime(e.time):'')+' · '+(num(e.v?.weight)>=0&&num(e.v?.weight)!==null?e.v.weight+' كغ':'وزن غير معلوم')+' · '+(s?batchName(s):'غير منسوب'));}).join('')+'</details>');
  }).join('');
 }
 function exportBatch(id){
@@ -147,9 +156,9 @@ function exportBatch(id){
 function cropPage(){
  const crops=sowings(),selected=crops.find(x=>x.id===cropID);
  const detail=selected?(()=>{const n=nursery(selected);
- return card(batchName(selected),info('بذور: '+selected.v.seeds+' · صالح معدود: '+(num(selected.v.usable)??'غير معدود')+' · فاقد بعد العد: '+(selected.v.lossAfter||0))+info(balanceOf(selected.id)?'رصيد المشتل بعد الجرد'+(cached.balances?' · نسخة محلية':''):'لم يُعتمد جرد الدفعة · المتبقي المحسوب من السجلات تقديري')+(!balanceOf(selected.id)&&isSup()?action('اعتماد الجرد الفعلي','open-stock',selected.id):'')+info('منقول: '+n.moved+' · متبقٍ: '+(n.remaining===null?'غير معروف':n.remaining<0?'تعارض في العد':n.remaining))+n.moves.map(x=>info(x.date+' · '+x.v.count+' شتلة من '+(selected.v.side||'جهة غير محددة')+' إلى '+(x.v.zone||'جهة غير محددة')+' · أبراج '+(x.v.towers||'غير محددة'))).join('')+n.harvested.map(x=>info('حصاد '+x.date+' · '+x.v.weight+' كغ')).join(''),action('نقل من الدفعة','moveBatch',selected.id)+action('حصاد من الدفعة','harvestBatch',selected.id)+action('تصدير سجلات الدفعة CSV','export-batch',selected.id)+(owner()?action('عرض تكلفة الدفعة','batch-cost',selected.id):''));})():'';
+ return card(batchName(selected),info('بذور: '+selected.v.seeds+' · صالح معدود: '+(num(selected.v.usable)??'غير معدود')+' · فاقد بعد العد: '+(selected.v.lossAfter||0))+info(balanceOf(selected.id)?'رصيد المشتل بعد الجرد'+(cached.balances?' · نسخة محلية':''):'لم يُعتمد جرد الدفعة · المتبقي المحسوب من السجلات تقديري')+(!balanceOf(selected.id)&&isSup()?action('اعتماد الجرد الفعلي','open-stock',selected.id):'')+info('منقول: '+n.moved+' · متبقٍ: '+(n.remaining===null?'غير معروف':n.remaining<0?'تعارض في العد':n.remaining))+n.moves.map(x=>info(D(x.date)+' · '+x.v.count+' شتلة من '+(selected.v.side||'جهة غير محددة')+' إلى '+(x.v.zone||'جهة غير محددة')+' · أبراج '+(x.v.towers||'غير محددة'))).join('')+n.harvested.map(x=>info('حصاد '+D(x.date)+' · '+x.v.weight+' كغ')).join(''),action('نقل من الدفعة','moveBatch',selected.id)+action('حصاد من الدفعة','harvestBatch',selected.id)+action('تصدير سجلات الدفعة CSV','export-batch',selected.id)+(owner()?action('عرض تكلفة الدفعة','batch-cost',selected.id):''));})():'';
  const orphan=rows('crop').filter(e=>e.type!=='sow'&&!crops.some(s=>s.id===e.v?.batch));
- return box('دفعات البذر ونقل الشتلات',notice('crop','balances')+bar(action('تسجيل زراعة بذور','sow'),action('تسجيل نقل','moveBatch'))+detail+(data.crop&&isSup()?box('الحصاد الفعلي خلال أسبوعين',info('فترتان متتاليتان من سبعة أيام كاملة بتوقيت الرياض. غياب سجل في يوم لا يؤكد غياب الحصاد. تشمل الأوزان التسجيلات قبل المراجعة.'+ (cached.crop?' البيانات من نسخة محلية.':''))+harvestWeeks()):'')+crops.map(e=>{const n=nursery(e);return card(batchName(e),info('المنقول '+n.moved+(balanceOf(e.id)?' · رصيد الجرد ':' · متبقٍ تقديري قبل الجرد ')+(n.remaining??'غير معدود')),action('تفاصيل الدفعة','batch',e.id));}).join('')+(orphan.length?card('سجلات دون دفعة معروفة',orphan.sort(dates).map(x=>info(x.date+' · '+(x.type==='harvest'?'حصاد':'نقل')+' · '+(x.v.count||'—'))).join('')):''));
+ return box('دفعات البذر ونقل الشتلات',notice('crop','balances')+bar(action('تسجيل زراعة بذور','sow'),action('تسجيل نقل','moveBatch'))+detail+(data.crop&&isSup()?box('الحصاد الفعلي خلال أسبوعين',info('فترتان متتاليتان من سبعة أيام كاملة بتوقيت الرياض. غياب سجل في يوم لا يؤكد غياب الحصاد. تشمل الأوزان التسجيلات قبل المراجعة.'+ (cached.crop?' البيانات من نسخة محلية.':''))+harvestWeeks()):'')+crops.map(e=>{const n=nursery(e);return card(batchName(e),info('المنقول '+n.moved+(balanceOf(e.id)?' · رصيد الجرد ':' · متبقٍ تقديري قبل الجرد ')+(n.remaining??'غير معدود')),action('تفاصيل الدفعة','batch',e.id));}).join('')+(orphan.length?card('سجلات دون دفعة معروفة',orphan.sort(dates).map(x=>info(D(x.date)+' · '+(x.type==='harvest'?'حصاد':'نقل')+' · '+(x.v.count||'—'))).join('')):''));
 }
 function validateEntry(type,v,miss){
  if(type==='pump'){
@@ -176,10 +185,12 @@ function subscribeStock(levels){
  if(stockDay===day)return;
  stockOff?.();stockOff=null;stockDay=day;const token=++stockRevision;delete data.stock;
  if(!day)return;
- stockOff=coll('entries').where('date','>=',day).onSnapshot(q=>{
+ const types=['refill','waterOnly','mix','irr'];
+ const listen=(query,full)=>{stockOff=query.onSnapshot(q=>{
  if(token!==stockRevision)return;
- cached.stock=!!q.metadata?.fromCache;data.stock=q.docs.map(d=>({...d.data(),id:d.id})).filter(e=>['refill','waterOnly','mix','irr'].includes(e.type));delete errors.stock;render();
- },e=>{if(token===stockRevision){delete data.stock;errors.stock=errMsg(e);render();}});
+ cached.stock=!!q.metadata?.fromCache;data.stock=q.docs.map(d=>({...d.data(),id:d.id})).filter(e=>types.includes(e.type));delete errors.stock;render();
+ },e=>{if(token!==stockRevision)return;if(!full&&e?.code==='failed-precondition'){listen(coll('entries').where('date','>=',day),true);return;}delete data.stock;errors.stock=errMsg(e);render();});};
+ listen(coll('entries').where('type','in',types).where('date','>=',day),false);
 }
 function eventTime(date,time,recorded=Date.now()){
  const minute=Date.parse(date+'T'+time+':00+03:00');
@@ -213,13 +224,13 @@ function stockBalance(level,water,entries,now=Date.now()){
  return {balance,received,used,unknown,bad,estimated};
 }
 function stockCard(){
- const level=rows('levels')[0],ready=data.water && data.stock && data.levels;
- const b=ready?stockBalance(level,rows('water'),rows('stock')):null;
- let text=!level?'يلزم تسجيل الكمية الموجودة فعليًا لبدء الحساب.':'جارٍ تحميل الحركات بعد الجرد…';
+ const level=rows('levels')[0],ready=data.water && data.stock && data.levels,old=level&&level.date<since(LOG_DAYS);
+ const b=ready&&!old?stockBalance(level,rows('water'),rows('stock')):null;
+ let text=!level?'يلزم تسجيل الكمية الموجودة فعليًا لبدء الحساب.':old?'آخر جرد أقدم من '+LOG_DAYS+' يومًا؛ سجّل جردًا جديدًا ليُحسب الرصيد من جديد.':'جارٍ تحميل الحركات بعد الجرد…';
  if(b)text='رصيد الجرد '+f(level.tons,3)+' طن + التوريد '+f(b.received,3)+' طن − السحب '+f(b.used/1000,3)+' طن';
  const stale=cached.stock||cached.water||cached.levels||!navigator.onLine;
  const title=b && !b.bad && !b.unknown?f(b.balance,3)+' طن متبقٍ تقديريًا':'الرصيد غير مؤكد';
- return card(tanks[1]+' · سعة 18 طن',notice('levels')+(level?notice('stock','water'):'')+info(title)+(stale?info('بيانات محفوظة محليًا؛ قد توجد حركات لم تصل بعد.'):'')+info(text)+(level?info('آخر جرد '+level.date+' '+level.time):'')+(b?.unknown?info(b.unknown+' عملية دون مصدر أو كمية مؤكدة بعد الجرد؛ راجعها أو سجّل جردًا جديدًا.'):'')+(b?.bad?info('تجاوز سجل الحركات السعة أو وصل إلى عجز. راجع الكميات والتوقيت قبل اعتماد الرصيد.'):'')+(b?.estimated?info('يتضمن سحبًا مقدرًا بزمن التعبئة.'):''),
+ return card(tanks[1]+' · سعة 18 طن',notice('levels')+(level?notice('stock','water'):'')+info(title)+(stale?info('بيانات محفوظة محليًا؛ قد توجد حركات لم تصل بعد.'):'')+info(text)+(level?info('آخر جرد '+D(level.date)+' · '+fmtTime(level.time)):'')+(b?.unknown?info(b.unknown+' عملية دون مصدر أو كمية مؤكدة بعد الجرد؛ راجعها أو سجّل جردًا جديدًا.'):'')+(b?.bad?info('تجاوز سجل الحركات السعة أو وصل إلى عجز. راجع الكميات والتوقيت قبل اعتماد الرصيد.'):'')+(b?.estimated?info('يتضمن سحبًا مقدرًا بزمن التعبئة.'):''),
  isSup()?action('جرد الرصيد الآن','level'):'')+
  card(tanks[0]+' · سعة 18 طن',info('المتبقي غير معلوم · الخزان يسحب مباشرة دون قياس. يُسجّل التوريد فقط.'));
 }
@@ -261,14 +272,14 @@ function waterForm(){
 }
 function waterPage(){
  const water=rows('water').filter(v=>(!deliveryFilter||v.tank===deliveryFilter)&&(!waterFrom||v.date>=waterFrom)&&(!waterTo||v.date<=waterTo));
- return box('سجل تعبئات خزانات الماء',stockCard()+notice('water')+bar(action('استلام حمولة ماء','water'),action('الكل','water-filter'),...tanks.map(t=>action(t,'water-filter',t)))+bar(action('الفترة: '+(waterFrom||'البداية')+' — '+(waterTo||'الآن'),'water-period'))+info(water.length+' تعبئة · '+f(water.reduce((a,v)=>a+v.tons,0),2)+' طن')+(owner()?info('مجموع فواتير الحمولات المسجلة في الفترة: '+money(rows('ledger').filter(l=>water.some(w=>w.id===l.source)).reduce((n,l)=>n+l.amount,0))):'')+water.sort(dates).map(x=>{const cost=rows('ledger').find(l=>l.source===x.id);return card(x.tank,info(x.date+' · '+f(x.tons,2)+' طن · '+(x.supplier||'المورّد غير مسجل'))+info('المستلم '+nameOf(x.by)+' · الفاتورة '+(x.invoice||'—'))+(cost?info(money(cost.amount)):''),owner()&&!cost?action('تسجيل التكلفة','water-cost',x.id):'');}).join(''));
+ return box('سجل تعبئات خزانات الماء',stockCard()+notice('water')+bar(action('استلام حمولة ماء','water'),action('الكل','water-filter'),...tanks.map(t=>action(t,'water-filter',t)))+bar(action('الفترة: '+(waterFrom||'آخر '+LOG_DAYS+' يومًا')+' — '+(waterTo||'الآن'),'water-period'))+(waterFrom&&waterFrom<since(LOG_DAYS)?info('السجل يعرض آخر '+LOG_DAYS+' يومًا فقط؛ الحمولات الأقدم محفوظة في قاعدة البيانات ولا تُحمَّل هنا.'):'')+info(water.length+' تعبئة · '+f(water.reduce((a,v)=>a+v.tons,0),2)+' طن')+(owner()?info('مجموع فواتير الحمولات المسجلة في الفترة: '+money(rows('ledger').filter(l=>water.some(w=>w.id===l.source)).reduce((n,l)=>n+l.amount,0))):'')+water.sort(dates).map(x=>{const cost=rows('ledger').find(l=>l.source===x.id);return card(x.tank,info(D(x.date)+' · '+f(x.tons,2)+' طن · '+(x.supplier||'المورّد غير مسجل'))+info('المستلم '+nameOf(x.by)+' · الفاتورة '+(x.invoice||'—'))+(cost?info(money(cost.amount)):''),owner()&&!cost?action('تسجيل التكلفة','water-cost',x.id):'');}).join(''));
 }
 function gaugeName(key){return String(S.settings[key+'Name']||(key==='gauge1'?'عداد ١':'عداد ٢'));}
 function equipment(){
  const log=rows('service').slice().sort(dates);
  return box('المعدات والصيانة',notice('service')+bar(action('فحص المضخة والتدفق','pump'))+Object.entries(cycles).map(([name,interval])=>{
  const last=log.find(x=>x.kind===name),due=last?addDays(last.date,interval):today();
- return card(name,info('كل '+interval+' يوم · آخر تنفيذ '+(last?.date||'لم يسجّل')+' · الاستحقاق '+due),action('تسجيل التنفيذ','service',name));}).join('')+box('سجل الصيانة',log.map(x=>info(x.date+' · '+x.kind+' · '+(x.result||'')+' · '+(x.memo||'')+' · '+nameOf(x.by))).join('')||info('لا توجد عمليات مسجّلة.'))+box('معدات وأدوات المزرعة',equipBody()));
+ return card(name,info('كل '+interval+' يوم · آخر تنفيذ '+(last?.date?D(last.date):'لم يسجّل')+' · الاستحقاق '+D(due)),action('تسجيل التنفيذ','service',name));}).join('')+box('سجل الصيانة',log.map(x=>info(D(x.date)+' · '+x.kind+' · '+(x.result||'')+' · '+(x.memo||'')+' · '+nameOf(x.by))).join('')||info('لا توجد عمليات مسجّلة.'))+box('معدات وأدوات المزرعة',equipBody()));
 }
 function serviceForm(kind){
  const leak=kind===Object.keys(cycles)[0];
@@ -279,7 +290,7 @@ function serviceForm(kind){
 }
 function jobForm(){form('مهمة عامة',field('title','المطلوب')+pick('assignee','المسؤول',members())+field('due','تاريخ الاستحقاق','date',true,today()),v=>coll('farmJobs').add({...v,by:S.uid,status:'معلقة',note:'',created:stamp()}));}
 function jobList(closed=false){
- return rows('jobs').filter(j=>(j.status==='مكتملة')===closed && (isSup()||j.assignee===S.uid)).map(j=>card(j.title,info(nameOf(j.assignee)+' · '+j.due+' · '+j.status+(j.due<today()&&!closed?' · متأخرة':''))+info(j.note||'')+(j.history?.length?'<details><summary>سجل المهمة</summary>'+j.history.map(h=>info(h.day+' · '+nameOf(h.by)+' · '+h.status+' · الموعد '+h.due+' · '+h.note)).join('')+'</details>':''),closed?'':action('تم الإنجاز','job-done',j.id)+action('تأجيل','job-defer',j.id)+action('مراسلة بشأن المهمة','message-job',j.id))).join('')||info(closed?'لا مهام مكتملة.':'لا توجد مهام عامة معلقة.');
+ return rows('jobs').filter(j=>(j.status==='مكتملة')===closed && (isSup()||j.assignee===S.uid)).map(j=>card(j.title,info(nameOf(j.assignee)+' · '+D(j.due)+' · '+j.status+(j.due<today()&&!closed?' · متأخرة':''))+info(j.note||'')+(j.history?.length?'<details><summary>سجل المهمة</summary>'+j.history.map(h=>info(D(h.day)+' · '+nameOf(h.by)+' · '+h.status+' · الموعد '+D(h.due)+' · '+h.note)).join('')+'</details>':''),closed?'':action('تم الإنجاز','job-done',j.id)+action('تأجيل','job-defer',j.id)+action('مراسلة بشأن المهمة','message-job',j.id))).join('')||info(closed?'لا مهام مكتملة.':'لا توجد مهام عامة معلقة.');
 }
 function jobChange(id,done){const j=rows('jobs').find(x=>x.id===id);if(!j||(!isSup()&&j.assignee!==S.uid))return;
  form(done?'إنجاز المهمة':'تأجيل المهمة',(done?'':field('due','الموعد الجديد','date',true,addDays(today(),1),'min="'+today()+'"'))+field('note',done?'ملاحظة التنفيذ':'سبب التأجيل','text',!done),
@@ -328,18 +339,20 @@ function finance(){
  const heads=completeCount?harvested.reduce((n,x)=>n+num(x.v.saleable),0):null;
  const kg=harvested.every(x=>num(x.v.weight)!==null&&num(x.v.weight)>=0)?harvested.reduce((n,x)=>n+num(x.v.weight),0):null;
  detail+=card(batchName(s),info('التكاليف المحملة '+money(t.cost)+' · المبيعات '+money(t.sales))+info('تكلفة الرأس الصالح: '+(heads&&data.ledger&&!cached.ledger&&data.crop&&!cached.crop?money(t.cost/heads):'لم يُحسب بعد')+' · تكلفة الكيلو: '+(kg&&data.ledger&&!cached.ledger&&data.crop&&!cached.crop?money(t.cost/kg):'لم يُحسب بعد'))+info('الهامش: '+(t.sales?money(t.sales-t.cost):'لم تسجل مبيعات')+' · القيم تقديرية إلى إقفال الحصاد وتوزيع تكاليف الدورة'));}
- return box('تكلفة الدورة الزراعية',notice('crop','ledger')+bar(action('إضافة قيد مالي','cost'),action('تصدير PDF','print'))+bar(...batchList().map(x=>action(x[1],'finance-batch',x[0])))+detail+box('دفتر القيود',l.slice().sort(dates).map(x=>card(x.kind+' · '+x.category,info(x.date+' · '+money(x.amount)+' · '+x.memo)+info('أساس التوزيع: '+x.basis),action('عرض وتوزيع','edit-cost',x.id))).join('')));}
+ return box('تكلفة الدورة الزراعية',notice('crop','ledger')+bar(action('إضافة قيد مالي','cost'),action('تصدير PDF','print'))+bar(...batchList().map(x=>action(x[1],'finance-batch',x[0])))+detail+box('دفتر القيود',l.slice().sort(dates).map(x=>card(x.kind+' · '+x.category,info(D(x.date)+' · '+money(x.amount)+' · '+x.memo)+info('أساس التوزيع: '+x.basis),action('عرض وتوزيع','edit-cost',x.id))).join('')));}
 function audit(batch,id,entry,next,reason){
  const ref=coll('farmChanges').doc(),reviewed=Boolean(entry?.review);next.auditId=ref.id;
  batch.set(ref,{entry:id,by:S.uid,date:entry?.date||S.date,type:FORM.type,sec:FORM.sec,before:entry?.v||null,after:next,requested:reviewed,reason:reason.trim(),created:stamp()});
 }
-function pendingChange(id){return rows('changes').some(x=>x.entry===id && x.requested && !x.resolution);}
+/* سجلات فحص النظام (حساب العامل التجريبي) لا تظهر في التنبيهات */
+function changeRows(){return rows('changes').filter(x=>!(S.users[x.by]&&S.users[x.by].selftest));}
+function pendingChange(id){return changeRows().some(x=>x.entry===id && x.requested && !x.resolution);}
 function notifyChanges(){
- const items=rows('changes').slice().sort((a,b)=>(b.created?.seconds||0)-(a.created?.seconds||0));
+ const items=changeRows().slice().sort((a,b)=>(b.created?.seconds||0)-(a.created?.seconds||0));
  return box('تنبيهات التسجيل والتعديل',notice('changes')+items.map(x=>{
  const keys=Object.keys(x.after||{}).filter(k=>k!=='auditId'&&JSON.stringify(x.after[k])!==JSON.stringify((x.before||{})[k]));
  const fields=typeDef(x.type,x.sec||'t')?.fields||[];
- return card((x.requested?'طلب تصحيح':x.before?'تعديل':'إضافة بتاريخ سابق')+' · '+x.date,info(nameOf(x.by)+' · '+x.reason)+info([x.resolution,x.resolutionReason].filter(Boolean).join(' · '))+'<details><summary>ما تغيّر</summary>'+keys.map(k=>info((fields.find(fd=>fd.k===k)?.l||k)+' : '+(x.before?.[k]??'—')+' ← '+(typeof x.after[k]==='object'?JSON.stringify(x.after[k]):x.after[k]))).join('')+'</details>',isSup()&&x.requested&&!x.resolution?action('اعتماد التصحيح','accept',x.id)+action('رفض التصحيح','reject',x.id):'');
+ return card((x.requested?'طلب تصحيح':x.before?'تعديل':'إضافة بتاريخ سابق')+' · '+D(x.date),info(nameOf(x.by)+' · '+x.reason)+info([x.resolution,x.resolutionReason].filter(Boolean).join(' · '))+'<details><summary>ما تغيّر</summary>'+keys.map(k=>info((fields.find(fd=>fd.k===k)?.l||k)+' : '+(x.before?.[k]??'—')+' ← '+(typeof x.after[k]==='object'?JSON.stringify(x.after[k]):x.after[k]))).join('')+'</details>',isSup()&&x.requested&&!x.resolution?action('اعتماد التصحيح','accept',x.id)+action('رفض التصحيح','reject',x.id):'');
  }).join(''));}
 function comparable(obj){if(obj===null||typeof obj!=='object')return obj;if(Array.isArray(obj))return obj.map(comparable);return Object.fromEntries(Object.keys(obj).sort().map(k=>[k,comparable(obj[k])]));}
 async function decide(id,accept,reason){
@@ -356,18 +369,18 @@ function home(current){
  const remaining=sowings().filter(e=>e.date<=S.date).map(e=>balanceOf(e.id)?.remaining??null),known=remaining.filter(x=>x!==null&&x>=0);
  const lastRun=window.SENS && SENS.api.ms(SENS._x.status?.lastRun);
  let h=bar(route('البذور والشتلات','crop'),route('توريد ناقلة وجرد الماء','deliveries'),route('المعدات والصيانة','equipment'),route('المهام العامة','jobs'),route('تواصل الفريق'+(unread()?' ('+unread()+')':''),'team'),route('تنبيهات التسجيل','changes'));
- if(current){const balance=data.water&&data.stock&&data.levels?stockBalance(rows('levels')[0],rows('water'),rows('stock')):null;h+=card('الخزان الرئيسي لمياه الري',info(balance&&!balance.unknown&&!balance.bad?f(balance.balance,3)+' طن متبقٍ تقديريًا':'الرصيد غير مؤكد')+((cached.stock||cached.water||cached.levels||!navigator.onLine)?info('آخر بيانات محفوظة') : ''),route('التوريدات والجرد','deliveries'));h+=info('آخر مزامنة للحساسات: '+(lastRun?tsTime(lastRun):'غير متاحة'))+notice('jobs','service','changes');
+ if(current){const balance=data.water&&data.stock&&data.levels&&!(rows('levels')[0]?.date<since(LOG_DAYS))?stockBalance(rows('levels')[0],rows('water'),rows('stock')):null;h+=card('الخزان الرئيسي لمياه الري',info(balance&&!balance.unknown&&!balance.bad?f(balance.balance,3)+' طن متبقٍ تقديريًا':'الرصيد غير مؤكد')+((cached.stock||cached.water||cached.levels||!navigator.onLine)?info('آخر بيانات محفوظة') : ''),route('التوريدات والجرد','deliveries'));h+=info('آخر مزامنة للحساسات: '+(lastRun?tsTime(lastRun):'غير متاحة'))+notice('jobs','service','changes');
  if(late.length)h+=card('مهام عامة معلقة ('+late.length+')',info(late.slice(0,3).map(x=>x.title).join(' · ')),route('فتح المهام','jobs'));
  if(data.service&&due.length)h+=card('صيانة وفحص مستحق',info(due.map(x=>x[0]).join(' · ')),route('التنفيذ والسجل','equipment'));
- if(isSup()&&data.changes?.length){const n=data.changes.filter(x=>!lsGet('gs_change_'+S.uid+'_'+x.id)).length;if(n)h+=card('تسجيلات وتعديلات من الفريق',info(n+' تنبيه جديد'),route('التفاصيل','changes'));}}
- if(!data.crop)return h+notice('crop');return h+card('حركة الزراعة · '+S.date,info('نُقل '+moves.reduce((n,x)=>n+(num(x.v.count)||0),0)+' شتلة · حصاد '+f(harvests.reduce((n,x)=>n+(num(x.v.weight)||0),0),1)+' كغ')+(current?info('المتبقي من الدفعات المعدودة: '+(known.length?known.reduce((n,x)=>n+x,0):'غير معروف')+' · دفعات دون رصيد مؤكد: '+(remaining.length-known.length)):''),route('تفاصيل الدفعات','crop'));}
+ if(isSup()&&changeRows().length){const n=changeRows().filter(x=>!lsGet('gs_change_'+S.uid+'_'+x.id)).length;if(n)h+=card('تسجيلات وتعديلات من الفريق',info(n+' تنبيه جديد'),route('التفاصيل','changes'));}}
+ if(!data.crop)return h+notice('crop');return h+card('حركة الزراعة · '+D(S.date),info('نُقل '+moves.reduce((n,x)=>n+(num(x.v.count)||0),0)+' شتلة · حصاد '+f(harvests.reduce((n,x)=>n+(num(x.v.weight)||0),0),1)+' كغ')+(current?info('المتبقي من الدفعات المعدودة: '+(known.length?known.reduce((n,x)=>n+x,0):'غير معروف')+' · دفعات دون رصيد مؤكد: '+(remaining.length-known.length)):''),route('تفاصيل الدفعات','crop'));}
 function settings(){return box('إعدادات المزرعة',bar(route('المعدات','equipment'),action('ضبط عدادات الضغط والقراءة المثالية','gauges'),action('تغيير المظهر','theme'),...(owner()?[route('تكلفة الدورة','finance')]:[])));}
 function view(page){switch(page){case 'equipment':return equipment();case 'deliveries':return waterPage();case 'crop':return cropPage();case 'finance':return finance();case 'team':return team();case 'changes':return notifyChanges();case 'jobs':return box('المهام العامة',notice('jobs')+(isSup()?action('مهمة جديدة','new-job'):'')+jobList()+'<details><summary>مهام مكتملة</summary>'+jobList(true)+'</details>');}}
 async function click(b){
  const {farm:key,id}=b.dataset;
  switch(key){
  case 'open-stock':openingForm(id);break;
- case 'route':setTab(id);if(id==='changes')rows('changes').forEach(x=>lsSet('gs_change_'+S.uid+'_'+x.id,'1'));break;
+ case 'route':setTab(id);if(id==='changes')changeRows().forEach(x=>lsSet('gs_change_'+S.uid+'_'+x.id,'1'));break;
  case 'water-period':form('فترة تعبئات الماء',field('from','من','date',false,waterFrom)+field('to','إلى','date',false,waterTo),v=>{if(v.from&&v.to&&v.from>v.to)throw Error('راجع ترتيب التاريخين');waterFrom=v.from;waterTo=v.to;render(true)});break;
  case 'water':waterForm();break;case 'water-filter':deliveryFilter=id;render(true);break;
  case 'water-cost':financeForm(id);break;case 'cost':financeForm();break;case 'edit-cost':financeForm('',id);break;

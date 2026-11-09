@@ -1,4 +1,4 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 2.14.1)
+/* GREEN SIDE — صفحة الحساسات (الإصدار 2.16.0)
    العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
@@ -82,10 +82,12 @@ var SENS = (function () {
   function dkey(ts) { var d = riy(ts); return d.getUTCFullYear() + "-" + p2(d.getUTCMonth() + 1) + "-" + p2(d.getUTCDate()); }
   function dayStart(ds) { return Date.parse(ds + "T00:00:00+03:00"); }
   function tLabel(ts) { return typeof fmtTime === "function" ? fmtTime(hm(ts)) : hm(ts); }
+  /* العدد مع التمييز الصحيح: دقيقة، دقيقتين، 3 دقائق، 11 دقيقة */
+  function cnt(n, one, two, few) { return n === 1 ? one : n === 2 ? two : (n % 100 >= 3 && n % 100 <= 10) ? n + " " + few : n + " " + one; }
   function ago(ts) {
     if (!ts) return "—"; var m = Math.round((Date.now() - ts) / 60000);
-    if (m < 1) return "الآن"; if (m < 60) return "منذ " + m + " دقيقة";
-    var h = Math.round(m / 60); if (h < 48) return "منذ " + h + " ساعة"; return "منذ " + Math.round(h / 24) + " يوم";
+    if (m < 1) return "الآن"; if (m < 60) return "منذ " + cnt(m, "دقيقة", "دقيقتين", "دقائق");
+    var h = Math.round(m / 60); if (h < 48) return "منذ " + cnt(h, "ساعة", "ساعتين", "ساعات"); return "منذ " + cnt(Math.round(h / 24), "يوم", "يومين", "أيام");
   }
   function rr() { if (window.S && (S.tab === "sens" || S.tab === "rep" || (S.tab === "today" && S.date === dkey(Date.now()))) && typeof render === "function") render(); }
 
@@ -1201,7 +1203,7 @@ var SENS = (function () {
       var d = await X.db.collection("sensorMeta").doc("status").get({ source: "server" }); if (!d.exists) throw new Error("لا توجد حالة للجامع");
       var st = d.data(), t = ms(st.lastRun), m = Math.round((Date.now() - t) / 60000);
       if (st.ok === false) throw new Error("آخر تشغيل فيه خطأ: " + String(st.error || "").slice(0, 120));
-      if (m > 45) throw new Error("آخر تشغيل قبل " + m + " دقيقة (المتوقع كل 15)"); return "آخر تشغيل قبل " + m + " دقيقة";
+      if (m > 45) throw new Error("آخر تشغيل قبل " + cnt(m, "دقيقة", "دقيقتين", "دقائق") + " (المتوقع كل 15 دقيقة)"); return "آخر تشغيل قبل " + cnt(m, "دقيقة", "دقيقتين", "دقائق");
     });
     await step("الحساسات: قراءات اليوم محفوظة", async function () {
       var q = await X.db.collection("sensorDays").where("date", "==", dkey(Date.now())).get({ source: "server" }); if (!q.size) throw new Error("لا توجد قراءات لليوم بعد");
