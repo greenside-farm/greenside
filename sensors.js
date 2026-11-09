@@ -1,4 +1,4 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 2.11.0)
+/* GREEN SIDE — صفحة الحساسات (الإصدار 2.14.1)
    العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
@@ -64,6 +64,7 @@ var SENS = (function () {
 
   var X = {
     started: false, app: null, auth: null, db: null, user: null, err: "",
+    deviceReady: false, deviceRevision: 0, deviceError: "", statusError: "",
     sensors: {}, status: null, days: null, all: null, key: "", loading: "",
     period: 1, kind: lsG("gs_sens_kind") || "temp", off: {}
   };
@@ -86,7 +87,7 @@ var SENS = (function () {
     if (m < 1) return "الآن"; if (m < 60) return "منذ " + m + " دقيقة";
     var h = Math.round(m / 60); if (h < 48) return "منذ " + h + " ساعة"; return "منذ " + Math.round(h / 24) + " يوم";
   }
-  function rr() { if (window.S && (S.tab === "sens" || (S.tab === "today" && S.date === dkey(Date.now()))) && typeof render === "function") render(); }
+  function rr() { if (window.S && (S.tab === "sens" || S.tab === "rep" || (S.tab === "today" && S.date === dkey(Date.now()))) && typeof render === "function") render(); }
 
   /* ================= الاتصال ================= */
   function start() {
@@ -94,7 +95,7 @@ var SENS = (function () {
     try {
       X.app = firebase.initializeApp(CFG, "sensors");
       X.auth = X.app.auth(); X.db = X.app.firestore();
-    } catch (e) { X.err = "تعذّر تشغيل اتصال الحساسات."; console.warn(e); return; }
+    } catch (e) { X.err = "تعذّر تشغيل اتصال الحساسات."; console.warn(e); rr(); return; }
     X.auth.onAuthStateChanged(function (u) {
       if (!u) {
         X.auth.signInAnonymously().catch(function (e) {
@@ -109,17 +110,30 @@ var SENS = (function () {
       X.user = u; X.err = ""; subscribe(); rr();
     });
   }
+  var subscriptions = [];
   function subscribe() {
-    X.db.collection("sensors").onSnapshot(function (q) {
-      var m = {}; q.forEach(function (d) { m[d.id] = Object.assign({}, d.data(), { id: d.id }); }); X.sensors = m; rr();
-    }, onErr);
-    X.db.collection("sensorMeta").doc("status").onSnapshot(function (s) {
-      var old = X.status && ms(X.status.lastRun); X.status = s.exists ? s.data() : null;
+    subscriptions.forEach(function(stop){stop();});
+    subscriptions = [];
+    subscriptions.push(X.db.collection("sensors").onSnapshot({includeMetadataChanges:true}, function (q) {
+      var m = {}; q.forEach(function (d) { m[d.id] = Object.assign({}, d.data(), { id: d.id }); }); X.sensors = m; X.deviceReady = !q.empty || !q.metadata.fromCache; X.devicesCached = q.metadata.fromCache; X.deviceRevision++; X.deviceError = ""; rr();
+    }, function(e){X.deviceError = readError(e); X.deviceReady = false; rr();}));
+    subscriptions.push(X.db.collection("sensorMeta").doc("status").onSnapshot(function (s) {
+      X.statusError = ""; var old = X.status && ms(X.status.lastRun); X.status = s.exists ? s.data() : null;
       var nw = X.status && ms(X.status.lastRun);
-      if(old&&nw&&nw!==old){KH.docs=[];KH.have={};REPC.key="";NC.key="";kcPut({});X.key="";}
+      if(old&&nw&&nw!==old){KH.docs=[];KH.have={};REPC.key="";NC.key="";kcPut({});X.key="";X.days=null;X.all=null;}
       if (old && nw && nw !== old && X.days && rangeOf().to >= dkey(old)) refreshToday(); // وصلت قراءات جديدة: نقرأ اليوم الحالي فقط بدل الفترة كلها
       rr();
-    }, onErr);
+    }, function(e){X.statusError = "حالة الجامع غير مؤكدة · " + readError(e); rr();}));
+  }
+  function readError(e) { return e && e.code === "permission-denied" ? "لا توجد صلاحية قراءة في مشروع الحساسات." : "تعذرت قراءة بيانات الحساسات."; }
+  function access() {
+    if (!X.user) return X.err || "جارٍ الاتصال بالحساسات…";
+    return X.deviceError || (X.deviceReady ? "" : navigator.onLine ? "جارٍ التحقق من قائمة الحساسات…" : "تعذّر التحقق من قائمة الحساسات دون اتصال.");
+  }
+  function retry() {
+    if (X.user) { subscribe(); return; }
+    if (X.auth) { X.auth.signInAnonymously().catch(function(e){onErr(e);}); return; }
+    X.started=false; start();
   }
   function onErr(e) { console.warn(e); X.err = e && e.code === "permission-denied" ? "لا توجد صلاحية قراءة في مشروع الحساسات (راجع قواعد الحماية)." : "تعذّر قراءة بيانات الحساسات."; rr(); }
 
@@ -139,10 +153,13 @@ var SENS = (function () {
         docs.forEach(function(d){((d.p||{})[c]||[]).forEach(function(p){
           if(p.t==null||p.v==null||!isFinite(p.t)||!isFinite(p.v)||p.t<0||p.t>=86400)return;
           var t=Math.round(+p.t*1000),v=+p.v;
-          if(d.schema===2){exact[t]={t:t/1000,v:v};covered[Math.floor(t/1000)+'|'+v]=1;}
-          else legacy[Math.floor(t/1000)+'|'+v]={t:+p.t,v:v};
+          var key=Math.floor(t/1000)+'|'+v;
+          var point={t:t/1000,v:v,site:{sec:d.sec||'',loc:d.loc||'',manual:d.manual||'',name:d.name||d.deviceId,
+            known:d.schema===2 ? d.locationSince!==0 && !!(d.sec||d.loc||d.manual) : !!(d.sec||d.loc),legacy:d.schema!==2}};
+          if(d.schema===2){exact[t]=point;covered[key]=1;}
+          else legacy[key]=point;
         });});
-        var pts=Object.keys(exact).map(function(k){return exact[k];});
+        var pts=Object.keys(exact).map(function(k){var p=exact[k], prior=legacy[Math.floor(p.t)+"|"+p.v]; if(!p.site.known && prior && prior.site.known)p.site=prior.site;return p;});
         Object.keys(legacy).forEach(function(k){if(!covered[k])pts.push(legacy[k]);});
         pts.sort(function(a,b){return a.t-b.t;});out.p[c]=pts;
         if(pts.length){var min=Infinity,max=-Infinity,sum=0;pts.forEach(function(p){min=Math.min(min,p.v);max=Math.max(max,p.v);sum+=p.v;});out.s[c]={min:min,max:max,sum:sum,n:pts.length};}
@@ -272,11 +289,19 @@ var SENS = (function () {
   function inCare(id,t){return !!(window.GSUI&&GSUI.maintained(id,t));}
   function liveOperational(s){return careReady()&&!inCare(s.id,Date.now())&&!Object.keys(s.last||{}).some(function(c){return kindOf(c,s)!=="batt"&&inCare(s.id,ms(s.last[c]&&s.last[c].at));});}
   var OPCACHE=new WeakMap();
+  function matchesStation(id,site){
+    if(!site)return true;
+    var sensor=X.sensors[id];if(!sensor)return false;
+    if(!site.known)return site.legacy;
+    if(site.sec && !secOk(site.sec))return false;
+    if(site.manual && site.manual!==sensor.manual)return false;
+    return !site.loc || site.loc===sensor.loc;
+  }
   function operationalDoc(doc){
     if(!window.GSUI)return doc;
-    var key=GSUI.careKey(),cached=OPCACHE.get(doc);if(cached&&cached.key===key)return cached.doc;
+    var key=GSUI.careKey()+"|"+S.sec+"|"+X.deviceRevision,cached=OPCACHE.get(doc);if(cached&&cached.key===key)return cached.doc;
     var out=Object.assign({},doc,{p:{},s:{}}),base=dayStart(doc.date);
-    Object.keys(doc.p||{}).forEach(function(code){var pts=careReady()?(doc.p[code]||[]).filter(function(p){return p&&p.v!=null&&typeof p.v!=='boolean'&&String(p.v).trim()!==''&&isFinite(p.v)&&!inCare(doc.deviceId,base+p.t*1000);}):[];out.p[code]=pts;
+    Object.keys(doc.p||{}).forEach(function(code){var pts=careReady()?(doc.p[code]||[]).filter(function(p){return p&&p.v!=null&&typeof p.v!=='boolean'&&String(p.v).trim()!==''&&isFinite(p.v)&&!inCare(doc.deviceId,base+p.t*1000)&&matchesStation(doc.deviceId,p.site);}):[];out.p[code]=pts;
       if(pts.length){var min=Infinity,max=-Infinity,sum=0;pts.forEach(function(p){min=Math.min(min,+p.v);max=Math.max(max,+p.v);sum+=+p.v;});out.s[code]={min:min,max:max,sum:sum,n:pts.length};}
     });OPCACHE.set(doc,{key:key,doc:out});OPCACHE.set(out,{key:key,doc:out});return out;
   }
@@ -482,7 +507,8 @@ var SENS = (function () {
       if (!out || at > out.at) out = { v: corr(s, k, Number(q.v)), at: at };
     });
     if (!out) return { v: null, at: null, state: "missing", label: "لا بيانات" };
-    if (now - out.at > STALE_H * 3600e3) { out.state = "stale"; out.label = "قراءة قديمة"; return out; }
+    var maxAge = ["waterTemp","tds","ph"].includes(k) ? 45*60000 : STALE_H*3600e3;
+    if (now - out.at > maxAge) { out.state = "stale"; out.label = "قراءة قديمة"; return out; }
     var limits = limAt(k, now), hasLimit = limits[0] != null || limits[1] != null;
     out.state = hasLimit ? stOf(k, out.v, now) || "neutral" : "neutral";
     out.label = out.state === "lo" ? "أقل من الحد" : out.state === "hi" ? "أعلى من الحد" : out.state === "ok" ? "ضمن الحدود" : "قراءة فقط";
@@ -532,7 +558,7 @@ var SENS = (function () {
     if(window.GSUI)list=GSUI.filterSensors(list);
     var tabs = sup ? [["now", "الآن"], ["chart", "الرسم"], ["an", "التحليل"], ["dev", "الأجهزة"]] : [["now", "الآن"], ["chart", "الرسم البياني"]];
     var h = '<section class="sec"><div class="sec-h"><h2>الحساسات · ' + (SECS[S.sec] ? SECS[S.sec].icon + " " + SECS[S.sec].name : "") + '</h2><button class="btn sm" type="button" data-sact="refresh">تحديث</button></div>' + statusHTML();
-    if (X.err && !X.user) return h + "</section>";
+    if (access()) return h + '<p class="banner warn">'+E(access())+'</p></section>';
     if (!X.user) return h + '</section><div class="empty">جارٍ الاتصال بالحساسات…</div>';
     if (!Object.keys(X.sensors).length) return h + '</section><div class="empty">لم تصل بيانات حساسات بعد.</div>';
     if (!list.length) return h + (window.GSUI?GSUI.monitorPrefix():"") + '</section><div class="empty">لا توجد حساسات مطابقة للقسم والتصنيف المختارين. اختر «الكل» أو غيّر القسم.</div>';
@@ -541,6 +567,14 @@ var SENS = (function () {
     loadDays(false);
     var R = rangeOf(), ready = X.days && X.key === R.from + "|" + R.to, wait = '<div class="card"><div class="empty" style="border:0">جارٍ تحميل القراءات…</div></div>';
 
+    if(tab==="dev") {
+      h+='<details class="card"><summary>تقدّم الجمع لكل جهاز</summary>'+list.map(function(s){
+        var check=ms(s.collectorCheckedAt), end=ms(s.scannedThrough);
+        return '<p><b>'+E(nm(s))+'</b> · '+(check?'آخر محاولة مكتملة '+E(ago(check)):'لا توجد حالة جمع موثقة لهذا الجهاز')+
+          (end?' · فُحصت السجلات حتى '+E(dkey(end)+' '+hm(end)):'')+
+          (s.rejectedInWindow?' · عينات مستبعدة في النافذة '+E(s.rejectedInWindow):'')+'</p>';
+      }).join('')+'</details>';
+    }
     if (tab === "now") {
       var airList = climateList(list).filter(function(s){return liveOperational(s);}), al = alertsHTML(airList);
       h += (S.date!==todayStr()?'<p class="banner warn">هذه آخر القراءات الحالية، وليست قراءات التاريخ المختار. اختر الرسم لمراجعة التاريخ.</p>':'')+groupedCardsHTML(list);
@@ -608,10 +642,8 @@ var SENS = (function () {
       [["r", "يمين"], ["c", "الممر"], ["l", "يسار"]].filter(function (x) { return x[0] !== "c" || lanes.c.some(function (a) { return a.length; }); })
         .map(function (x) { return '<div class="hm-row"><span class="hm-ll">' + x[1] + "</span>" + lanes[x[0]].map(zone).join("") + "</div>"; }).join("");
     // فرق الحرارة من أول البيت إلى آخره (التبريد)
-    var avgT = function (arr) { var a = arr.filter(function (s) { return nodeSt(s) !== "off" && freshKind(s, "temp"); }).map(function (s) { return lastOfKind(s, "temp"); }).filter(function (v) { return v != null; }); return a.length ? mean(a) : null; };
-    var first = t ? lanes.a[0] : lanes.r[0].concat(lanes.c[0], lanes.l[0]), last = t ? lanes.a[2] : lanes.r[2].concat(lanes.c[2], lanes.l[2]);
-    var a0 = avgT(first), z0 = avgT(last), gd = a0 != null && z0 != null ? z0 - a0 : null, gm = scn("gradMax");
-    var foot = (gd != null ? '<span class="' + (gd > gm ? "sn-warn" : "") + '">فرق الحرارة من البداية إلى النهاية <b class="num"><bdi dir="ltr">' + (gd > 0 ? "+" : "") + F(gd, 1) + "°</bdi></b>" + (gd > gm ? " · أعلى من " + F(gm, 1) + "°: افحص التبريد" : "") + "</span>" : "") +
+    var pair = coolingPair(ss), gd = pair.delta, gm = scn("gradMax");
+    var foot = (gd != null ? '<span class="' + (gd > gm ? "sn-warn" : "") + '">فرق الحرارة من البداية إلى النهاية <b class="num"><bdi dir="ltr">' + (gd > 0 ? "+" : "") + F(gd, 1) + "°</bdi></b>" + (gd > gm ? " · أعلى من " + F(gm, 1) + "°: افحص التبريد" : "") + " · " + E(pair.label) + "</span>" : E(pair.label)) +
       (isSupU() ? '<span class="hm-out">خارج البيت: لا يوجد حساس بعد</span>' : "");
     return '<section class="sec"><div class="sec-h"><h2>خريطة ' + (t ? "البيت" : "المشتل") + '</h2><span class="muted" style="font-size:12.5px">اضغط الحساس لتفاصيله</span></div>' +
       '<div class="hmap ' + (t ? "t" : "n") + '">' + head + '<div class="hm-house">' + body + "</div>" + (t ? '<div class="hm-air"><span>الخلايا</span><i></i><span>المراوح</span></div>' : "") + "</div>" +
@@ -833,13 +865,27 @@ var SENS = (function () {
   }
 
   /* ================= التبريد وتجانس البيت: من أول البيت (الخلايا) إلى آخره ================= */
+  // Compare only named endpoints in the selected section, using each temperature event's own time.
+  function coolingPair(list) {
+    var points = list.filter(function(s){return codesFor(s,"temp").length;});
+    function side(s) { var p=posOf(s); return S.sec==="t" ? p : p.replace(/^[rl]/,""); }
+    var first = points.filter(function(s){return side(s)===(S.sec==="t"?"b":"1");});
+    var last = points.filter(function(s){return side(s)===(S.sec==="t"?"e":"3");});
+    var pair={first:first,last:last,delta:null,label:"تعذّر حساب الفرق · يلزم تحديد حساس حرارة واحد لكل طرف."};
+    if(first.length!==1 || last.length!==1)return pair;
+    var a=liveMetric(first[0],"temp"), b=liveMetric(last[0],"temp");
+    var times="الخلايا "+(a.at?tLabel(a.at):"—")+" · المراوح "+(b.at?tLabel(b.at):"—");
+    if(X.devicesCached || !liveOperational(first[0])||!liveOperational(last[0])||!a.at||!b.at||
+       (window.GSUI && (GSUI.interrupted(first[0].id,a.at,Date.now()) || GSUI.interrupted(last[0].id,b.at,Date.now()))) ||
+       Date.now()-Math.min(a.at,b.at)>45*60000||Math.abs(a.at-b.at)>15*60000){
+      pair.label="تعذّر تأكيد فرق حالي · "+times; return pair;
+    }
+    pair.delta=b.v-a.v; pair.label=times; return pair;
+  }
   function coolingHTML(list, R) {
-    var ps = list.filter(function (s) { return posOf(s) && codesFor(s, "temp").length; }).sort(function (a, b) { return posRank(a) - posRank(b); });
-    if (ps.length < 2) return "";
-    var A = ps[0], Z = ps[ps.length - 1], gmax = scn("gradMax");
-    var lastT = function (s) { var l = s.last || {}, v = null; Object.keys(l).forEach(function (c) { if (kindOf(c, s) === "temp" && l[c] && ms(l[c].at) && Date.now() - ms(l[c].at) < STALE_H * 3600e3) v = corr(s, "temp", l[c].v); }); return v; };
-    var chain = ps.map(function (s) { var v = lastT(s); return '<span class="sn-step"><small>' + E(posLabel(s) || nm(s)) + '</small><b class="num">' + (v == null ? "—" : F(v, 1) + "°") + "</b></span>"; }).join('<span class="sn-arr">←</span>');
-    var a0 = lastT(A), z0 = lastT(Z), now = a0 != null && z0 != null ? z0 - a0 : null;
+    var pair=coolingPair(list), gmax=scn("gradMax"), now=pair.delta;
+    if(pair.first.length!==1 || pair.last.length!==1)return '<p class="help">'+E(pair.label)+'</p>';
+    var A=pair.first[0], Z=pair.last[0], chain=E(pair.label);
     var byDate = {}; (X.days || []).forEach(function (d) { byDate[d.date + "|" + d.deviceId] = d; });
     var days = [], d = R.to; for (var i = 0; i < P(); i++) { days.push(d); d = addDays(d, -1); }
     var rows = days.map(function (dt) {
@@ -905,6 +951,8 @@ var SENS = (function () {
   }
 
   function statusHTML() {
+    if (X.devicesCached && !X.statusError) return '<p class="banner warn">بطاقات الحساسات من النسخة المحلية · حداثة الاتصال غير مؤكدة.</p>';
+    if (X.statusError) return '<div class="banner warn">'+E(X.statusError)+"</div>";
     if (X.err) return '<div class="banner warn"><span>' + E(X.err) + "</span></div>";
     var st = X.status; if (!st) return "";
     var t = ms(st.lastRun), late = t && Date.now() - t > 45 * 60000;
@@ -1317,7 +1365,7 @@ var SENS = (function () {
     if (a === "period") { X.period = +b.getAttribute("data-n") || 1; lsS("gs_sens_period", X.period); }
     else if (a === "kind") { X.kind = b.getAttribute("data-k"); lsS("gs_sens_kind", X.kind); }
     else if (a === "toggle") { var id = b.getAttribute("data-id"); if (X.off[id]) delete X.off[id]; else X.off[id] = 1; lsS("gs_sens_off", JSON.stringify(X.off)); }
-    else if (a === "refresh") { if(window.GSUI&&!GSUI.ready())GSUI.retryCare(); X.key = ""; loadDays(true); if (typeof toast === "function") toast("جارٍ تحديث القراءات"); }
+    else if (a === "refresh") { if(access() || X.statusError){retry();return;} if(window.GSUI&&!GSUI.ready())GSUI.retryCare(); X.key = ""; loadDays(true); if (typeof toast === "function") toast("جارٍ تحديث القراءات"); }
     else if (a === "export") { exportX(b); return; }
     else if (a === "raw") { X.raw = !X.raw; }
     else if (a === "heat") { X.heat = !X.heat; }
@@ -1329,5 +1377,5 @@ var SENS = (function () {
     if (typeof render === "function") render(true);
   });
 
-  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, dashboard: dashboard, api:{list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms}, _x: X };
+  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, dashboard: dashboard, api:{age:ago,access:access,retry:retry,list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms}, _x: X };
 })();

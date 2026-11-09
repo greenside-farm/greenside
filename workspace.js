@@ -1,7 +1,7 @@
-/* GREEN SIDE 2.11.0 — unified workspace, existing member/entry permissions. */
+/* GREEN SIDE 2.14.1 — unified workspace, existing member/entry permissions. */
 var GSUI=(function(){
 'use strict';
-var care={uid:null,rows:[],ready:false,error:'',off:null,revision:0},cache={},pending=0,group='all',search='',review='all',period=7;
+var care={uid:null,rows:[],ready:false,error:'',off:null,revision:0},cache={},pending=0,group='all',search='',review='all',period=7,closedWeek=false;
 function E(x){return esc(x);}function F(x,d){return x==null?'—':f(x,d==null?1:d);}function at(e){return Date.parse(e.date+'T'+(e.time||'00:00')+':00+03:00');}
 var eventOff=null,eventKey='',eventRows=null,eventError='',eventsCached=false,zoom=false;
 function resetEventFeed(){if(eventOff)eventOff();eventOff=null;eventKey='';eventRows=null;eventError='';eventsCached=false;}
@@ -15,7 +15,7 @@ function active(id){return care.rows.filter(function(e){return e.v.careKind==='m
 function list(){return window.SENS?SENS.api.list():[];}function metrics(s){return SENS.api.kinds([s]).filter(function(k){return ['batt','vpd','dew'].indexOf(k)<0;});}
 function button(label,action,attrs){return '<button type="button" class="btn" data-ux="'+action+'" '+(attrs||'')+'>'+label+'</button>';}
 function heading(title,sub){return '<header class="ux-heading"><span class="eyebrow">GREEN SIDE · '+E(SECS[S.sec].name)+'</span><h2>'+title+'</h2><p>'+sub+'</p></header>';}
-function status(){return '<div class="ux-status" role="status">'+(pending?'⏳ '+pending+' عملية تنتظر تأكيد الحفظ':navigator.onLine?'متصل · الشفا، الطائف':'غير متصل · تأكيد الحفظ ينتظر عودة الاتصال')+'</div>';}
+function status(){return '<div class="ux-status" role="status">'+(pending?'⏳ '+pending+' عملية تنتظر تأكيد الحفظ':navigator.onLine?'متصل بالشبكة · '+E(S.settings?.farmName||window.GS_CONFIG?.farmName||'البيت المحمي'):'غير متصل · تأكيد الحفظ ينتظر عودة الاتصال')+'</div>';}
 function commit(p,b,success){pending++;if(b){b.disabled=true;b.textContent='بانتظار تأكيد الحفظ…';}toast(navigator.onLine?'جارٍ إرسال التسجيل…':S.persistence?'في قائمة الإرسال المحلية؛ لم يؤكد الخادم الحفظ بعد.':'بانتظار الاتصال؛ لا تغلق الصفحة قبل تأكيد الحفظ.');return p.then(function(){pending--;success();render();}).catch(function(e){pending--;if(b){b.disabled=false;b.textContent='إعادة محاولة الحفظ';}var box=document.getElementById('formErrors');if(box && b && b.closest('.sheet')===box.closest('.sheet')){box.hidden=false;box.textContent='لم يؤكد الخادم الحفظ: '+errMsg(e)+'؛ بياناتك ما زالت في النموذج، ويمكن إعادة المحاولة.';}toast('لم يؤكد الخادم الحفظ: '+errMsg(e));render();});}
 function careForm(id,kind){
  if(!isSup()||!care.ready)return;var s=SENS._x.sensors[id];if(!s)return;
@@ -39,21 +39,50 @@ function carePanel(){
 function stats(points,id,a,b){var raw=points.filter(function(p){return p.t>=a&&p.t<b&&Number.isFinite(p.v);}).sort(function(x,y){return x.t-y.t;}),clean=raw.filter(function(p){return !maintained(id,p.t);}),w=0,sum=0,min=null,max=null;clean.forEach(function(p,i){min=min==null?p.v:Math.min(min,p.v);max=max==null?p.v:Math.max(max,p.v);var n=clean[i+1];if(n&&n.t-p.t<=1800000&&!interrupted(id,p.t,n.t)){w+=n.t-p.t;sum+=p.v*(n.t-p.t);}});return {n:clean.length,excluded:raw.length-clean.length,min:min,max:max,avg:w?sum/w:null,coverage:b>a?w/(b-a):0,points:clean};}
 function ensureReport(){
  start();SENS.start();if(!S.db)return null;
- var from=addDays(S.date,1-period),prev=addDays(from,-period),a=Date.parse(from+'T00:00:00+03:00'),b=Math.min(Date.parse(S.date+'T00:00:00+03:00')+864e5,Date.now()),pa=a-Math.max(0,b-a);
- var feedKey=S.uid+'|'+prev+'|'+S.date;
+ var to=closedWeek&&S.date>=todayStr()?addDays(todayStr(),-1):S.date;
+ var from=addDays(to,1-period),prev=addDays(from,-period),a=Date.parse(from+'T00:00:00+03:00'),b=Math.min(Date.parse(to+'T00:00:00+03:00')+864e5,Date.now()),pa=a-period*864e5,pb=b-period*864e5;
+ var feedKey=S.uid+'|'+prev+'|'+to;
  if(feedKey!==eventKey){resetEventFeed();cache={};eventKey=feedKey;
- eventOff=S.db.collection('entries').where('date','>=',prev).where('date','<=',S.date).onSnapshot(function(q){
+ eventOff=S.db.collection('entries').where('date','>=',prev).where('date','<=',to).onSnapshot(function(q){
  if(feedKey!==eventKey)return;eventRows=q.docs.map(d=>Object.assign({id:d.id},d.data()));eventError='';eventsCached=!!q.metadata?.fromCache;
  for(const item of Object.values(cache))if(item.feedKey===feedKey)item.events=eventRows.filter(e=>e.sec===item.section);
  render();},function(err){if(feedKey===eventKey){eventError=errMsg(err);render();}});
  }
- if(!care.ready||!SENS._x.user)return null;
- var key=S.uid+'|'+S.sec+'|'+from+'|'+S.date+'|'+care.revision+'|'+String(SENS._x.status&&SENS.api.ms(SENS._x.status.lastRun));if(cache[key])return cache[key];
- var section=S.sec,sensors=list(),r=cache[key]={loading:true,feedKey:feedKey,section:section,a:a,b:b,pa:pa,from:from,to:S.date};
- SENS._x.db.collection('sensorDays').where('date','>=',prev).where('date','<=',S.date).get().then(function(q){
+ if(!care.ready||SENS.api.access())return null;
+ var key=S.uid+'|'+S.sec+'|'+from+'|'+to+'|'+care.revision+'|'+String(SENS._x.status&&SENS.api.ms(SENS._x.status.lastRun))+'|'+SENS._x.deviceRevision;if(cache[key])return cache[key];
+ var section=S.sec,r=cache[key]={loading:true,feedKey:feedKey,section:section,a:a,b:b,pa:pa,pb:pb,from:from,to:to};
+ SENS._x.db.collection('sensorDays').where('date','>=',prev).where('date','<=',to).get().then(function(q){
   r.cached=!!q.metadata?.fromCache;var docs=SENS.api.archive(q);r.events=(eventRows||[]).filter(e=>e.sec===section);r.rows=[];
-  sensors.forEach(function(s){metrics(s).forEach(function(k){var points=[];docs.filter(function(d){return d.deviceId===s.id;}).forEach(function(d){var base=Date.parse(d.date+'T00:00:00+03:00');SENS.api.codes(s,k).forEach(function(code){((d.p||{})[code]||[]).forEach(function(p){if(p.v!==null && p.v!=='' && Number.isFinite(+p.v))points.push({t:base+p.t*1000,v:+p.v});});});});r.rows.push({sensor:s,kind:k,info:SENS.api.info(k,s),raw:points,current:stats(points,s.id,a,b),previous:stats(points,s.id,pa,a)});});});r.loading=false;render();
+  r.rows=historicalRows(docs,section,r);
+  r.loading=false;render();
  }).catch(function(e){r.loading=false;r.error=errMsg(e);render();});return r;
+}
+function historicalRows(docs,section,r){
+ const groups=new Map();
+ for(const d of docs){
+   const existing=SENS._x.sensors[d.deviceId]||{};
+   const measures=Object.assign({},existing.measures);
+   for(const code of Object.keys(d.p||{}))if(!measures[code])measures[code]={};
+   const device=Object.assign({},existing,{id:d.deviceId,measures:measures});
+   const base=Date.parse(d.date+'T00:00:00+03:00');
+   for(const kind of metrics(device)){
+     for(const code of SENS.api.codes(device,kind)){
+       for(const p of d.p[code]||[]){
+         const site=p.site, sections=site.sec.split(/[\s,،+]+/);
+         if(site.known && site.sec && !sections.includes(section) && !sections.includes('g'))continue;
+         const location=site.known?(site.loc||site.manual||site.sec||'غير محدد')+(site.legacy?' · موقع سجل اليوم':''):'الموقع التاريخي غير مؤكد';
+         const key=JSON.stringify([device.id,kind,site.sec,location,site.manual]);
+         if(!groups.has(key))groups.set(key,{sensor:Object.assign({},device,{name:site.name}),kind:kind,location:location,info:SENS.api.info(kind,device),raw:[]});
+         groups.get(key).raw.push({t:base+p.t*1000,v:p.v});
+       }
+     }
+   }
+ }
+ return Array.from(groups.values(),row=>{
+   row.current=stats(row.raw,row.sensor.id,r.a,r.b);
+   row.previous=stats(row.raw,row.sensor.id,r.pa,r.pb??r.a);
+   return row;
+ });
 }
 function graph(row,r){
  var pts=row.current.points;if(!pts.length)return '<p class="empty">لا قراءات تشغيلية لهذا القياس في الفترة.</p>';
@@ -61,19 +90,48 @@ function graph(row,r){
  var path='',last=null;pts.forEach(function(p){path+=(last&&p.t-last.t<=1800000&&!interrupted(row.sensor.id,last.t,p.t)?'L':'M')+x(p.t).toFixed(2)+' '+y(p.v).toFixed(2)+' ';last=p;});
  var h='<svg class="ux-chart" viewBox="0 0 600 160" role="img" aria-label="'+E(row.info.l)+'؛ الفجوات غير موصولة"><text x="5" y="18">'+F(max,2)+'</text><text x="5" y="138">'+F(min,2)+'</text>';
  windows(row.sensor.id).forEach(function(w){var a=Math.max(left,w.start),b=Math.min(right,w.end);if(b>a)h+='<rect x="'+x(a)+'" y="20" width="'+(x(b)-x(a))+'" height="110" fill="var(--warn-soft)"><title>صيانة مستبعدة</title></rect>';});
- r.events.filter(function(e){return ['mix','refill','ecph','pump','irr','cal'].indexOf(e.type)>=0;}).forEach(function(e){var t=at(e);if(t>=left&&t<right)h+='<path d="M'+x(t)+' 20V130" stroke="var(--muted)" stroke-dasharray="3 4"><title>'+E((typeDef(e.type,e.sec)||{}).label+' · '+e.date+' '+e.time)+'</title></path>';});
+ r.events.filter(function(e){return ['mix','refill','waterOnly','ecph','pump','irr','cal'].indexOf(e.type)>=0;}).forEach(function(e){var t=at(e);if(t>=left&&t<right)h+='<path d="M'+x(t)+' 20V130" stroke="var(--muted)" stroke-dasharray="3 4"><title>'+E((typeDef(e.type,e.sec)||{}).label+' · '+e.date+' '+e.time)+'</title></path>';});
  h+='<path d="'+path+'" fill="none" stroke="var(--accent)" stroke-width="2"/>';var stride=Math.max(1,Math.floor(pts.length/180));pts.forEach(function(p,i){if(i%stride===0||i===pts.length-1)h+='<circle cx="'+x(p.t)+'" cy="'+y(p.v)+'" r="2" fill="var(--accent)"><title>'+E(todayStr(new Date(p.t))+' '+tsHM(p.t)+' · '+F(p.v,2))+'</title></circle>';});return h+'<text x="45" y="155">'+E(zoom?todayStr(new Date(left)):r.from)+'</text><text x="585" y="155" text-anchor="end">'+E(zoom?todayStr(new Date(right)):r.to)+'</text></svg>';
 }
 function liveCards(){
- if(!window.SENS)return '';SENS.start();if(!SENS._x.user)return '<p class="banner warn">'+E(SENS._x.err||'جارٍ الاتصال بالحساسات…')+'</p>';var h='',sensors=list();
+ if(!window.SENS)return '';SENS.start();var access=SENS.api.access();if(access)return '<p class="banner warn">'+E(access)+'</p>'+button('إعادة فتح الاتصال','sensor-retry');var h='',sensors=list();
  ['water','air','medium','other'].forEach(function(g){var members=sensors.filter(function(s){return SENS.api.group(s)===g;});if(!members.length)return;h+='<section class="sec"><div class="sec-h"><h3>'+({water:'الخزان',air:'المناخ',medium:'بلل الوسط',other:'حساسات أخرى'}[g])+'</h3>'+button('التفاصيل','monitor','data-group="'+g+'"')+'</div>';
  if(g==='medium')h+='<p class="muted">'+members.length+' حساس · البلل مؤشر موضعي، ولا يثبت تدفق الماء أو سلامة المضخة.</p>';
- h+='<div class="ux-live-grid">'+members.map(function(s){var m=active(s.id).length>0;return '<article class="card ux-live '+(m?'ux-maint':'')+'"><h4>'+E(s.name||s.tuyaName)+'</h4>'+(m?'<span class="pill warn">صيانة · مستبعد من التحليل</span>':'')+'<dl>'+metrics(s).map(function(k){var q=SENS.api.live(s,k),ki=SENS.api.info(k,s);return '<div><dt>'+E(ki.l)+'</dt><dd><bdi dir="ltr">'+F(q.v,ki.d)+' '+E(ki.u)+'</bdi></dd><small>'+E(!care.ready?'حالة الصيانة غير مؤكدة':m||maintained(s.id,q.at)?'قراءة خلال الصيانة':q.label)+' · '+(q.at?E(tsTime(q.at)):'لم تصل قراءة')+'</small></div>';}).join('')+'</dl></article>';}).join('')+'</div>';h+='</section>';});return h||'<p class="empty">لم تصل حساسات لهذا القسم بعد.</p>';
+ h+='<div class="ux-live-grid">'+members.map(function(s){var m=active(s.id).length>0;return '<article class="card ux-live '+(m?'ux-maint':'')+'"><h4>'+E(s.name||s.tuyaName)+'</h4>'+(m?'<span class="pill warn">صيانة · مستبعد من التحليل</span>':'')+'<dl>'+metrics(s).map(function(k){var q=SENS.api.live(s,k),ki=SENS.api.info(k,s);return '<div><dt>'+E(ki.l)+'</dt><dd><bdi dir="ltr">'+F(q.v,ki.d)+' '+E(ki.u)+'</bdi></dd><small>'+E(!care.ready?'حالة الصيانة غير مؤكدة':m?'صيانة مفتوحة':q.at&&interrupted(s.id,q.at,Date.now())?'بانتظار قراءة بعد الصيانة':q.label)+' · '+(q.at?E(tsTime(q.at)+' · '+SENS.api.age(q.at)):'لم تصل قراءة')+'</small></div>';}).join('')+'</dl></article>';}).join('')+'</div>';h+='</section>';});return h||'<p class="empty">لم تصل حساسات لهذا القسم بعد.</p>';
+}
+function sensorNotice(){
+ if(!window.SENS)return '';
+ SENS.start();
+ var unavailable=SENS.api.access(), message=unavailable, group='all';
+ if(!message && SENS._x.devicesCached)message='القراءات من النسخة المحلية؛ حداثة الاتصال غير مؤكدة.';
+ if(!message && SENS._x.statusError)message=SENS._x.statusError;
+ if(!message && !care.ready)message='لم يتأكد وضع صيانة الحساسات بعد.';
+ if(!message && care.ready){
+   var reasons=[];
+   if(S.sec==='t'&&!list().some(s=>SENS.api.group(s)==='water'))reasons.push('لا يظهر حساس خزان في القسم');
+   list().filter(function(s){return SENS.api.group(s)==='water';}).forEach(function(s){
+     if(active(s.id).length){reasons.push('الخزان في الصيانة');return;}
+     metrics(s).forEach(function(k){
+       var q=SENS.api.live(s,k);
+       if(q.state==='missing'||q.state==='stale'||(q.at&&interrupted(s.id,q.at,Date.now()))){
+         reasons.push(SENS.api.info(k,s).l+' · '+(q.at?SENS.api.age(q.at):'بلا قراءة'));
+       }
+     });
+   });
+   if(reasons.length){message='حالة الخزان غير مؤكدة · '+reasons.join('، ');group='water';}
+ }
+ return message?'<div class="banner warn"><span>'+E(message)+'</span>'+button('فتح المراقبة','monitor','data-group="'+group+'"')+'</div>':'';
 }
 function home(){
+ start();
+ if(lsGet('gs_home_mode_'+S.uid)!=='classic')return Shift.home({status,notice:sensorNotice,liveCards});
+ return Shift.action('العودة إلى لوحة الوردية','modern')+classicHome();
+}
+function classicHome(){
  start();var today=S.date===todayStr(),rows=secEntries(S.entries,S.sec),tk=tasksFor(S.sec,S.entries),unreviewed=rows.filter(function(e){return !e.review;}).length;
- var h=status()+Farm.home(today);
- h+='<div class="ux-kpis"><div class="ux-kpis"><div><span>مهام متبقية</span><b>'+(tk.need?tk.left:'—')+'</b></div><div><span>تسجيلات اليوم</span><b>'+rows.length+'</b></div>'+(isSup()?'<div><span>بانتظار المراجعة</span><b>'+unreviewed+'</b></div>':'')+'</div>';
+ var h=status()+(today?sensorNotice():'')+Farm.home(today);
+
+ h+='<div class="ux-kpis"><div><span>مهام متبقية</span><b>'+(tk.need?tk.left:'—')+'</b></div><div><span>تسجيلات اليوم</span><b>'+rows.length+'</b></div>'+(isSup()?'<div><span>بانتظار المراجعة</span><b>'+unreviewed+'</b></div>':'')+'</div>';
  if(today&&SENS._x.status&&SENS._x.status.ok===false)h+='<div class="banner warn">تعثّر جزء من المزامنة. راجع حالة الجامع في المراقبة؛ قد تكون آخر القراءات متاحة.</div>';
  var issues=badReadings(rows),open=S.openNotes.filter(function(e){return secOf(e)===S.sec;});
  if(issues.length||open.length)h+='<div class="banner warn"><span>يحتاج متابعة: '+issues.length+' قراءة يدوية خارج الحدود · '+open.length+' ملاحظة مفتوحة.</span>'+button('مراجعة العمليات','ops')+'</div>';
@@ -83,33 +141,34 @@ function home(){
  return h;
 }
 function operations(){
- start();var q=search.trim().toLowerCase(),rows=viewEntries().slice().reverse().filter(function(e){var t=typeDef(e.type,secOf(e));return (!q||(JSON.stringify(e.v||{})+' '+(t?t.label:e.type)+' '+nameOf(e.by)).toLowerCase().indexOf(q)>=0)&&(review==='all'||review==='pending'&&!e.review||review==='reviewed'&&e.review);});
- return heading('العمليات','سجل '+E(fmtDate(S.date))+' · غيّر التاريخ أعلاه للرجوع إلى يوم سابق.')+status()+'<div class="ux-filters"><label>البحث<input class="in" id="uxSearch" value="'+E(search)+'" placeholder="عملية، ملاحظة، اسم عامل"></label><label>المراجعة<select class="in" id="uxReview">'+[['all','الكل'],['pending','بانتظار المراجعة'],['reviewed','تمت مراجعتها']].map(function(x){return '<option value="'+x[0]+'" '+(review===x[0]?'selected':'')+'>'+x[1]+'</option>';}).join('')+'</select></label>'+button('بحث','filter')+'</div><div class="ux-actions">'+button('+ تسجيل','record')+(isSup()?'<button class="btn" data-act="signoff">اعتماد اليوم</button>':'')+button('التفاصيل والمعدات','legacy')+'</div>'+rows.map(function(e){return entryCard(e);}).join('')+(!rows.length?'<p class="empty">لا توجد تسجيلات مطابقة.</p>':'');
+ start();var q=search.trim().toLowerCase(),rows=viewEntries().slice().reverse().filter(function(e){var t=typeDef(e.type,secOf(e));return (!q||(JSON.stringify(e.v||{})+' '+(t?t.label:e.type)+' '+nameOf(e.by)).toLowerCase().indexOf(q)>=0)&&(review==='all'||review===Shift.stateOf(e));});
+ return heading('العمليات','سجل '+E(fmtDate(S.date))+' · غيّر التاريخ أعلاه للرجوع إلى يوم سابق.')+status()+'<div class="ux-filters"><label>البحث<input class="in" id="uxSearch" value="'+E(search)+'" placeholder="عملية، ملاحظة، اسم عامل"></label><label>المراجعة<select class="in" id="uxReview">'+[['all','الكل'],['pending','بانتظار المراجعة'],['fix','مطلوب تصحيح'],['again','أُعيد للمراجعة'],['ok','معتمد']].map(function(x){return '<option value="'+x[0]+'" '+(review===x[0]?'selected':'')+'>'+x[1]+'</option>';}).join('')+'</select></label>'+button('بحث','filter')+'</div><div class="ux-actions">'+button('+ تسجيل','record')+(isSup()?'<button class="btn" data-act="signoff">اعتماد اليوم</button>':'')+button('التفاصيل والمعدات','legacy')+'</div>'+rows.map(function(e){return entryCard(e);}).join('')+(!rows.length?'<p class="empty">لا توجد تسجيلات مطابقة.</p>':'');
 }
-function eventSection(){if(eventError)return '<p class="banner warn">'+E(eventError)+'</p>';if(!eventRows)return '<p>جارٍ تحميل أحداث التشغيل…</p>';
- var first=addDays(S.date,1-period);var events=eventRows.filter(e=>e.date>=first&&e.date<=S.date&&e.sec===S.sec).sort((x,y)=>y.date.localeCompare(x.date)||String(y.time||'').localeCompare(String(x.time||'')));
+function eventSection(){var end=closedWeek&&S.date>=todayStr()?addDays(todayStr(),-1):S.date;if(eventError)return '<p class="banner warn">'+E(eventError)+'</p>';if(!eventRows)return '<p>جارٍ تحميل أحداث التشغيل…</p>';
+ var first=addDays(end,1-period);var events=eventRows.filter(e=>e.date>=first&&e.date<=end&&e.sec===S.sec).sort((x,y)=>y.date.localeCompare(x.date)||String(y.time||'').localeCompare(String(x.time||'')));
  return '<section class="sec"><h3>أحداث التشغيل</h3><p class="help">الخطوط المتقطعة على رسوم الخزان تشير إلى عمليات مسجلة؛ التزامن وحده لا يثبت سبب التغير.</p>'+events.map(function(e){return '<div class="ux-row"><span>'+E((typeDef(e.type,e.sec)||{}).label||e.type)+'</span><time>'+E(e.date+' '+(e.time||'وقت غير محدد'))+(e.ts&&todayStr(new Date(e.ts))>e.date?' · أُدخل لاحقًا':'')+'</time></div>';}).join('')+(!events.length?'<p class="muted">لا أحداث مسجلة في الفترة.</p>':'')+''+Farm.action('تصدير التقرير PDF','print')+'</section>';
 }
 function reports(){
  var r=ensureReport(),h=heading('تقرير المتابعة','ملخص التشغيل، جودة البيانات، ومقارنة الفترة السابقة المساوية في المدة.')+status();
- h+='<div class="ux-actions">'+[1,7,30].map(function(n){return button(n===1?'يومي':n===7?'أسبوعي':'30 يوماً','period','data-n="'+n+'" aria-pressed="'+(period===n)+'"');}).join('')+button(zoom?'عرض الفترة كاملة':'تكبير فترة القراءات','zoom')+button('تحديث','report-refresh')+button('التقارير التفصيلية','legacy-report')+'</div>';
- if(!care.ready)return h+'<p class="banner warn">'+E(care.error||'جارٍ التحقق من فترات الصيانة…')+'</p>'+eventSection();if(!r||r.loading)return h+'<p class="empty">جارٍ إعداد التقرير من القراءات الفعلية…</p>'+eventSection();if(r.error)return h+'<p class="banner warn">'+E(r.error)+'</p>'+eventSection();
+ h+='<div class="ux-actions">'+[1,7,30].map(function(n){return button(n===1?'يومي':n===7?'أسبوعي':'30 يوماً','period','data-n="'+n+'" aria-pressed="'+(!closedWeek&&period===n)+'"');}).join('')+button('أسبوعان مكتملان','closed-week','aria-pressed="'+closedWeek+'"')+button(zoom?'عرض الفترة كاملة':'تكبير فترة القراءات','zoom')+button('تحديث','report-refresh')+button('التقارير التفصيلية','legacy-report')+'</div>';
+ if(!care.ready)return h+'<p class="banner warn">'+E(care.error||'جارٍ التحقق من فترات الصيانة…')+'</p>'+eventSection();if(SENS.api.access())return h+'<p class="banner warn">'+E(SENS.api.access())+'</p>'+button('إعادة فتح الاتصال','sensor-retry')+eventSection();if(!r||r.loading)return h+'<p class="empty">جارٍ إعداد التقرير من القراءات الفعلية…</p>'+eventSection();if(r.error)return h+'<p class="banner warn">'+E(r.error)+'</p>'+eventSection();
  if(eventError)h+='<p class="banner warn">تعذر تحديث أحداث التشغيل: '+E(eventError)+'</p>';
  if(r.cached||eventsCached)h+='<p class="banner warn">التقرير من بيانات محفوظة محلياً؛ اتصل بالإنترنت واضغط تحديث للتحقق من أحدث البيانات.</p>';
- h+='<p class="help">'+E(r.from+' — '+r.to+' · '+SECS[S.sec].name)+' · القيم الخام الواردة من الحساس، دون تعويضات العرض المحلية. متوسط موزون بالزمن بين قياسات متجاورة لا تفصلها أكثر من 30 دقيقة. فترات الصيانة والفجوات مستبعدة؛ لا تعني التغطية المنخفضة بالضرورة توقف الجهاز.</p><div class="ux-kpis"><div><span>عمليات مسجلة</span><b>'+r.events.filter(function(e){return at(e)>=r.a&&at(e)<r.b;}).length+'</b></div><div><span>قراءات صيانة مستبعدة</span><b>'+r.rows.reduce(function(n,x){return n+x.current.excluded;},0)+'</b></div></div>';
- h+='<section class="sec"><h3>القراءات والمقارنة</h3><div class="ux-report-grid">'+r.rows.map(function(row){var c=row.current,p=row.previous,delta=c.avg!=null&&p.avg!=null?c.avg-p.avg:null;return '<article class="card"><h4>'+E(row.sensor.name||row.sensor.tuyaName)+' · '+E(row.info.l)+'</h4><div class="ux-number"><bdi dir="ltr">'+F(c.avg,row.info.d)+' '+E(row.info.u)+'</bdi></div><p>المتوسط الموزون · التغطية '+F(c.coverage*100,0)+'% ('+F(c.coverage*(r.b-r.a)/3600000,1)+' ساعة من '+F((r.b-r.a)/3600000,1)+')</p><p>الأدنى '+F(c.min,row.info.d)+' · الأعلى '+F(c.max,row.info.d)+' · '+c.n+' قراءة</p><p>الفترة السابقة: '+F(p.avg,row.info.d)+' · تغطيتها '+F(p.coverage*100,0)+'%</p><p>'+(delta==null?'لا بيانات كافية للمقارنة.':'التغير '+(delta>0?'+':'')+F(delta,row.info.d)+' '+E(row.info.u))+'</p>'+(c.coverage<.5||p.coverage<.5?'<small class="ux-warning">التغطية محدودة؛ لا تعتمد على الفرق وحده لتقييم الأداء.</small>':'')+(SENS.api.group(row.sensor)==='water'?graph(row,r):'')+'</article>';}).join('')+'</div></section>';
+ h+='<p class="help">'+E(r.from+' — '+r.to+' · مقارنة بـ '+addDays(r.from,-period)+' — '+addDays(r.to,-period)+' · حتى نفس الساعة بتوقيت الرياض · '+SECS[S.sec].name)+' · القيم الخام الواردة من الحساس، دون تعويضات العرض المحلية. متوسط موزون بالزمن بين قياسات متجاورة لا تفصلها أكثر من 30 دقيقة. فترات الصيانة والفجوات مستبعدة؛ لا تعني التغطية المنخفضة بالضرورة توقف الجهاز.</p><div class="ux-kpis"><div><span>عمليات مسجلة</span><b>'+r.events.filter(function(e){return at(e)>=r.a&&at(e)<r.b;}).length+'</b></div><div><span>قراءات صيانة مستبعدة</span><b>'+r.rows.reduce(function(n,x){return n+x.current.excluded;},0)+'</b></div></div>';
+ h+='<section class="sec"><h3>القراءات والمقارنة</h3><div class="ux-report-grid">'+r.rows.map(function(row){var c=row.current,p=row.previous,delta=c.avg!=null&&p.avg!=null?c.avg-p.avg:null;return '<article class="card"><h4>'+E(row.sensor.name||row.sensor.tuyaName)+' · '+E(row.info.l)+'</h4><p>'+E(row.location)+'</p><div class="ux-number"><bdi dir="ltr">'+F(c.avg,row.info.d)+' '+E(row.info.u)+'</bdi></div><p>المتوسط الموزون · التغطية '+F(c.coverage*100,0)+'% ('+F(c.coverage*(r.b-r.a)/3600000,1)+' ساعة من '+F((r.b-r.a)/3600000,1)+')</p><p>الأدنى '+F(c.min,row.info.d)+' · الأعلى '+F(c.max,row.info.d)+' · '+c.n+' قراءة</p><p>الفترة السابقة: '+F(p.avg,row.info.d)+' · تغطيتها '+F(p.coverage*100,0)+'%</p><p>'+(delta==null?'لا بيانات كافية للمقارنة.':'التغير '+(delta>0?'+':'')+F(delta,row.info.d)+' '+E(row.info.u))+'</p>'+(c.coverage<.5||p.coverage<.5?'<small class="ux-warning">التغطية محدودة؛ لا تعتمد على الفرق وحده لتقييم الأداء.</small>':'')+(SENS.api.group(row.sensor)==='water'?graph(row,r):'')+'</article>';}).join('')+'</div></section>';
+ if(!r.rows.length)h+='<p class="empty">لا توجد نقاط في أرشيف الفترة لهذا القسم.</p>';
  return h+button('تصدير قراءات التقرير CSV','csv')+eventSection();
 }
-function csv(){var r=ensureReport();if(!r||r.loading||r.error)return;var rows=[['Device','Measure','Time Al Shafa (+03:00)','Value','Unit','Maintenance']];r.rows.forEach(function(x){x.raw.filter(function(p){return p.t>=r.a&&p.t<r.b;}).forEach(function(p){rows.push([x.sensor.name||x.sensor.id,x.info.l,new Date(p.t+10800000).toISOString().replace('T',' ').replace('Z',' +03:00'),p.v,x.info.u,maintained(x.sensor.id,p.t)?'yes':'no']);});});var text='\ufeff'+rows.map(function(row){return row.map(function(v){var s=String(v==null?'':v);if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(',');}).join('\r\n');var a=document.createElement('a'),url=URL.createObjectURL(new Blob([text],{type:'text/csv;charset=utf-8'}));a.href=url;a.download='GREEN_SIDE_'+r.from+'_'+r.to+'.csv';a.click();setTimeout(function(){URL.revokeObjectURL(url);},1000);}
+function csv(){var r=ensureReport();if(!r||r.loading||r.error)return;var rows=[['Device','Measure','Time Riyadh (+03:00)','Value','Unit','Maintenance','Recorded location']];r.rows.forEach(function(x){x.raw.filter(function(p){return p.t>=r.a&&p.t<r.b;}).forEach(function(p){rows.push([x.sensor.name||x.sensor.id,x.info.l,new Date(p.t+10800000).toISOString().replace('T',' ').replace('Z',' +03:00'),p.v,x.info.u,maintained(x.sensor.id,p.t)?'yes':'no',x.location]);});});var text='\ufeff'+rows.map(function(row){return row.map(function(v){var s=String(v==null?'':v);if(/^[=+@-]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';}).join(',');}).join('\r\n');var a=document.createElement('a'),url=URL.createObjectURL(new Blob([text],{type:'text/csv;charset=utf-8'}));a.href=url;a.download='GREEN_SIDE_'+r.from+'_'+r.to+'.csv';a.click();setTimeout(function(){URL.revokeObjectURL(url);},1000);}
 function theme(){var next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;lsSet('gs_theme',next);}
 function monitorPrefix(){start();return '<div class="ux-actions">'+[['all','الكل'],['air','المناخ'],['water','الخزان'],['medium','بلل الوسط']].map(function(g){return button(g[1],'group','data-group="'+g[0]+'" aria-pressed="'+(group===g[0])+'"');}).join('')+'</div>'+(!care.ready?'<p class="banner warn">'+E(care.error||'جارٍ تحميل حالة الصيانة…')+'</p>':'');}
 function filterSensors(xs){return group==='all'?xs:xs.filter(function(s){return SENS.api.group(s)===group;});}
 document.addEventListener('click',function(ev){var b=ev.target.closest&&ev.target.closest('[data-ux]');if(!b)return;var a=b.dataset.ux;
- if(a==='record')setTab('add');else if(a==='ops')setTab('ops');else if(a==='admin')setTab('sup');else if(a==='legacy')setTab('equipment');else if(a==='legacy-report')setTab('repLegacy');else if(a==='theme')theme();
+ if(a==='sensor-retry'){SENS.api.retry();return;}if(a==='record')setTab('add');else if(a==='ops')setTab('ops');else if(a==='admin')setTab('sup');else if(a==='legacy')setTab('equipment');else if(a==='legacy-report')setTab('repLegacy');else if(a==='theme')theme();
  else if(a==='monitor'){group=b.dataset.group||'all';setTab('sens');}else if(a==='group'){group=b.dataset.group;render(true);}else if(a==='filter'){search=$('uxSearch').value;review=$('uxReview').value;render(true);}
- else if(a==='care')careForm(b.dataset.id,b.dataset.kind);else if(a==='save-care')saveCare(b);else if(a==='end-care')endCare(b);else if(a==='period'){period=+b.dataset.n;render(true);}else if(a==='report-refresh'){cache={};if(!care.ready){stop();start();}render(true);}else if(a==='zoom'){zoom=!zoom;render(true);}else if(a==='csv')csv();
+ else if(a==='care')careForm(b.dataset.id,b.dataset.kind);else if(a==='save-care')saveCare(b);else if(a==='end-care')endCare(b);else if(a==='closed-week'){closedWeek=true;period=7;render(true);}else if(a==='period'){closedWeek=false;period=+b.dataset.n;render(true);}else if(a==='report-refresh'){cache={};if(!care.ready){stop();start();}render(true);}else if(a==='zoom'){zoom=!zoom;render(true);}else if(a==='csv')csv();
 });
 document.addEventListener('submit',function(ev){if(ev.target.id==='uxCare'){ev.preventDefault();saveCare(ev.target.querySelector('[data-ux="save-care"]'));}});
-function init(){document.documentElement.dataset.theme=lsGet('gs_theme')||'light';}
-return {endReport:resetEventFeed,invalidate:function(){cache={};},retryCare:function(){stop();start();},init:init,home:home,operations:operations,reports:reports,carePanel:carePanel,start:start,stop:stop,maintained:maintained,interrupted:interrupted,careKey:careKey,ready:function(){return care.ready;},monitorPrefix:monitorPrefix,filterSensors:filterSensors,commit:commit,_test:{stats:stats,at:at,setCare:function(rows){care.rows=rows;care.ready=true;care.revision++;},graph:graph}};
+function init(){setInterval(function(){if(!document.hidden&&S.role&&(S.tab==='today'||S.tab==='sens'))render();},60000);document.documentElement.dataset.theme=lsGet('gs_theme')||'light';}
+return {reviewQueue:function(kind){review=kind;search='';setTab('ops');},endReport:resetEventFeed,invalidate:function(){cache={};},retryCare:function(){stop();start();},init:init,home:home,operations:operations,reports:reports,carePanel:carePanel,start:start,stop:stop,maintained:maintained,interrupted:interrupted,careKey:careKey,ready:function(){return care.ready;},monitorPrefix:monitorPrefix,filterSensors:filterSensors,commit:commit,_test:{stats:stats,at:at,setCare:function(rows){care.rows=rows;care.ready=true;care.revision++;},graph:graph}};
 })();

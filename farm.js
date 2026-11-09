@@ -1,4 +1,4 @@
-/* GREEN SIDE 2.11.0 — تشغيل المزرعة */
+/* GREEN SIDE 2.14.1 — تشغيل المزرعة */
 var Farm=(()=>{
 'use strict';
 const pages=['equipment','deliveries','crop','finance','team','jobs','changes'];
@@ -15,12 +15,13 @@ let stockOff=null,stockDay='',stockRevision=0;
 function stop(){stockOff?.();stockOff=null;stockDay='';stockRevision++;off.forEach(f=>f());off=[];identity='';data={};errors={};cached={};cropID=financeID='';room='team';}
 function watch(key,query,after){
  const token=identity;
- off.push(query.onSnapshot(q=>{if(identity!==token)return;cached[key]=!!q.metadata?.fromCache;data[key]=q.docs.map(d=>({...d.data(),id:d.id}));delete errors[key];if(after)after(data[key]);render();},e=>{if(identity!==token)return;delete data[key];errors[key]=errMsg(e);render();}));
+ off.push(query.onSnapshot({includeMetadataChanges:true},q=>{if(identity!==token)return;cached[key]=!!q.metadata?.fromCache;data[key]=q.docs.map(d=>({...d.data(),id:d.id}));delete errors[key];if(after)after(data[key]);render();},e=>{if(identity!==token)return;delete data[key];errors[key]=errMsg(e);render();}));
 }
 function start(){
  const key=[S.uid,S.role,S.ownerUid].join('/');
  if(identity===key)return;stop();if(!S.db||!S.role||!S.uid)return;identity=key;
  const c=k=>S.db.collection(k);
+ watch('balances',c('cropBalances'));
  watch('crop',c('entries').where('type','in',['sow','xplant','harvest']));
  watch('levels',c('farmLevels').orderBy('observed','desc').limit(1),subscribeStock);
  watch('water',c('farmWater').orderBy('date','desc'));
@@ -59,37 +60,113 @@ const members=()=>Object.keys(S.users).filter(k=>['worker','sup'].includes(S.use
 const sowings=()=>rows('crop').filter(e=>e.type==='sow').sort(dates);
 const batchName=e=>e?(e.v.crop+' · '+e.date+' · '+(e.v.side||'جهة غير محددة')+' · '+e.id.slice(-5)):'دفعة غير مرتبطة';
 const batchList=()=>sowings().map(e=>[e.id,batchName(e)]);
+function movementError(message){return Object.assign(new Error(message),{code:'crop-balance'});}
+const balanceOf=id=>rows('balances').find(x=>x.id===id);
+function openingForm(id){
+ if(!isSup())return;
+ form('اعتماد جرد الشتلات المتبقية',info('أكمل تسجيل النقل السابق ثم عدّ الشتلات الموجودة في المشتل الآن. سيسحب كل نقل جديد من هذا العدد.')+numField('count','عدد الشتلات الموجودة فعليًا'),async v=>{
+   const count=num(v.count);
+   if(!Number.isSafeInteger(count)||count<0)throw movementError('أدخل عددًا صحيحًا غير سالب');
+   const ref=coll('cropBalances').doc(id);
+   await S.db.runTransaction(async tx=>{
+     if((await tx.get(ref)).exists)throw movementError('اعتمد جرد هذه الدفعة مسبقًا');
+     const plant=(await tx.get(coll('entries').doc(id))).data();
+     if(plant?.type!=='sow')throw movementError('لم يُعثر على دفعة البذر');
+     tx.set(ref,{opening:count,remaining:count,by:S.uid,opened:stamp(),last:''});
+   });
+ });
+}
+async function adjustMovement(tx,id,before,after,date){
+ if(before&&before.batch!==after.batch)throw movementError('صحّح العدد في الدفعة الأصلية. لنقل الربط صفّر الحركة أولًا ثم سجّلها للدفعة الصحيحة.');
+ if(before&&before.count===after.count)return;
+ if(before&&!before.stockTracked)throw movementError('كمية هذا النقل تاريخية وتسبق الجرد. راجع سجل الدفعة مع المشرف.');
+ const ref=coll('cropBalances').doc(after.batch),snap=await tx.get(ref);
+ if(!snap.exists)throw movementError('يلزم أن يعتمد المشرف جرد هذه الدفعة قبل النقل');
+ const opened=snap.data().opened?.toMillis?.();
+ if(!before&&opened&&Date.parse(date+'T'+after.time+':00+03:00')<Math.floor(opened/60000)*60000)throw movementError('وقت النقل يسبق الجرد. راجع المشرف حتى لا تخصم حركة احتسبت عند العد.');
+ const remaining=snap.data().remaining,delta=after.count-(before?.count||0);
+ if(!Number.isSafeInteger(after.count)||after.count<(before?0:1))throw movementError('عدد الشتلات غير صالح');
+ if(delta>remaining)throw movementError('المتاح الآن '+remaining+' شتلة. عدّل العدد ثم احفظ.');
+ tx.update(ref,{remaining:remaining-delta,last:id});
+}
+function saveMovement(form,v,reason){
+ const e=form.e,ref=coll('entries').doc(e?.id||form.moveId),uid=S.uid,date=e?.date||S.date;
+ const requestOnly=e&&isWorker()&&e.review;
+ const next={...e?.v,...v};if(!e)next.stockTracked=true;
+ const auditRef=reason?coll('farmChanges').doc():null;if(auditRef)next.auditId=auditRef.id;
+ return S.db.runTransaction(async tx=>{
+   const old=(await tx.get(ref)).data();
+   if(!e&&old){if(old.by===uid&&old.type==='xplant'&&old.v.batch===next.batch&&old.v.count===next.count)return;throw movementError('سبق تسجيل عملية بهذا الرقم. راجع السجل قبل المحاولة.');}
+   if(e&&(!old||JSON.stringify(comparable(old.v))!==JSON.stringify(comparable(e.v))||JSON.stringify(comparable(old.review||null))!==JSON.stringify(comparable(e.review||null))))throw movementError('تغيّر السجل؛ افتحه من جديد قبل التصحيح');
+   if(!requestOnly)await adjustMovement(tx,ref.id,old?.v,next,date);
+   if(auditRef)tx.set(auditRef,{entry:ref.id,by:uid,date,type:'xplant',sec:'t',before:old?.v||null,after:next,requested:!!requestOnly,reason,created:stamp()});
+   if(!requestOnly){if(e)tx.update(ref,{v:next,time:next.time});else tx.set(ref,{type:'xplant',sec:'t',date,time:next.time,ts:Date.now(),by:uid,v:next});}
+ });
+}
 function nursery(e){
  const related=rows('crop').filter(x=>x.v?.batch===e.id);
  const moves=related.filter(x=>x.type==='xplant').sort(dates);
  const harvested=related.filter(x=>x.type==='harvest');
  const moved=moves.reduce((n,x)=>n+(num(x.v.count)||0),0);
  const ready=num(e.v.usable),loss=num(e.v.lossAfter)||0;
- return {moves,moved,harvested,remaining:ready===null?null:ready-loss-moved};
+ return {moves,moved,harvested,remaining:balanceOf(e.id)?.remaining??(ready===null?null:ready-loss-moved)};
+}
+function harvestSummary(crops,from,to){
+ const batches=new Set(crops.filter(e=>e.type==='sow').map(e=>e.id));
+ const records=crops.filter(e=>e.type==='harvest'&&e.date>=from&&e.date<=to).sort(dates);
+ let linked=0,unlinked=0,missing=0;
+ for(const e of records){
+   const kg=num(e.v?.weight);
+   if(kg===null||kg<0){missing++;continue;}
+   if(batches.has(e.v.batch))linked+=kg;else unlinked+=kg;
+ }
+ return {records,linked,unlinked,missing,total:linked+unlinked,days:new Set(records.map(e=>e.date)).size};
+}
+function harvestWeeks(){
+ const to=S.date>=today()?addDays(today(),-1):S.date;
+ return [to,addDays(to,-7)].map(end=>{
+   const from=addDays(end,-6),h=harvestSummary(rows('crop'),from,end);
+   const label=h.records.length&&h.missing<h.records.length?f(h.total,2)+' كغ موزونة':'لا وزن مسجّل';
+   const share=h.total>0?f(100*h.linked/h.total,1)+'%':'—';
+   return card(from+' إلى '+end,info(label+' · أيام بها تسجيل حصاد '+h.days+' من ٧')+
+     info('منسوب إلى دفعات '+f(h.linked,2)+' كغ · غير منسوب '+f(h.unlinked,2)+' كغ · نسبة الإسناد بالوزن '+share)+
+     info('سجلات بلا وزن صالح '+h.missing)+'<details><summary>سجلات الحصاد ('+h.records.length+')</summary>'+
+     h.records.map(e=>{const s=sowings().find(x=>x.id===e.v?.batch);return info(e.date+' · '+(e.time||'')+' · '+(num(e.v?.weight)>=0&&num(e.v?.weight)!==null?e.v.weight+' كغ':'وزن غير معلوم')+' · '+(s?batchName(s):'غير منسوب')+' · رقم '+e.id);}).join('')+'</details>');
+ }).join('');
+}
+function exportBatch(id){
+ const batch=sowings().find(e=>e.id===id);
+ if(!batch||!data.crop)throw Error('تعذر تحميل الدفعة');
+ const lines=[['رقم الدفعة','رقم السجل','العملية','التاريخ','الوقت','عدد البذور','صالح معدود','فاقد بعد العد','عدد منقول أو محصود','وزن الحصاد كغ','صالح للبيع','مستبعد','مراجعة']];
+ const events=rows('crop').filter(e=>e.id===id||e.v?.batch===id).slice().sort(dates);
+ for(const e of events){const v=e.v;lines.push([id,e.id,typeDef(e.type,secOf(e))?.label||e.type,e.date,e.time,v.seeds,v.usable,v.lossAfter,v.count,v.weight,v.saleable,v.rejected,({pending:'بانتظار المراجعة',fix:'مطلوب تصحيح',again:'أعيد للمراجعة',ok:'معتمد'})[Shift.stateOf(e)]]);}
+ const encode=v=>{let s=String(v??'');if(/^\s*[=+@-]/.test(s))s="'"+s;return '"'+s.replace(/"/g,'""')+'"';};
+ const url=URL.createObjectURL(new Blob(['\ufeff'+lines.map(row=>row.map(encode).join(',')).join('\r\n')],{type:'text/csv;charset=utf-8'}));
+ const a=document.createElement('a');a.href=url;a.download='GREEN_SIDE_batch_'+id+'.csv';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }
 function cropPage(){
  const crops=sowings(),selected=crops.find(x=>x.id===cropID);
  const detail=selected?(()=>{const n=nursery(selected);
- return card(batchName(selected),info('بذور: '+selected.v.seeds+' · صالح معدود: '+(num(selected.v.usable)??'غير معدود')+' · فاقد بعد العد: '+(selected.v.lossAfter||0))+info('منقول: '+n.moved+' · متبقٍ: '+(n.remaining===null?'غير معروف':n.remaining<0?'تعارض في العد':n.remaining))+n.moves.map(x=>info(x.date+' · '+x.v.count+' شتلة من '+(selected.v.side||'جهة غير محددة')+' إلى '+(x.v.zone||'جهة غير محددة')+' · أبراج '+(x.v.towers||'غير محددة'))).join('')+n.harvested.map(x=>info('حصاد '+x.date+' · '+x.v.weight+' كغ')).join(''),action('نقل من الدفعة','moveBatch',selected.id)+action('حصاد من الدفعة','harvestBatch',selected.id));})():'';
+ return card(batchName(selected),info('بذور: '+selected.v.seeds+' · صالح معدود: '+(num(selected.v.usable)??'غير معدود')+' · فاقد بعد العد: '+(selected.v.lossAfter||0))+info(balanceOf(selected.id)?'رصيد المشتل بعد الجرد'+(cached.balances?' · نسخة محلية':''):'لم يُعتمد جرد الدفعة · المتبقي المحسوب من السجلات تقديري')+(!balanceOf(selected.id)&&isSup()?action('اعتماد الجرد الفعلي','open-stock',selected.id):'')+info('منقول: '+n.moved+' · متبقٍ: '+(n.remaining===null?'غير معروف':n.remaining<0?'تعارض في العد':n.remaining))+n.moves.map(x=>info(x.date+' · '+x.v.count+' شتلة من '+(selected.v.side||'جهة غير محددة')+' إلى '+(x.v.zone||'جهة غير محددة')+' · أبراج '+(x.v.towers||'غير محددة'))).join('')+n.harvested.map(x=>info('حصاد '+x.date+' · '+x.v.weight+' كغ')).join(''),action('نقل من الدفعة','moveBatch',selected.id)+action('حصاد من الدفعة','harvestBatch',selected.id)+action('تصدير سجلات الدفعة CSV','export-batch',selected.id)+(owner()?action('عرض تكلفة الدفعة','batch-cost',selected.id):''));})():'';
  const orphan=rows('crop').filter(e=>e.type!=='sow'&&!crops.some(s=>s.id===e.v?.batch));
- return box('دفعات البذر ونقل الشتلات',notice('crop')+bar(action('تسجيل زراعة بذور','sow'),action('تسجيل نقل','moveBatch'))+detail+crops.map(e=>{const n=nursery(e);return card(batchName(e),info('المنقول '+n.moved+' · المتبقي '+(n.remaining??'غير معدود')),action('تفاصيل الدفعة','batch',e.id));}).join('')+(orphan.length?card('سجلات دون دفعة معروفة',orphan.sort(dates).map(x=>info(x.date+' · '+(x.type==='harvest'?'حصاد':'نقل')+' · '+(x.v.count||'—'))).join('')):''));
+ return box('دفعات البذر ونقل الشتلات',notice('crop','balances')+bar(action('تسجيل زراعة بذور','sow'),action('تسجيل نقل','moveBatch'))+detail+(data.crop&&isSup()?box('الحصاد الفعلي خلال أسبوعين',info('فترتان متتاليتان من سبعة أيام كاملة بتوقيت الرياض. غياب سجل في يوم لا يؤكد غياب الحصاد. تشمل الأوزان التسجيلات قبل المراجعة.'+ (cached.crop?' البيانات من نسخة محلية.':''))+harvestWeeks()):'')+crops.map(e=>{const n=nursery(e);return card(batchName(e),info('المنقول '+n.moved+(balanceOf(e.id)?' · رصيد الجرد ':' · متبقٍ تقديري قبل الجرد ')+(n.remaining??'غير معدود')),action('تفاصيل الدفعة','batch',e.id));}).join('')+(orphan.length?card('سجلات دون دفعة معروفة',orphan.sort(dates).map(x=>info(x.date+' · '+(x.type==='harvest'?'حصاد':'نقل')+' · '+(x.v.count||'—'))).join('')):''));
 }
 function validateEntry(type,v,miss){
  if(type==='pump'){
  const specs=FORM.pressureSpecs;v.pressureSpecs=specs;
  for(const k of ['gauge1','gauge2'])if(v[k]!==''&&v[k]!=null&&!gaugeChoices(specs[k],FORM.e?.v[k]).includes(num(v[k])))miss.push('قراءة خارج تدريج العداد');
  }
- if(['refill','mix','irr'].includes(type)&&v.stockSource===MAIN){const n=litresTaken({type,v});if(n==null||n<0)miss.push('كمية السحب من الخزان الرئيسي للري');}
+ if(['refill','waterOnly','mix','irr'].includes(type)&&v.stockSource===MAIN){const n=litresTaken({type,v});if(n==null||n<0)miss.push('كمية السحب من الخزان الرئيسي للري');}
 
  if(type==='sow'){for(const side of ['','__r','__l']){const u=num(v['usable'+side]),l=num(v['lossAfter'+side]),n=num(v['seeds'+side]);if([u,l,n].some(x=>x!==null&&(x<0||!Number.isInteger(x)))||(u!==null&&n!==null&&u>n)||(l!==null&&u!==null&&l>u))miss.push('راجع عدد البذور والشتلات والفاقد');}}
  if(type==='xplant'||type==='harvest'){
  if(type==='harvest'&&[v.saleable,v.rejected].some(x=>num(x)!==null&&(!Number.isInteger(+x)||+x<0)))miss.push('أعداد الحصاد يجب أن تكون أعدادًا صحيحة غير سالبة');
  if(type==='harvest'&&num(v.count)!==null&&num(v.saleable)!==null&&num(v.rejected)!==null&&+v.saleable + +v.rejected!==+v.count)miss.push('عدد الحصاد لا يساوي الصالح والمستبعد');
- if(type==='xplant'&&(!Number.isInteger(+v.count)||+v.count<=0))miss.push('عدد الشتلات المنقولة يجب أن يكون موجبًا وصحيحًا');
+ if(type==='xplant'&&(!Number.isSafeInteger(v.count)||v.count<(FORM.e?.v.stockTracked?0:1)))miss.push('عدد الشتلات المنقولة يجب أن يكون موجبًا وصحيحًا');
  const batch=sowings().find(s=>s.id===v.batch);
- if(batch){const n=nursery(batch),old=FORM.e && FORM.e.v.batch===batch.id?num(FORM.e.v.count)||0:0;
+ if(batch){
  if(batch.date>(FORM.e?.date||S.date))miss.push('تاريخ العملية سابق للبذر');
- if(type==='xplant'&&n.remaining!==null&&+v.count>n.remaining+old)miss.push('الكمية تتجاوز عدد الشتلات المتبقية');}
+ }
  }
 }
 const CAPACITY=18;
@@ -101,7 +178,7 @@ function subscribeStock(levels){
  if(!day)return;
  stockOff=coll('entries').where('date','>=',day).onSnapshot(q=>{
  if(token!==stockRevision)return;
- cached.stock=!!q.metadata?.fromCache;data.stock=q.docs.map(d=>({...d.data(),id:d.id})).filter(e=>['refill','mix','irr'].includes(e.type));delete errors.stock;render();
+ cached.stock=!!q.metadata?.fromCache;data.stock=q.docs.map(d=>({...d.data(),id:d.id})).filter(e=>['refill','waterOnly','mix','irr'].includes(e.type));delete errors.stock;render();
  },e=>{if(token===stockRevision){delete data.stock;errors.stock=errMsg(e);render();}});
 }
 function eventTime(date,time,recorded=Date.now()){
@@ -110,7 +187,7 @@ function eventTime(date,time,recorded=Date.now()){
 }
 function litresTaken(e){
  if(e.v?.stockSource!==MAIN)return 0;
- if(e.type==='refill')return num(e.v.waterAdd);
+ if(e.type==='refill'||e.type==='waterOnly')return num(e.v.waterAdd);
  if(e.type==='mix')return num(e.v.water);
  if(e.type==='irr')return irrL(e.v);
  return 0;
@@ -154,7 +231,7 @@ function levelForm(){if(!isSup())return;
 }
 function sourceOptions(type){return type==='irr'?[PREPARED,MAIN,OTHER,UNKNOWN]:[MAIN,OTHER,UNKNOWN];}
 function sourceDefault(type,edit){return edit?UNKNOWN:type==='irr'?PREPARED:MAIN;}
-function setStockTime(e,type,date,v){if(!['refill','mix','irr'].includes(type))return;
+function setStockTime(e,type,date,v){if(!['refill','waterOnly','mix','irr'].includes(type))return;
  v.stockAt=(e && e.time===v.time && e.date===date && e.v.stockAt!=null)?e.v.stockAt:eventTime(date,v.time,e?.ts||Date.now());
 }
 function gaugeSpec(key){
@@ -248,35 +325,37 @@ function finance(){
  const l=rows('ledger'),s=sowings().find(x=>x.id===financeID),t=measureCost(l,financeID);
  let detail=info('تكاليف لم توزع على دفعات: '+money(t.unassigned));
  if(s){const {harvested}=nursery(s),completeCount=harvested.length>0&&harvested.every(x=>num(x.v.saleable)!==null);
- const heads=completeCount?harvested.reduce((n,x)=>n+Number(x.v.saleable),0):null;
- const kg=harvested.reduce((n,x)=>n+(num(x.v.weight)||0),0);
- detail+=card(batchName(s),info('التكاليف المحملة '+money(t.cost)+' · المبيعات '+money(t.sales))+info('تكلفة الرأس الصالح: '+(heads?money(t.cost/heads):'لم يُحسب بعد')+' · تكلفة الكيلو: '+(kg?money(t.cost/kg):'لم يُحسب بعد'))+info('الهامش: '+(t.sales?money(t.sales-t.cost):'لم تسجل مبيعات')+' · القيم تقديرية إلى إقفال الحصاد وتوزيع تكاليف الدورة'));}
+ const heads=completeCount?harvested.reduce((n,x)=>n+num(x.v.saleable),0):null;
+ const kg=harvested.every(x=>num(x.v.weight)!==null&&num(x.v.weight)>=0)?harvested.reduce((n,x)=>n+num(x.v.weight),0):null;
+ detail+=card(batchName(s),info('التكاليف المحملة '+money(t.cost)+' · المبيعات '+money(t.sales))+info('تكلفة الرأس الصالح: '+(heads&&data.ledger&&!cached.ledger&&data.crop&&!cached.crop?money(t.cost/heads):'لم يُحسب بعد')+' · تكلفة الكيلو: '+(kg&&data.ledger&&!cached.ledger&&data.crop&&!cached.crop?money(t.cost/kg):'لم يُحسب بعد'))+info('الهامش: '+(t.sales?money(t.sales-t.cost):'لم تسجل مبيعات')+' · القيم تقديرية إلى إقفال الحصاد وتوزيع تكاليف الدورة'));}
  return box('تكلفة الدورة الزراعية',notice('crop','ledger')+bar(action('إضافة قيد مالي','cost'),action('تصدير PDF','print'))+bar(...batchList().map(x=>action(x[1],'finance-batch',x[0])))+detail+box('دفتر القيود',l.slice().sort(dates).map(x=>card(x.kind+' · '+x.category,info(x.date+' · '+money(x.amount)+' · '+x.memo)+info('أساس التوزيع: '+x.basis),action('عرض وتوزيع','edit-cost',x.id))).join('')));}
 function audit(batch,id,entry,next,reason){
  const ref=coll('farmChanges').doc(),reviewed=Boolean(entry?.review);next.auditId=ref.id;
  batch.set(ref,{entry:id,by:S.uid,date:entry?.date||S.date,type:FORM.type,sec:FORM.sec,before:entry?.v||null,after:next,requested:reviewed,reason:reason.trim(),created:stamp()});
 }
+function pendingChange(id){return rows('changes').some(x=>x.entry===id && x.requested && !x.resolution);}
 function notifyChanges(){
  const items=rows('changes').slice().sort((a,b)=>(b.created?.seconds||0)-(a.created?.seconds||0));
  return box('تنبيهات التسجيل والتعديل',notice('changes')+items.map(x=>{
  const keys=Object.keys(x.after||{}).filter(k=>k!=='auditId'&&JSON.stringify(x.after[k])!==JSON.stringify((x.before||{})[k]));
  const fields=typeDef(x.type,x.sec||'t')?.fields||[];
- return card((x.requested?'طلب تصحيح':x.before?'تعديل':'إضافة بتاريخ سابق')+' · '+x.date,info(nameOf(x.by)+' · '+x.reason)+info(x.resolution||'')+'<details><summary>ما تغيّر</summary>'+keys.map(k=>info((fields.find(fd=>fd.k===k)?.l||k)+' : '+(x.before?.[k]??'—')+' ← '+(typeof x.after[k]==='object'?JSON.stringify(x.after[k]):x.after[k]))).join('')+'</details>',isSup()&&x.requested&&!x.resolution?action('اعتماد التصحيح','accept',x.id)+action('رفض التصحيح','reject',x.id):'');
+ return card((x.requested?'طلب تصحيح':x.before?'تعديل':'إضافة بتاريخ سابق')+' · '+x.date,info(nameOf(x.by)+' · '+x.reason)+info([x.resolution,x.resolutionReason].filter(Boolean).join(' · '))+'<details><summary>ما تغيّر</summary>'+keys.map(k=>info((fields.find(fd=>fd.k===k)?.l||k)+' : '+(x.before?.[k]??'—')+' ← '+(typeof x.after[k]==='object'?JSON.stringify(x.after[k]):x.after[k]))).join('')+'</details>',isSup()&&x.requested&&!x.resolution?action('اعتماد التصحيح','accept',x.id)+action('رفض التصحيح','reject',x.id):'');
  }).join(''));}
 function comparable(obj){if(obj===null||typeof obj!=='object')return obj;if(Array.isArray(obj))return obj.map(comparable);return Object.fromEntries(Object.keys(obj).sort().map(k=>[k,comparable(obj[k])]));}
-async function decide(id,accept){
+async function decide(id,accept,reason){
  if(!isSup())return;
  await S.db.runTransaction(async tx=>{const req=coll('farmChanges').doc(id),r=(await tx.get(req)).data();if(!r?.requested||r.resolution)throw Error('سبق اتخاذ قرار');
  if(accept){const ref=coll('entries').doc(r.entry),old=(await tx.get(ref)).data();if(!old||JSON.stringify(comparable(old.v))!==JSON.stringify(comparable(r.before)))throw Error('تغيّر التسجيل منذ إرسال الطلب؛ راجع القيم قبل الاعتماد.');
+ if(old.type==='xplant')await adjustMovement(tx,ref.id,old.v,r.after,old.date);
  tx.update(ref,{v:r.after,time:r.after.time,review:{s:'ok',by:S.uid,at:Date.now(),c:'اعتماد تصحيح'}});}
- tx.update(req,{resolution:accept?'معتمد':'مرفوض',reviewedBy:S.uid,reviewedAt:stamp()});});GSUI.invalidate();toast('تم حفظ قرار المراجعة');
+ tx.update(req,{...(accept?{}:{resolutionReason:reason}),resolution:accept?'معتمد':'مرفوض',reviewedBy:S.uid,reviewedAt:stamp()});});GSUI.invalidate();toast('تم حفظ قرار المراجعة');
 }
 function home(current){
  const late=rows('jobs').filter(j=>j.status!=='مكتملة'&&(isSup()||j.assignee===S.uid)),due=Object.entries(cycles).filter(([name,n])=>{const last=rows('service').filter(x=>x.kind===name).sort(dates)[0];return !last||addDays(last.date,n)<=today();});
  const moves=rows('crop').filter(e=>e.type==='xplant'&&e.date===S.date),harvests=rows('crop').filter(e=>e.type==='harvest'&&e.date===S.date);
- const remaining=sowings().filter(e=>e.date<=S.date).map(e=>nursery(e).remaining),known=remaining.filter(x=>x!==null&&x>=0);
+ const remaining=sowings().filter(e=>e.date<=S.date).map(e=>balanceOf(e.id)?.remaining??null),known=remaining.filter(x=>x!==null&&x>=0);
  const lastRun=window.SENS && SENS.api.ms(SENS._x.status?.lastRun);
- let h=bar(route('البذور والشتلات','crop'),route('تعبئات الماء','deliveries'),route('المعدات والصيانة','equipment'),route('المهام العامة','jobs'),route('تواصل الفريق'+(unread()?' ('+unread()+')':''),'team'),route('تنبيهات التسجيل','changes'));
+ let h=bar(route('البذور والشتلات','crop'),route('توريد ناقلة وجرد الماء','deliveries'),route('المعدات والصيانة','equipment'),route('المهام العامة','jobs'),route('تواصل الفريق'+(unread()?' ('+unread()+')':''),'team'),route('تنبيهات التسجيل','changes'));
  if(current){const balance=data.water&&data.stock&&data.levels?stockBalance(rows('levels')[0],rows('water'),rows('stock')):null;h+=card('الخزان الرئيسي لمياه الري',info(balance&&!balance.unknown&&!balance.bad?f(balance.balance,3)+' طن متبقٍ تقديريًا':'الرصيد غير مؤكد')+((cached.stock||cached.water||cached.levels||!navigator.onLine)?info('آخر بيانات محفوظة') : ''),route('التوريدات والجرد','deliveries'));h+=info('آخر مزامنة للحساسات: '+(lastRun?tsTime(lastRun):'غير متاحة'))+notice('jobs','service','changes');
  if(late.length)h+=card('مهام عامة معلقة ('+late.length+')',info(late.slice(0,3).map(x=>x.title).join(' · ')),route('فتح المهام','jobs'));
  if(data.service&&due.length)h+=card('صيانة وفحص مستحق',info(due.map(x=>x[0]).join(' · ')),route('التنفيذ والسجل','equipment'));
@@ -287,10 +366,13 @@ function view(page){switch(page){case 'equipment':return equipment();case 'deliv
 async function click(b){
  const {farm:key,id}=b.dataset;
  switch(key){
+ case 'open-stock':openingForm(id);break;
  case 'route':setTab(id);if(id==='changes')rows('changes').forEach(x=>lsSet('gs_change_'+S.uid+'_'+x.id,'1'));break;
  case 'water-period':form('فترة تعبئات الماء',field('from','من','date',false,waterFrom)+field('to','إلى','date',false,waterTo),v=>{if(v.from&&v.to&&v.from>v.to)throw Error('راجع ترتيب التاريخين');waterFrom=v.from;waterTo=v.to;render(true)});break;
  case 'water':waterForm();break;case 'water-filter':deliveryFilter=id;render(true);break;
  case 'water-cost':financeForm(id);break;case 'cost':financeForm();break;case 'edit-cost':financeForm('',id);break;
+ case 'export-batch':exportBatch(id);break;
+ case 'batch-cost':if(owner()){financeID=id;setTab('finance');}break;
  case 'finance-batch':financeID=id;render(true);break;
  case 'sow':S.sec='n';applySec();openForm('sow');break;
  case 'moveBatch':case 'harvestBatch':S.sec='t';applySec();openForm(key==='moveBatch'?'xplant':'harvest',null,{batch:id});break;
@@ -300,11 +382,12 @@ async function click(b){
  case 'compose':case 'message-job':compose(key==='message-job'?id:'');break;
  case 'room':room=id;render(true);break;case 'read':lsSet('gs_read_'+S.uid+'_'+id,'1');render(true);break;
  case 'correct':{const e=findEntry(id);if(e&&e.by===S.uid)openForm(e.type,e);break;}
- case 'accept':case 'reject':await decide(id,key==='accept');break;
+ case 'accept':await decide(id,true);break;
+ case 'reject':form('سبب رفض التصحيح',field('reason','ما المطلوب من العامل؟','text',true,'','maxlength="300"'),v=>{const reason=v.reason.trim();if(!reason)throw Error('اكتب السبب');return decide(id,false,reason);});break;
  case 'print':$('view').dataset.printTitle='GREEN SIDE · الشفا، الطائف · '+(S.tab==='finance'?'تكلفة الدورة':'تقرير التشغيل')+' · أُنشئ '+today()+' '+nowTime();window.print();break;
  case 'theme':document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';lsSet('gs_theme',document.documentElement.dataset.theme);break;
  case 'gauges':gaugeForm();break;case 'level':levelForm();break;
  }}
 document.addEventListener('click',e=>{const b=e.target.closest?.('[data-farm]');if(b)click(b).catch(err=>toast(errMsg(err)));});
-return {pages,action,start,stop,home,settings,view,validateEntry,gaugeName,gaugeChoices,gaugeSpec,sourceDefault,sourceOptions,setStockTime,stockCard,audit,cropReady:()=>!!data.crop,crops:()=>rows('crop'),test:{allocations,measureCost,nursery,stockBalance,validSpec}};
+return {saveMovement,balanceOf,harvestSummary,shiftCropStatus:()=>errors.crop||(cached.crop?"نسخة محلية · قد تتغير بعد الاتصال":""),pendingChange,shiftJobs:()=>rows("jobs").filter(j=>j.status!=="مكتملة"&&(isSup()||j.assignee===S.uid)),shiftChanges:()=>rows("changes").filter(x=>x.requested&&!x.resolution),pages,action,start,stop,home,settings,view,validateEntry,gaugeName,gaugeChoices,gaugeSpec,sourceDefault,sourceOptions,setStockTime,stockCard,audit,cropReady:()=>!!data.crop,crops:()=>rows('crop'),test:{allocations,measureCost,nursery,stockBalance,validSpec}};
 })();

@@ -3,7 +3,7 @@
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "2.11.0";
+var APP_VERSION = "2.14.1";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -258,7 +258,14 @@ TYPES_N.sow.fields.splice(-1,0,{k:"usable",l:"شتلات صالحة تم عده�
 TYPES_T.xplant.fields.find(x=>x.k==="batch").req=1;
 TYPES_T.harvest.fields.splice(1,0,{k:"batch",l:"دفعة البذر",t:"batch"},{k:"saleable",l:"رؤوس قابلة للبيع",t:"n"},{k:"rejected",l:"رؤوس مستبعدة",t:"n"});
 [TYPES_N.irr,TYPES_N.mix,TYPES_T.mix,TYPES_T.refill].forEach(function(type){if(!type.fields.some(f=>f.k==='stockSource'))type.fields.splice(1,0,{k:'stockSource',l:'مصدر الماء لهذه العملية',t:'s',req:1,w:'full',o:()=>Farm.sourceOptions(type===TYPES_N.irr?'irr':'mix')});});
-var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "note", "spray", "photo"], t: ["refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
+TYPES_T.waterOnly = {
+  label:"تعويض خزان الأبراج · ماء فقط",short:"ماء فقط",desc:"تسجيل كمية الماء من دون قياسات",fields:[
+    {k:"time",l:"وقت الإضافة",t:"t",req:1},
+    {k:"stockSource",l:"مصدر الماء",t:"s",req:1,o:()=>Farm.sourceOptions("refill").slice(0,2)},
+    {k:"waterAdd",l:"الكمية المضافة",t:"n",u:"لتر",req:1},MEMO
+  ]
+};
+var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "note", "spray", "photo"], t: ["waterOnly", "refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
 var TASKS = { n: [["mix", "nMix"], ["temp", "nTemp"], ["irr", "nIrr"], ["light", "nLight"], ["note", "nNote"], ["photo", "nPhoto"]],
   t: [["refill", "nRefill"], ["ecph", "nEcph"], ["temp", "nTemp"], ["light", "nLight"], ["pump", "nPump"], ["photo", "nPhoto"]] };
 var SHARED = ["mix", "ecph", "note", "photo"];
@@ -308,6 +315,7 @@ function secTag(s) { return '<span class="sectag s-' + s + '">' + (s === "g" ? "
 function toEmail(id) { id = id.trim().toLowerCase(); return id.indexOf("@") >= 0 ? id : id.replace(/\s+/g, "") + "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"); }
 function showLogin(id) { if (!id) return ""; var d = "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"); return id.slice(-d.length) === d ? id.slice(0, -d.length) : id; }
 function errMsg(e) {
+  if(e?.code==="crop-balance")return e.message;
   var c = e && e.code || "";
   return {
     "auth/invalid-credential": "اسم المستخدم أو كلمة المرور غير صحيحة.", "auth/wrong-password": "كلمة المرور غير صحيحة.", "auth/user-not-found": "لا يوجد حساب بهذا الاسم.",
@@ -528,7 +536,7 @@ function startSession() {
     }, function () { S.role = null; onRole(); }));
   }).catch(function (e) { console.warn(e); $("view").innerHTML = '<div class="sec"><div class="empty">تعذّر الاتصال. تحقق من الإنترنت ثم أعد فتح التطبيق.<button class="btn" data-act="logout">تسجيل الخروج</button></div></div>'; });
 }
-function onRole() { if(window.Farm)Farm.start();
+function onRole() { if(window.Farm)Farm.start(); if(S.role && window.Shift)Shift.flush();
   if (!S.role) {
     unsubDay.forEach(function (u) { u(); }); unsubDay = []; memberSubs = false;
     $("top").hidden = true; $("tabsNav").hidden = true;
@@ -567,11 +575,12 @@ function photoQuery() {
 }
 function subDay() {
   unsubDay.forEach(function (u) { u(); }); unsubDay = [];
-  S.entries = []; S.signoff = {};
-  unsubDay.push(S.db.collection("entries").where("date", "==", S.date).onSnapshot(function (q) {
+  S.entries = []; S.signoff = {}; S.dayLoaded=false; S.dayCached=false; S.dayError="";
+  unsubDay.push(S.db.collection("entries").where("date", "==", S.date).onSnapshot({includeMetadataChanges:true},function (q) {
+    S.dayLoaded=true; S.dayCached=q.metadata.fromCache; S.dayError="";
     S.entries = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.time || "").localeCompare(b.time || "") || (a.ts - b.ts); });
     GSUI.invalidate();render();
-  }, logErr));
+  }, function(e){S.dayError=errMsg(e);render();}));
   [["n", S.date + "_n"], ["n0", S.date], ["t", S.date + "_t"]].forEach(function (p) {
     unsubDay.push(S.db.collection("signoffs").doc(p[1]).onSnapshot(function (s) { S.signoff[p[0]] = s.exists ? s.data() : null; render(); }, logErr));
   });
@@ -925,7 +934,7 @@ function summaryChips(e) {
   });
   Object.keys(LEGACY).forEach(function (k) { if (keys[k] || v[k] === "" || v[k] == null) return; var L = LEGACY[k]; out += '<span class="chip"><span class="k">' + L[0] + "</span>" + esc(v[k]) + (L[1] ? " " + L[1] : "") + "</span>"; });
   if(e.type==="pump" && v.pressureSpecs){for(const k of ['gauge1','gauge2'])if(num(v[k])!==null&&v.pressureSpecs[k])out+='<span class="chip">'+esc(v.pressureSpecs[k].name)+' · المرجع '+esc(v.pressureSpecs[k].ideal)+' بار · '+(num(v[k])===v.pressureSpecs[k].ideal?'مطابق للمرجع':num(v[k])>v.pressureSpecs[k].ideal?'أعلى من المرجع':'أقل من المرجع')+'</span>';}
-  if(e.type === "refill" && v.waterMethod){
+  if((e.type === "refill" || e.type === "waterOnly") && v.waterMethod){
     out += '<span class="chip"><span class="k">حساب الماء</span>'+esc(v.waterMethod)+(v.waterEstimated?' · تقديري':'')+'</span>';
     if(v.waterEstimated && v.flowCalibration)out += '<span class="chip">مدة التعبئة: '+esc(v.fillMinutes || 0)+' دقيقة و '+esc(v.fillSeconds || 0)+' ثانية · المعايرة: '+esc(v.flowCalibration.litres)+' لتر / '+esc(v.flowCalibration.minutes)+' دقيقة و '+esc(v.flowCalibration.seconds)+' ثانية</span>';
     if(v.fullMark)out += '<span class="chip">'+esc(v.fullMark)+'</span>';
@@ -945,15 +954,16 @@ function entryCard(e, showDate) {
   if (v.memo) txt.push(v.memo); if (v.text) txt.push(v.text); if (v.action) txt.push("الإجراء: " + v.action);
   var rev = e.review, foot = "", noneNote = e.type === "note" && v.cat === NOTE_NONE;
   var pills = (e.type === "note" && !noneNote ? (e.open ? '<span class="pill bad">مفتوحة</span>' : '<span class="pill ok">تم الحل</span>') : "") +
-    (rev ? (rev.s === "ok" ? '<span class="pill ok" title="تمت المراجعة">✓ معتمد</span>' : '<span class="pill warn">⚑ ملاحظة</span>') : '<span class="pill n">بانتظار المراجعة</span>');
+    (Farm.pendingChange(e.id)?'<span class="pill warn">أُعيد للمراجعة</span>':rev ? (rev.s === "ok" ? '<span class="pill ok" title="تمت المراجعة">✓ معتمد</span>' : '<span class="pill warn">'+'مطلوب تصحيح'+'</span>') : '<span class="pill n">بانتظار المراجعة</span>');
   if (isSup()) {
-    if (!rev || rev.s !== "ok") foot += '<button class="btn sm ok" data-act="approve" data-id="' + esc(e.id) + '">اعتماد</button>';
-    foot += '<button class="btn sm warn" data-act="flag" data-id="' + esc(e.id) + '">ملاحظة</button>';
+    if (!Farm.pendingChange(e.id) && (!rev || rev.s !== "ok")) foot += '<button class="btn sm ok" data-act="approve" data-id="' + esc(e.id) + '">اعتماد</button>';
+    if(!Farm.pendingChange(e.id))foot += '<button class="btn sm warn" data-act="flag" data-id="' + esc(e.id) + '">إعادة للتصحيح</button>';
     if (e.type === "note" && !noneNote) foot += '<button class="btn sm" data-act="toggleNote" data-id="' + esc(e.id) + '">' + (e.open ? "تم الحل" : "إعادة فتح") + "</button>";
   }
-  if(isWorker() && e.by===S.uid && e.review)foot+=Farm.action("تصحيح سجل معتمد","correct",e.id);
+  if(isWorker() && e.by===S.uid && e.review && !Farm.pendingChange(e.id))foot+=Farm.action(rev.s==="flag"?"صحّح السجل":"طلب تصحيح","correct",e.id);
+  if(Farm.pendingChange(e.id))foot+=Farm.action("فتح طلب التصحيح","route","changes");
   if (canEditEntry(e)) foot += '<button class="btn sm ghost" data-act="edit" data-id="' + esc(e.id) + '">تعديل</button>';
-  var chips = summaryChips(e), img = e.thumb ? '<img class="e-thumb" alt="صورة" src="' + safeImg(e.thumb) + '" data-act="lightbox" data-pid="' + esc(e.photo || "") + '">' : (e.photo ? '<img class="e-photo" alt="صورة" data-photo="' + esc(e.photo) + '">' : "");
+  var chips = summaryChips(e)+(e.type==="waterOnly"?'<span class="chip">'+esc(v.waterAdd)+' لتر · '+esc(v.stockSource)+' · EC وpH لم يُقاسا</span>':""), img = e.thumb ? '<img class="e-thumb" alt="صورة" src="' + safeImg(e.thumb) + '" data-act="lightbox" data-pid="' + esc(e.photo || "") + '">' : (e.photo ? '<img class="e-photo" alt="صورة" data-photo="' + esc(e.photo) + '">' : "");
   return '<article class="entry ' + (rev && rev.s === "flag" ? "flag" : "") + '"><div class="e-head"><span class="e-ic">' + ico(e.type, 19) + '</span><div class="e-t"><b>' + esc(T.label) + "</b><span>" + (showDate ? esc(fmtShort(e.date)) + " · " : "") + fmtTime(e.time) + " · " + esc(nameOf(e.by)) + "</span></div>" + (sec === "g" ? secTag("g") : "") + '<div class="e-pills">' + pills + "</div></div>" +
     (chips ? '<div class="chips">' + chips + "</div>" : "") + (txt.length ? '<div class="e-text">' + esc(txt.join("\n")) + "</div>" : "") + img +
     (rev && rev.c ? '<div class="rev-note"><b>' + esc(nameOf(rev.by)) + ":</b> " + esc(rev.c) + "</div>" : "") + (foot ? '<div class="e-foot">' + foot + "</div>" : "") + "</article>";
@@ -1042,8 +1052,14 @@ function openForm(type, e, prefill) {
   var sec = e ? secOf(e) : (TYPES_G[type] ? "g" : S.sec), vsec = sec === "g" ? S.sec : sec, T = typeDef(type, vsec);
   FORM = { type: type, e: e, sec: sec, vsec: vsec, photos: {}, modeTouched: !!e, split: !!(T.split && !e) };
   FORM.fields = buildFields(T, FORM.split);
+  if(type==="xplant"&&!e)FORM.moveId=S.db.collection("entries").doc().id;
+  if(type==="waterOnly"&&!e){
+    if(Shift.hasPending()){Shift.showPending();return;}
+    const draft=Shift.draft(S.date);prefill=draft?.values||{waterMethod:"إدخال اللترات مباشرة"};
+    FORM.waterId=draft?.id||S.db.collection("entries").doc().id;
+  }
   var v = e ? clone(e.v || {}) : (prefill || {});
-  if(type === "refill") {
+  if(type === "refill" || type === "waterOnly") {
     FORM.flow = e && e.v.flowCalibration ? clone(e.v.flowCalibration) : {litres:num(cfg("flowLitres")),minutes:num(cfg("flowMinutes")),seconds:num(cfg("flowSeconds"))};
     FORM.fields = FORM.fields.slice();
     var wi=FORM.fields.findIndex(function(x){return x.k === "waterAdd";});
@@ -1058,11 +1074,16 @@ function openForm(type, e, prefill) {
   if (type === "batt" && e) { if (v.start) v.time = tsHM(v.start); if (v.end) v.endTime = tsHM(v.end); }
   var h = '<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + sheetHead(T.label, sec, type) + '<form id="entryForm" class="fgrid" novalidate>';
   if (T.fields.some(function (x) { return x.t === "grid"; })) { var zn = cfg("zoneNote", vsec); if (zn) h += '<div class="zone-note" style="margin:0">' + esc(zn) + "</div>"; }
-  if(isWorker()&&e&&e.review)h+='<p class="help full">هذا السجل معتمد. حفظ التعديل يرسل طلب تصحيح للمشرف.</p>';
-  if(type === "refill")h += '<p class="help full">التعبئة مباشرة إلى خزان الري. أوقف الماء عند علامة الماسورة المثبتة في الموضع والعمق نفسيهما. احسب وقت جريان الماء فقط. الكمية تقديرية وتعتمد على ثبات التدفق. معايرة هذه العملية: '+esc(FORM.flow.litres)+' لتر / '+esc(FORM.flow.minutes)+' دقيقة و '+esc(FORM.flow.seconds)+' ثانية.</p><p class="help full" id="flowResult" aria-live="polite"></p>';
+  if(type==="xplant")h+='<p class="help full">يتطلب النقل اتصالًا وجردًا معتمدًا. لإلغاء نقل مسجل بعد الجرد صحّح عدده إلى صفر.</p>';
+  if(isWorker()&&e&&e.review)h+='<p class="help full">حفظ التعديل يعيد السجل للمشرف مع السبب والقيم الجديدة.</p>';
+  if(type === "refill" || type === "waterOnly")h += '<p class="help full">التعبئة مباشرة إلى خزان الري. أوقف الماء عند علامة الماسورة المثبتة في الموضع والعمق نفسيهما. احسب وقت جريان الماء فقط. الكمية تقديرية وتعتمد على ثبات التدفق. معايرة هذه العملية: '+esc(FORM.flow.litres)+' لتر / '+esc(FORM.flow.minutes)+' دقيقة و '+esc(FORM.flow.seconds)+' ثانية.</p><p class="help full" id="flowResult" aria-live="polite"></p>';
   if(isWorker() && (e || S.date<todayStr()))h+='<label class="f full">سبب التعديل أو التسجيل المتأخر<input class="in" id="changeReason" maxlength="300"></label>';
   if(type==="pump"){FORM.pressureSpecs=clone(e?.v.pressureSpecs||{gauge1:Farm.gaugeSpec('gauge1'),gauge2:Farm.gaugeSpec('gauge2')});FORM.fields=FORM.fields.map(fd=>FORM.pressureSpecs[fd.k]?Object.assign({},fd,{l:FORM.pressureSpecs[fd.k].name+" · المثالي "+FORM.pressureSpecs[fd.k].ideal+" بار"}):fd);}
-  if(['refill','mix','irr'].includes(type)&&!v.stockSource)v.stockSource=Farm.sourceDefault(type,!!e);
+  if(['refill','waterOnly','mix','irr'].includes(type)&&!v.stockSource)v.stockSource=Farm.sourceDefault(type,!!e);
+  if(type==="waterOnly"){
+    h+='<p class="help full">إضافة ماء فقط · EC وpH لم يُقاسا. تبقى جولة القياس مفتوحة.</p>';
+    FORM.fields=FORM.fields.filter(fd=>fd.k!=="fullMark");
+  }
   var fl = FORM.fields;
   fl.forEach(function (fd, i) {
     if (!fd.blk) { h += fieldHTML(fd, v); return; }
@@ -1073,13 +1094,17 @@ function openForm(type, e, prefill) {
   if (FORM.split) h += '<p class="help full" style="margin:0">' + (T.photo ? "صوّر كل جهة في خانتها. إذا صوّرت جهة واحدة فقط تُحفظ وحدها." : "عبّئ الجهة التي زرعتها أو الجهتين معاً. كل جهة تُحفظ كتسجيل مستقل.") + "</p>";
   if (type === "mix") h += '<div class="full help" id="mixHint"></div>';
   h += '<datalist id="dl_crops">' + uniqueCrops().map(function (c) { return '<option value="' + esc(c) + '">'; }).join("") + "</datalist>";
-  h += '</form><div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions">' + ((e && (!isWorker() || (!e.review && e.date===todayStr()))) ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
+  h += '</form><div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions">' + ((e && type!=="xplant" && !(type==="sow"&&Farm.balanceOf(e.id)) && (!isWorker() || (!e.review && e.date===todayStr()))) ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
   openSheet(h);
   var form = $("entryForm");
   form.addEventListener("input", updForm); form.addEventListener("change", updForm);
   form.addEventListener("submit", function (ev) { ev.preventDefault(); });
   var md = $("f_mode"); if (md) md.addEventListener("change", function () { if (FORM) FORM.modeTouched = true; });
   document.querySelectorAll(".photo-in").forEach(function (inp) { inp.addEventListener("change", onPhotoPick); });
+  if(type==="waterOnly"&&!e){
+    function remember(){if(FORM?.waterId)Shift.remember(S.date,FORM.waterId,formValues());}
+    form.addEventListener("input",remember); form.addEventListener("change",remember);
+  }
   updForm(); loadPhotos($("sheetRoot"));
 }
 function uniqueCrops() { var s = {}; S.meta.forEach(function (e) { if (e.v && e.v.crop) s[e.v.crop] = 1; }); return Object.keys(s); }
@@ -1113,7 +1138,7 @@ function refillSuggest(v, sec) {
 function compTag(fd, n, cv) { return fd.comp === "ph" ? "مصحح ≈" + f(cv, 2) : "≈" + f(cv, 0) + " عند 25°"; }
 function updForm() {
   if (!FORM) return;
-  if(FORM.type === "refill") {
+  if(FORM.type === "refill" || FORM.type === "waterOnly") {
     var timed=$("f_waterMethod").value === "بالوقت حتى علامة الامتلاء", water=$("f_waterAdd");
     var method=$("f_waterMethod").value;
     if(FORM.lastWaterMethod!==method){
@@ -1185,13 +1210,13 @@ function saveForm(btn) {
     if (fd.t === "photo") return;
     if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var x = raw[k]; if (x === "") { v[k] = ""; return; } var n = num(x); if (n == null) miss.push(fd.l + " (رقم غير صحيح)"); else v[k] = n; }); return; }
     var x = raw[fd.k];
-    if(type === "refill" && (fd.k === "fillMinutes" || fd.k === "fillSeconds") && raw.waterMethod !== "بالوقت حتى علامة الامتلاء"){v[fd.k]="";return;}
+    if((type === "refill" || type === "waterOnly") && (fd.k === "fillMinutes" || fd.k === "fillSeconds") && raw.waterMethod !== "بالوقت حتى علامة الامتلاء"){v[fd.k]="";return;}
     if (fd.show && !fd.show(raw)) { v[fd.k] = ""; return; }
     if (fd.t === "n" && x !== "") { var n = num(x); if (n == null) { miss.push(sideName(fd) + (fd.cl || fd.l) + " (رقم غير صحيح)"); return; } x = n; }
     if (fd.req && !fd.side && (x === "" || x == null)) miss.push((fd.pg ? MNAME[fd.pg] + " " : "") + fd.l);
     v[fd.k] = x;
   });
-  if(type === "refill") {
+  if(type === "refill" || type === "waterOnly") {
     if(v.waterMethod === "بالوقت حتى علامة الامتلاء") {
       var amount=flowVolume(FORM.flow,raw.fillMinutes,raw.fillSeconds);
       if(amount===null)miss.push("مدة التعبئة: أدخل دقائق صحيحة وثواني من 0 إلى 59 (مثال 2 و51)، وتحقق من معايرة التدفق في الإعدادات");
@@ -1220,12 +1245,23 @@ function saveForm(btn) {
   }
   if(isWorker() && (e?.date||S.date)>todayStr())miss.push("لا يمكن تسجيل عملية بتاريخ مستقبلي");
   Farm.validateEntry(type,v,miss);
+  if(type==="waterOnly"&&!(num(v.waterAdd)>0))miss.push("كمية الماء المضافة يجب أن تكون موجبة");
   var reason=$("changeReason");
   if(e && isWorker() && e.review && Object.keys(FORM.photos).length)miss.push("للصورة المعتمدة اطلب من المشرف تعديل الصورة مباشرة");
   if(reason && !reason.value.trim())miss.push("سبب التعديل أو التسجيل المتأخر");
   if (miss.length) { kpHide();var errorBox=$("formErrors");errorBox.hidden=false;errorBox.textContent="لم يُحفظ التسجيل. صحح التالي: "+Array.from(new Set(miss)).join("، ");errorBox.scrollIntoView({block:"center"});return; }
   $("formErrors").hidden=true;
   btn.disabled = true; btn.textContent = "جارٍ الحفظ…";
+  if(type==="waterOnly"&&!e){
+    Farm.setStockTime(null,type,S.date,v);
+    try{Shift.enqueue(FORM.waterId,{type,sec:"t",date:S.date,time:v.time,ts:Date.now(),by:S.uid,v},reason?.value||"");closeSheet();Shift.flush();render();}
+    catch(error){btn.disabled=false;btn.textContent="إعادة المحاولة";$("formErrors").hidden=false;$("formErrors").textContent=errMsg(error);}
+    return;
+  }
+  if(type==="xplant"){
+    const submitted=FORM;submitted.saving=true;
+    GSUI.commit(Farm.saveMovement(submitted,v,reason?.value.trim()||""),btn,()=>{if(FORM===submitted)closeSheet();toast(e&&isWorker()&&e.review?"أُرسل طلب التصحيح":"أكد الخادم حفظ النقل");}).finally(()=>{submitted.saving=false;});return;
+  }
   var wb = S.db.batch(), date = e ? e.date : S.date, col = S.db.collection("entries");
   var putPhoto = function (ph) { var pref = S.db.collection("photos").doc(); wb.set(pref, { data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec }); S.photos[pref.id] = ph.full; return pref.id; };
   if (type === "batt") { v.start = hmToTs(date, v.time); v.end = v.endTime ? hmToTs(date, v.endTime, v.start) : null; delete v.endTime; }
@@ -1447,7 +1483,7 @@ function findEntry(id) { return S.entries.filter(function (x) { return x.id === 
 function openFlag(id) {
   var e = findEntry(id);
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("ملاحظة المشرف") + '<label class="f" for="flagTxt">اكتب ما يجب تصحيحه أو متابعته<textarea class="in" id="flagTxt">' + esc(e && e.review && e.review.c || "") + "</textarea></label>" +
-    '<div class="sheet-actions"><button class="btn pri" type="button" data-act="saveFlag" data-id="' + esc(id) + '">حفظ الملاحظة</button></div></div></div>');
+    '<div class="sheet-actions"><button class="btn pri" type="button" data-act="saveFlag" data-id="' + esc(id) + '">إرسال سبب التصحيح</button></div></div></div>');
 }
 
 /* ================= reports ================= */
@@ -1465,7 +1501,7 @@ function toBase(it) { var q = num(it.qty); if (q == null) return null; return (i
 function unitBase(it) { return (it.unit === "مل" || it.unit === "لتر") ? "مل" : "غ"; }
 function consumption(rows) {
   var per = {}, mlA = 0, mlB = 0, down = 0, up = 0, water = 0;
-  rows.filter(function (r) { return r.type === "mix" || r.type === "refill"; }).forEach(function (r) {
+  rows.filter(function (r) { return ["mix","refill","waterOnly"].includes(r.type); }).forEach(function (r) {
     var v = r.v || {}; down += num(v.phDownMl) || 0; up += num(v.phUpMl) || 0; water += num(r.type === "mix" ? v.water : v.waterAdd) || 0;
     [["A", "mlA"], ["B", "mlB"]].forEach(function (p) {
       var ml = num(v[p[1]]); if (!ml) return; if (p[0] === "A") mlA += ml; else mlB += ml;
@@ -2002,7 +2038,7 @@ function openRecipe(r) {
     '<label class="f full" for="r_vol">حجم المحلول المركز <span class="req">*</span><div class="unitwrap"><input class="in num" ' + KPA() + ' id="r_vol" value="' + esc(r ? recipeMl(r) : "") + '"><span class="u">مل</span></div></label>' +
     '<div class="full"><h3 style="margin-bottom:8px">المواد وكمياتها</h3><datalist id="ferts">' + FERTS.map(function (x) { return '<option value="' + x + '">'; }).join("") + '</datalist><div id="riList">' + items.map(riRow).join("") + '</div><button class="btn sm" type="button" data-act="addRi">+ إضافة مادة</button></div>' +
     '<label class="f full" for="r_notes">ملاحظات (التركيز بالعناصر ppm، المورد، رقم التشغيلة…)<textarea class="in" id="r_notes">' + esc(r ? r.notes : "") + "</textarea></label>" +
-    '</form><div class="sheet-actions">' + (r ? '<button class="btn danger" type="button" data-act="delRecipe" data-id="' + esc(r.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="saveRecipe" data-id="' + (r ? r.id : "") + '">حفظ الوصفة</button></div></div></div>');
+    '<p id="formErrors" class="banner warn full" role="alert" hidden></p></form><div class="sheet-actions">' + (r ? '<button class="btn danger" type="button" data-act="delRecipe" data-id="' + esc(r.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="saveRecipe" data-id="' + (r ? r.id : "") + '">حفظ الوصفة</button></div></div></div>');
 }
 function riRow(it) { return '<div class="ri"><input class="in" list="ferts" aria-label="اسم المادة" placeholder="اسم المادة" data-ri="name" value="' + esc(it.name) + '"><input class="in num" ' + KPA() + ' aria-label="الكمية" placeholder="الكمية" data-ri="qty" value="' + esc(it.qty) + '"><select class="in" aria-label="الوحدة" data-ri="unit">' + ["غ", "كغ", "مل", "لتر"].map(function (u) { return "<option" + (it.unit === u ? " selected" : "") + ">" + u + "</option>"; }).join("") + '</select><button class="iconbtn" type="button" data-act="rmRi" aria-label="حذف السطر">✕</button></div>'; }
 function openNewUser() {
@@ -2302,9 +2338,20 @@ document.addEventListener("click", function (ev) {
       var items = Array.prototype.map.call(document.querySelectorAll("#riList .ri"), function (r) { return { name: r.querySelector('[data-ri="name"]').value.trim(), qty: num(r.querySelector('[data-ri="qty"]').value), unit: r.querySelector('[data-ri="unit"]').value }; }).filter(function (x) { return x.name; });
       if (!items.length) { toast("أضف مادة واحدة على الأقل"); return; }
       var d = { date: $("r_date").value || todayStr(), tank: $("r_tank").value, volMl: vol, items: items, notes: $("r_notes").value.trim() };
-      if (id) { var old = S.recipes.filter(function (r) { return r.id === id; })[0]; db.collection("recipes").doc(id).set(Object.assign(d, { ts: old.ts || Date.now(), by: old.by || S.uid, editedBy: S.uid })).catch(fail); }
-      else db.collection("recipes").add(Object.assign(d, { ts: Date.now(), by: S.uid })).catch(fail);
-      closeSheet(); toast("حُفظت الوصفة"); break;
+      var recipeForm = $("recForm");
+      if (!recipeForm || b.disabled) return;
+      var recipes = db.collection("recipes");
+      if (!recipeForm._ref) recipeForm._ref = id ? recipes.doc(id) : recipes.doc();
+      var previousRecipe = id && S.recipes.find(function (r) { return r.id === id; });
+      if (id && !previousRecipe) { toast("تعذر العثور على الوصفة؛ حدّث القائمة."); return; }
+      d.ts = previousRecipe ? previousRecipe.ts : Date.now();
+      d.by = previousRecipe ? previousRecipe.by : S.uid;
+      if (previousRecipe) d.editedBy = S.uid;
+      GSUI.commit(recipeForm._ref.set(d), b, function () {
+        if ($("recForm") === recipeForm) closeSheet();
+        toast("أكّد الخادم حفظ الوصفة");
+      });
+      break;
     case "delRecipe": if (!armDelete(b, id)) return; db.collection("recipes").doc(id).delete().catch(fail); closeSheet(); break;
     case "newUser": openNewUser(); break;
     case "selfTest": runSelfTest(); break;
