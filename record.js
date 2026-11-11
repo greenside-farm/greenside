@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.2.0 — تبويب «سجّل»: بطاقات الأنواع (الضغط يفتح النموذج)، كل التسجيلات، سجل النوع، تفاصيل التسجيل،
+/* GREEN SIDE 3.4.0 — تبويب «سجّل»: بطاقات الأنواع (الضغط يفتح النموذج)، كل التسجيلات، سجل النوع، تفاصيل التسجيل،
    وقائمة المراجعة السريعة للمشرف (خارج الحدود أولاً ثم «اعتماد الباقي»).
    يقرأ: تسجيلات اليوم المختار (محمّلة)، ويوماً سابقاً عند الطلب، وسجل نوع واحد لآخر 7 أيام. */
 var Rec=(()=>{
@@ -15,8 +15,8 @@ const secView=e=>secOf(e)==='g'?S.sec:secOf(e);
 const byT=(a,b)=>String(a.date||'').localeCompare(String(b.date||''))||String(a.time||'').localeCompare(String(b.time||''))||(a.ts||0)-(b.ts||0);
 
 /* شكل كل نوع: الأيقونة واللون والمجموعة */
-const TS={mix:['flask','purple'],refill:['flask','purple'],ecph:['flask','purple'],waterOnly:['drop','info'],irr:['drop','info'],temp:['therm','warn'],light:['sun','gold'],spray:['spray','teal'],note:['leaf','green'],photo:['camera','gray'],sow:['sprout','green'],xplant:['moveup','green'],harvest:['basket','green'],pump:['gauge','gray'],cal:['target','gray'],batt:['batt','gray'],svc:['wrench','gray']};
-const CAT={mix:'sol',refill:'sol',ecph:'sol',waterOnly:'sol',irr:'irr',temp:'air',light:'air',spray:'spray',note:'note',photo:'note',sow:'crop',xplant:'crop',harvest:'crop',pump:'eq',cal:'eq',batt:'eq',svc:'eq'};
+const TS={mix:['flask','purple'],refill:['flask','purple'],ecph:['flask','purple'],waterOnly:['drop','info'],irr:['drop','info'],temp:['therm','warn'],light:['sun','gold'],spray:['spray','teal'],note:['leaf','green'],photo:['camera','gray'],sow:['sprout','green'],count:['check','green'],xplant:['moveup','info'],harvest:['basket','green'],pump:['gauge','gray'],cal:['target','gray'],batt:['batt','gray'],svc:['wrench','gray']};
+const CAT={mix:'sol',refill:'sol',ecph:'sol',waterOnly:'sol',irr:'irr',temp:'air',light:'air',spray:'spray',note:'note',photo:'note',sow:'crop',count:'crop',xplant:'crop',harvest:'crop',pump:'eq',cal:'eq',batt:'eq',svc:'eq'};
 const CATS=[['all','الكل'],['sol','المحلول'],['irr','الري'],['air','الجو والضوء'],['spray','الرش'],['note','الملاحظات والصور'],['crop','الزراعة والحصاد'],['eq','المعدات والصيانة']];
 const style=t=>TS[t]||['list','gray'];
 function label(e){if(e.type==='svc')return e.kind||'صيانة';if(e.type==='cal'&&e.v&&e.v.careKind)return e.v.what||'صيانة حساس';const T=typeDef(e.type,secView(e));return T?T.label:'تسجيل';}
@@ -41,8 +41,9 @@ function vals(e){
   case 'spray':if(v.product)add(v.product);if(v.dose)add(v.dose);if(v.zone)add(v.zone);if(num(v.phi)>0)add('فترة أمان '+Board.dN(num(v.phi)),true);break;
   case 'photo':if(v.side)add(v.side);if(v.loc)add(v.loc);if(n('height')!=null)add('ارتفاع '+f(n('height'))+' سم');break;
   case 'sow':if(v.crop)add(v.crop);if(n('seeds')!=null)add(f(n('seeds'))+' بذرة');if(v.side)add(v.side);break;
-  case 'xplant':if(n('count')!=null)add(f(n('count'))+' شتلة');if(v.zone)add(v.zone);break;
-  case 'harvest':if(n('weight')!=null)add(f(n('weight'),1)+' كغ');if(n('count')!=null)add(f(n('count'))+' نبتة');if(v.grade)add(v.grade);break;
+  case 'count':if(n('usable')!=null)add(f(n('usable'))+' شتلة صالحة');{const b=window.Cycle&&Cycle.get(v.batch);if(b)add(b.crop+(b.side?' · '+b.side:''));}break;
+  case 'xplant':if(n('count')!=null)add(f(n('count'))+' شتلة');if(v.zone)add(v.zone);if(v.emptied===true)add('المشتل فارغ بعدها');break;
+  case 'harvest':if(n('weight')!=null)add(f(n('weight'),1)+' كغ');if(n('count')!=null)add(f(n('count'))+' رأس');if(v.grade)add(v.grade);if(v.final===true)add('آخر حصاد');break;
   case 'pump':if(v.status)add(v.status,v.status!=='تعمل بشكل طبيعي');if(n('gauge1')!=null)add('عداد ١: '+f(n('gauge1'),1)+' بار');if(n('gauge2')!=null)add('عداد ٢: '+f(n('gauge2'),1)+' بار');if(v.flow&&v.flow!=='منتظم في كل الأبراج')add(v.flow,true);break;
   case 'cal':if(v.what)add(v.what);if(v.result)add(v.result,v.result!=='ناجحة');break;
   case 'batt':add(v.end?'شحن '+f((v.end-(v.start||e.ts))/36e5,1)+' ساعة':'جارٍ الشحن',!v.end);if(v.before)add('قبل الشحن: '+v.before);break;
@@ -54,7 +55,7 @@ const outOfRange=e=>vals(e).some(c=>c.bad);
 const chipsHTML=(list,max)=>list.slice(0,max||4).map(c=>'<span class="rc-v'+(c.bad?' bad':'')+'">'+E(c.t)+'</span>').join('');
 
 /* ---------- مصادر البيانات ---------- */
-const HIST=['mix','refill'],META=['sow','xplant','batt','cal','harvest','spray'];
+const HIST=['mix','refill'],META=['sow','count','xplant','batt','cal','harvest','spray'];
 function inView(e){return e.type!=='selftest'&&(secOf(e)===S.sec||e.sec==='g');}
 /* سجلات صيانة الحساسات ومعايرتها (من صفحة المراقبة) ليست معايرة جهاز EC/pH */
 const meterCal=e=>!(e.type==='cal'&&e.v&&e.v.careKind);
@@ -62,7 +63,7 @@ function services(d){return (Farm.services?Farm.services():[]).filter(x=>x.date=
 function loadDay(d){
  const c=R.days[d];if(c&&(c.loading||(c.rows&&Date.now()-c.at<600000)))return;
  R.days[d]={loading:true,rows:c&&c.rows};
- S.db.collection('entries').where('date','==',d).get().then(q=>{R.days[d]={rows:q.docs.map(x=>Object.assign({id:x.id},x.data())),at:Date.now()};render();})
+ S.db.collection('entries').where('date','==',d).get().then(q=>{R.days[d]={rows:entriesOf(q),at:Date.now()};render();})
   .catch(e=>{R.days[d]={error:errMsg(e),at:Date.now()};render();});
 }
 function dayRows(d){
@@ -74,7 +75,7 @@ function fetchType(type,from,to,k){
  const col=S.db.collection('entries');
  col.where('type','==',type).where('date','>=',from).where('date','<=',to).get()
   .catch(e=>{if(e&&e.code==='failed-precondition')return col.where('date','>=',from).where('date','<=',to).get();throw e;})
-  .then(q=>{R.tl[k]={rows:q.docs.map(d=>Object.assign({id:d.id},d.data())).filter(e=>e.type===type),at:Date.now()};render();})
+  .then(q=>{R.tl[k]={rows:entriesOf(q).filter(e=>e.type===type),at:Date.now()};render();})
   .catch(e=>{R.tl[k]={error:errMsg(e),at:Date.now()};render();});
 }
 function typeData(type,sec,from,to){
@@ -230,7 +231,7 @@ function watch(id){
  if(R.subId===id)return;
  if(R.sub){R.sub();R.sub=null;}R.subId=id;
  if(String(id).startsWith('svc:'))return;
- R.sub=S.db.collection('entries').doc(id).onSnapshot(s=>{if(!s.exists){R.gone[id]=true;delete R.reg[id];}else{R.reg[id]=Object.assign({id},s.data());delete R.gone[id];}render();},e=>console.warn(e));
+ R.sub=S.db.collection('entries').doc(id).onSnapshot(s=>{if(!s.exists){R.gone[id]=true;delete R.reg[id];}else{R.reg[id]=entryOf(s);delete R.gone[id];}render();},e=>console.warn(e));
 }
 function leave(tab){if(tab!=='recDetail'&&R.sub){R.sub();R.sub=null;R.subId=null;}}
 function readingsHTML(e,T,sec){
@@ -263,6 +264,9 @@ function detailsHTML(e,T,sec){
   if(fd.t==='batch'){const b=(window.Farm&&Farm.cropReady()?Farm.crops():S.meta).find(x=>x.id===val);val=b?(b.v.crop||'')+' · '+DT(b.date):'دفعة غير معروفة';}
   else if(fd.t==='n'){const u=unitOf(fd);val=f(num(val),Math.abs(num(val))<20&&num(val)%1?1:0)+(u&&u!=='pH'?' '+u:'');}
   else if(fd.t==='t')val=fmtTime(val);
+  else if(fd.t==='chk'){if(val!==true)return;val='نعم';}
+  else if(fd.t==='calc')val=f(num(val));
+  else if(typeof val==='object')return;
   tiles.push([fd.cl||fd.l,String(val)]);
  });
  if(e.type==='note'&&v.cat===NOTE_OTHER&&v.catX)tiles.push(['النوع',v.catX]);
@@ -344,19 +348,19 @@ function review(){
 function approveRest(b){
  if(!isSup()||b.disabled)return;
  const sec=S.sec,pend=pendingOf(sec),ok=pend.filter(e=>!outOfRange(e)),bad=pend.filter(outOfRange);if(!ok.length)return;
- const batch=S.db.batch(),at=Date.now();
- ok.forEach(e=>batch.update(S.db.collection('entries').doc(e.id),{review:{s:'ok',by:S.uid,at,c:''}}));
- if(!bad.length)batch.set(S.db.collection('signoffs').doc(S.date+'_'+sec),{by:S.uid,at,sec});
- GSUI.commit(batch.commit(),b,()=>toast(bad.length?'اعتُمد '+cnt(ok.length):'اكتملت مراجعة '+SECS[sec].name));
+ const at=Date.now();
+ const done=approveChunks(ok.map(e=>e.id)).then(()=>bad.length?null:S.db.collection('signoffs').doc(S.date+'_'+sec).set({by:S.uid,at,sec}));
+ GSUI.commit(done,b,()=>toast(bad.length?'اعتُمد '+cnt(ok.length):'اكتملت مراجعة '+SECS[sec].name));
 }
 
 /* ---------- رأس نموذج التسجيل ---------- */
-function formHead(T,sec,type,e){
+function formHead(T,sec,type,e,sub2){
  const vs=sec==='g'?S.sec:sec,[ic,tone]=style(type),x=TASKS[vs]&&TASKS[vs].find(t=>t[0]===type),need=x?needOf(vs,x):0,done=need?doneOf(secEntries(S.entries,vs),type):0;
  let sub=sec==='g'?'المعدات':SECS[vs].name;
  if(e)sub+=' · تعديل تسجيل '+(e.time?fmtTime(e.time)+' · ':'')+first(e.by);
  else if(need)sub+=done<need?' · الجولة '+(done+1)+' من '+need:' · جولة إضافية';
  if(!e&&S.date!==todayStr())sub+=' · '+DT(S.date);
+ if(sub2)sub=sub2+(e?' · تعديل':'')+(!e&&S.date!==todayStr()?' · '+DT(S.date):'');
  return '<div class="fh"><span class="bd-hic '+tone+' md">'+I(ic,21)+'</span><div class="fh-t"><h2>'+E(T.label)+'</h2><span>'+E(sub)+'</span></div>'+(!e&&type!=='batt'?'<button type="button" class="fh-log" data-rc="type" data-type="'+type+'">'+I('history',15,2)+'السجل</button>':'')+'<button class="iconbtn" type="button" data-act="close" aria-label="إغلاق">✕</button></div>';
 }
 
@@ -364,7 +368,7 @@ function formHead(T,sec,type,e){
 function start(){
  if(R.flagsOff||!S.db||!S.uid||!S.role||isSup())return;
  const uid=S.uid;
- R.flagsOff=S.db.collection('entries').where('by','==',uid).where('review.s','==','flag').onSnapshot(q=>{if(S.uid!==uid)return;R.flags=q.docs.map(d=>Object.assign({id:d.id},d.data())).filter(e=>e.type!=='selftest');render();},e=>console.warn(e));
+ R.flagsOff=S.db.collection('entries').where('by','==',uid).where('review.s','==','flag').onSnapshot(q=>{if(S.uid!==uid)return;R.flags=entriesOf(q).filter(e=>e.type!=='selftest');render();},e=>console.warn(e));
 }
 function stop(){if(R.flagsOff){R.flagsOff();R.flagsOff=null;}R.flags=[];if(R.sub){R.sub();R.sub=null;R.subId=null;}R.days={};R.tl={};R.reg={};R.gone={};R.view=null;R.filter='all';R.q='';R.more=1;}
 
@@ -391,5 +395,5 @@ document.addEventListener('input',ev=>{
  if(ev.target&&ev.target.id==='rcSearch'){R.q=ev.target.value;const l=$('rcList');if(l){l.innerHTML=listBody();}}
 });
 document.addEventListener('keydown',ev=>{if(ev.target&&ev.target.id==='rcSearch'&&ev.key==='Enter'){ev.preventDefault();ev.target.blur();}});
-return {view,typeLog,detail,review,formHead,start,stop,leave,openList,openType,openDetail,flags:()=>R.flags,vals,outOfRange,_test:{R,listBody,typeData,lastOfType,series}};
+return {view,typeLog,detail,review,formHead,start,stop,leave,openList,openType,openDetail,find:findAny,flags:()=>R.flags,vals,outOfRange,_test:{R,listBody,typeData,lastOfType,series}};
 })();

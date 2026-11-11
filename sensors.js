@@ -775,7 +775,7 @@ var SENS = (function () {
     if (t == null || h == null || Math.abs(t) > 5 || Math.abs(h) > 20) { toast("التصحيح يجب أن يكون بين −5 و +5 للحرارة، وبين −20 و +20 للرطوبة"); return; }
     var off = Object.assign({}, offs()); if (!t && !h) delete off[id]; else off[id] = { temp: t, hum: h, at: dkey(Date.now()), by: S.uid || "" };
     b.disabled = true;
-    S.db.collection("config").doc("settings").set(Object.assign({}, S.settings, { sens: Object.assign({}, S.settings.sens || {}, { off: off }) }))
+    saveSettings({ sens: Object.assign({}, S.settings.sens || {}, { off: off }) })
       .then(function () { toast(!t && !h ? "أُلغي التصحيح" : "حُفظ تعويض العرض؛ القيم الخام في تقرير المتابعة لا تتغير"); }).catch(function (e) { b.disabled = false; toast(typeof errMsg === "function" ? errMsg(e) : "تعذّر الحفظ"); });
   }
 
@@ -1009,7 +1009,7 @@ var SENS = (function () {
     document.querySelectorAll("#snSet [id^=sn_]").forEach(function (el) { var k = el.id.slice(3); if (/^msg/.test(k)) o[k] = el.value.trim(); else { var n = num(el.value); if (n != null) o[k] = n; } });
     if (o.vpdMin != null && o.vpdMax != null && o.vpdMin >= o.vpdMax) { toast("VPD الأدنى يجب أن يكون أقل من الأعلى"); return; }
     b.disabled = true;
-    S.db.collection("config").doc("settings").set(Object.assign({}, S.settings, { sens: Object.assign({}, S.settings.sens || {}, o) }))
+    saveSettings({ sens: Object.assign({}, S.settings.sens || {}, o) })
       .then(function () { toast("حُفظت إعدادات الحساسات"); closeSheet(); }).catch(function (e) { b.disabled = false; toast(typeof errMsg === "function" ? errMsg(e) : "تعذّر الحفظ"); });
   }
 

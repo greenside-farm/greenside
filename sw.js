@@ -1,8 +1,8 @@
 /* GREEN SIDE service worker: يجعل التطبيق يفتح بدون إنترنت.
    ملفات التطبيق: الشبكة أولاً (لتصل التحديثات فوراً) ثم النسخة المحفوظة.
    المكتبات والخطوط: النسخة المحفوظة أولاً. بيانات Firestore لا تمر من هنا. */
-var CACHE = "greenside-v3-200";
-var SHELL = ["./", "index.html", "styles.css?v=3.2.0", "sensors.js?v=3.2.0", "workspace.js?v=3.2.0", "shift.js?v=3.2.0", "board.js?v=3.2.0", "record.js?v=3.2.0", "team.js?v=3.2.0", "app.js?v=3.2.0", "farm.js?v=3.2.0", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
+var CACHE = "greenside-v3-400";
+var SHELL = ["./", "index.html", "styles.css?v=3.4.0", "sensors.js?v=3.4.0", "workspace.js?v=3.4.0", "shift.js?v=3.4.0", "board.js?v=3.4.0", "record.js?v=3.4.0", "team.js?v=3.4.0", "app.js?v=3.4.0", "farm.js?v=3.4.0", "cycle.js?v=3.4.0", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
 });
@@ -14,6 +14,8 @@ self.addEventListener("fetch", function (e) {
   var url = new URL(req.url);
   var lib = /(^|\.)gstatic\.com$|cdnjs\.cloudflare\.com$|fonts\.googleapis\.com$/.test(url.hostname) && !/firestore|identitytoolkit|securetoken/.test(url.hostname);
   if (url.origin === location.origin) {
+    /* سؤال التطبيق عن رقم الإصدار (sw.js?t=…) لا يُحفظ: يأتي دائماً من الشبكة */
+    if (/\/sw\.js$/.test(url.pathname)) return;
     e.respondWith(fetch(req).then(function (res) {
       if (res.ok) { var copy = res.clone(); caches.open(CACHE).then(function (c) { c.put(req, copy); }); }
       return res;

@@ -1,5 +1,6 @@
 rules_version = '2';
-// GREEN SIDE 3.2.0 — green-side-2d792 (الجديد: farmSeen لعلامة قراءة الرسائل ✓✓)
+// GREEN SIDE 3.4.0 — green-side-2d792 (الجديد: دورة الزراعة — تسجيل «عدّ الشتلات» من العامل، النقل دون جرد معتمد ويعمل بدون إنترنت،
+// «آخر حصاد» يُقفل الدفعة، التحقق من قيود التكاليف والمبيعات. الدفعات القديمة المرتبطة بـ cropBalances تبقى كما هي)
 // انسخ هذا الملف كاملاً إلى Firebase ← Firestore Database ← Rules ثم Publish.
 service cloud.firestore {
  match /databases/{database}/documents {
@@ -19,10 +20,17 @@ service cloud.firestore {
   // Special sensor care records control exclusion windows in reports.
   function ordinaryEntry(d){return d.type!='cal' || !('careKind' in d.v);}
   function validWater(d){return d.type!='waterOnly' || (d.sec=='t' && d.v.waterAdd is number && d.v.waterAdd>0 && d.v.stockSource in ['الخزان الرئيسي لمياه الري','مصدر آخر']);}
+  // صيغة الحقول المشتركة في التسجيل الجديد: الوقت HH:MM، ورقم الإنشاء، وحالة الملاحظة. قيمة بنوع غير متوقع كانت تعطّل العرض عند الفريق.
+  function okShape(d){
+   return (!('time' in d) || (d.time is string && d.time.matches('[0-2][0-9]:[0-5][0-9]')))
+    && (!('ts' in d) || d.ts is number)
+    && (!('open' in d) || d.open is bool)
+    && (!('grp' in d) || (d.grp is string && d.grp.size()<=40));
+  }
   function okEntry(d){
    return d.keys().hasOnly(['type','sec','date','time','ts','by','v','grp','photo','thumb','open','review'])
-    && d.type in ['mix','refill','waterOnly','ecph','temp','irr','light','pump','sow','xplant','harvest','note','spray','photo','batt','cal','selftest']
-    && d.sec in ['n','t','g'] && gs11Day(d.date) && d.v is map && validWater(d)
+    && d.type in ['mix','refill','waterOnly','ecph','temp','irr','light','pump','sow','count','xplant','harvest','note','spray','photo','batt','cal','selftest']
+    && d.sec in ['n','t','g'] && gs11Day(d.date) && d.v is map && validWater(d) && okShape(d)
     && (!('thumb' in d)||okImg(d.thumb,200000)) && (!('photo' in d)||(d.photo is string && d.photo.size()<=40));
   }
   function balPath(batch){return /databases/$(database)/documents/cropBalances/$(batch);}
@@ -33,10 +41,24 @@ service cloud.firestore {
     return v.stockTracked==true && v.count is int && v.count>=0 && after.last==id
       && after.remaining==prior.remaining+oldCount-v.count && after.remaining>=0;
   }
-  function cropCreate(id,d){return d.type!='xplant' || (d.sec=='t' && d.v.count>0 && movePair(id,d.v,0));}
+  // 3.4.0: الدفعة = تسجيل بذر. العدّ والنقل يشيران إليه (getAfter حتى يُقبل بذر ونقل حُفظا معاً بدون إنترنت)
+  function sowOf(batch){return batch is string && batch.size()<=64 && getAfter(/databases/$(database)/documents/entries/$(batch)).data.type=='sow';}
+  function tracked(v){return v.get('stockTracked',false)==true;}
+  function flag(v,k){return !(k in v) || v[k] is bool;}
+  // نقل 3.4.0: تسجيل عادي (لا يلمس cropBalances). النقل المتتبَّع من الإصدارات السابقة يبقى مشروطاً بتحديث الرصيد
+  function newMove(v){return !tracked(v) && v.count is int && v.count>0 && sowOf(v.batch) && flag(v,'emptied');}
+  function okCount(v){return v.usable is int && v.usable>=0 && v.usable<=1000000;}
+  function cropCreate(id,d){
+    return (d.type!='xplant' || (d.sec=='t' && (tracked(d.v) ? (d.v.count>0 && movePair(id,d.v,0)) : newMove(d.v))))
+      && (d.type!='count' || (d.sec=='n' && okCount(d.v) && sowOf(d.v.batch)))
+      && (d.type!='harvest' || (flag(d.v,'final') && (d.v.get('final',false)!=true || d.v.batch is string)));
+  }
   function cropUpdate(id,d,old){
-    return old.type==d.type && (old.type!='xplant' || (d.sec==old.sec && d.v.get('batch','')==old.v.get('batch','') && d.v.get('stockTracked',false)==old.v.get('stockTracked',false)
-      && (d.v.count==old.v.count || (old.v.get('stockTracked',false) && movePair(id,d.v,old.v.count)))));
+    return old.type==d.type
+      && (old.type!='xplant' || (d.sec==old.sec && d.v.get('batch','')==old.v.get('batch','') && tracked(d.v)==tracked(old.v) && flag(d.v,'emptied')
+        && (d.v.count==old.v.count || (tracked(old.v) ? movePair(id,d.v,old.v.count) : (d.v.count is int && d.v.count>=0)))))
+      && (old.type!='count' || (d.sec==old.sec && d.v.get('batch','')==old.v.get('batch','') && okCount(d.v)))
+      && (old.type!='harvest' || (flag(d.v,'final') && (d.v.get('final',false)!=true || d.v.batch is string)));
   }
   function balanceMove(batch){
     let a=request.resource.data;
@@ -63,15 +85,19 @@ service cloud.firestore {
   match /users/{uid} {
    allow read: if isMember() || (signedIn() && request.auth.uid==uid);
    allow create,update: if isOwner();
+   // حسابات «فحص النظام» المؤقتة فقط؛ حسابات الفريق تُوقف ولا تُحذف حتى تبقى أسماؤهم على تسجيلاتهم
+   allow delete: if isOwner() && resource.data.get('selftest', false) == true;
   }
   match /entries/{id}{
    allow read: if isMember();
-   allow create: if isMember() && okId(id) && cropCreate(id,request.resource.data) && okEntry(request.resource.data) && (isSup() || ordinaryEntry(request.resource.data)) && request.resource.data.by==request.auth.uid && !('review' in request.resource.data) && (isSup() || workerDay(request.resource.data.date));
+   // الترتيب مقصود: الشروط الرخيصة التي تفصل الحالات أولاً. Firestore يوقف التقييم عند 1000 تعبير في الطلب الواحد،
+   // وتسجيل العامل المتأخر (مع السبب) يمر على هذه القاعدة ثم على قاعدة gs11 في الأسفل ضمن نفس الحد.
+   allow create: if request.resource.data.by==request.auth.uid && !('review' in request.resource.data) && (workerDay(request.resource.data.date) || isSup()) && isMember() && okId(id) && okEntry(request.resource.data) && (ordinaryEntry(request.resource.data) || isSup()) && cropCreate(id,request.resource.data);
    allow update: if isSup() && cropUpdate(id,request.resource.data,resource.data) && validWater(request.resource.data) && (!('thumb' in request.resource.data)||okImg(request.resource.data.thumb,200000));
-   allow update: if isWorker() && resource.data.type=='selftest' && resource.data.by==request.auth.uid && !('review' in resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v']) && request.resource.data.v is map;
-   allow update: if isWorker() && resource.data.type=='note' && resource.data.by==request.auth.uid && !('review' in resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['open']) && request.resource.data.open is bool;
-   allow update: if isWorker() && resource.data.type=='batt' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v']) && request.resource.data.v.diff(resource.data.v).affectedKeys().hasOnly(['end','endBy']) && resource.data.v.get('end',null)==null && request.resource.data.v.end is number && request.resource.data.v.endBy==request.auth.uid;
-   allow delete: if resource.data.type!='xplant' && (resource.data.type!='sow' || !exists(balPath(id))) && (isSup() || (isWorker() && ordinaryEntry(resource.data) && resource.data.by==request.auth.uid && !('review' in resource.data)));
+   allow update: if resource.data.type=='selftest' && resource.data.by==request.auth.uid && !('review' in resource.data) && isWorker() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v']) && request.resource.data.v is map;
+   allow update: if resource.data.type=='note' && resource.data.by==request.auth.uid && !('review' in resource.data) && isWorker() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['open']) && request.resource.data.open is bool;
+   allow update: if resource.data.type=='batt' && isWorker() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v']) && request.resource.data.v.diff(resource.data.v).affectedKeys().hasOnly(['end','endBy']) && resource.data.v.get('end',null)==null && request.resource.data.v.end is number && request.resource.data.v.endBy==request.auth.uid;
+   allow delete: if (resource.data.type!='xplant' || !tracked(resource.data.v)) && (resource.data.type!='sow' || !exists(balPath(id))) && (isSup() || (isWorker() && ordinaryEntry(resource.data) && resource.data.by==request.auth.uid && !('review' in resource.data) && workerDay(resource.data.date)));
   }
   match /photos/{id}{
    allow read: if isMember();
@@ -86,22 +112,24 @@ function gs11Member(){return request.auth != null && (gs11Owner() || get(/databa
 function gs11Supervisor(){return gs11Owner() || (request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'sup');}
 function gs11New(){return gs11Member() && request.resource.data.by == request.auth.uid && request.resource.data.created == request.time;}
 function gs11Day(d){return d is string && d.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}');}
+// نص بطول محدود (يمنع وضع قائمة أو كائن مكان النص)
+function gs11Text(x,max){return x is string && x.size()<=max;}
 match /farmWater/{id} {
  allow read: if gs11Member();
- allow create: if gs11New() && request.resource.data.keys().hasOnly(['by','date','invoice','supplier','tank','tons','time','occurred','created']) && gs11Day(request.resource.data.date) && request.resource.data.tons is number && request.resource.data.tons>0 && request.resource.data.tons<=18 && request.resource.data.tank in ['الخزان الرئيسي لمياه الخلايا','الخزان الرئيسي لمياه الري'];
+ allow create: if gs11New() && okId(id) && request.resource.data.keys().hasOnly(['by','date','invoice','supplier','tank','tons','time','occurred','created']) && gs11Day(request.resource.data.date) && dayOf(request.resource.data.date)<=farmDay() && gs11Text(request.resource.data.supplier,200) && gs11Text(request.resource.data.invoice,200) && gs11Text(request.resource.data.time,8) && request.resource.data.occurred is number && request.resource.data.tons is number && request.resource.data.tons>0 && request.resource.data.tons<=18 && request.resource.data.tank in ['الخزان الرئيسي لمياه الخلايا','الخزان الرئيسي لمياه الري'];
 }
 match /farmService/{id} {
  allow read: if gs11Member();
- allow create: if gs11New() && request.resource.data.keys().hasOnly(['by','date','kind','result','memo','created']) && gs11Day(request.resource.data.date) && request.resource.data.kind in ['فحص تسريبات خطوط الري','تنظيف الفلتر الشبكي','تنظيف الفلتر القرصي','تنظيف فلتر السلة'] && (request.resource.data.result!='يوجد تسريب' || (request.resource.data.memo.size()>0 && getAfter(/databases/$(database)/documents/farmJobs/$(id)).data.by==request.auth.uid));
+ allow create: if gs11New() && okId(id) && request.resource.data.keys().hasOnly(['by','date','kind','result','memo','created']) && gs11Day(request.resource.data.date) && dayOf(request.resource.data.date)<=farmDay() && gs11Text(request.resource.data.result,80) && gs11Text(request.resource.data.memo,2000) && request.resource.data.kind in ['فحص تسريبات خطوط الري','تنظيف الفلتر الشبكي','تنظيف الفلتر القرصي','تنظيف فلتر السلة'] && (request.resource.data.result!='يوجد تسريب' || (request.resource.data.memo.size()>0 && getAfter(/databases/$(database)/documents/farmJobs/$(id)).data.by==request.auth.uid));
 }
 match /farmJobs/{id} {
  allow read: if gs11Member();
- allow create: if gs11New() && request.resource.data.keys().hasOnly(['title','by','assignee','due','status','note','created']) && gs11Day(request.resource.data.due) && request.resource.data.status=='معلقة' && request.resource.data.title.size()>0 && (gs11Supervisor() || (request.resource.data.assignee==request.auth.uid && getAfter(/databases/$(database)/documents/farmService/$(id)).data.result=='يوجد تسريب'));
- allow update: if gs11Member() && (gs11Supervisor() || resource.data.assignee==request.auth.uid) && resource.data.status!='مكتملة' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['note','status','due','changedAt','changedBy','history']) && request.resource.data.status in ['مكتملة','مؤجلة'] && gs11Day(request.resource.data.due) && request.resource.data.changedBy==request.auth.uid && request.resource.data.changedAt==request.time;
+ allow create: if gs11New() && okId(id) && request.resource.data.keys().hasOnly(['title','by','assignee','due','status','note','created']) && gs11Day(request.resource.data.due) && request.resource.data.status=='معلقة' && gs11Text(request.resource.data.title,2100) && request.resource.data.title.size()>0 && gs11Text(request.resource.data.assignee,128) && gs11Text(request.resource.data.note,2000) && (gs11Supervisor() || (request.resource.data.assignee==request.auth.uid && getAfter(/databases/$(database)/documents/farmService/$(id)).data.result=='يوجد تسريب'));
+ allow update: if gs11Member() && (gs11Supervisor() || resource.data.assignee==request.auth.uid) && resource.data.status!='مكتملة' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['note','status','due','changedAt','changedBy','history']) && request.resource.data.status in ['مكتملة','مؤجلة'] && gs11Day(request.resource.data.due) && request.resource.data.changedBy==request.auth.uid && request.resource.data.changedAt==request.time && gs11Text(request.resource.data.note,2000) && (!('history' in request.resource.data) || (request.resource.data.history is list && request.resource.data.history.size()<=200));
 }
 match /farmMessages/{id} {
  allow read: if gs11Member() && (resource.data.audience=='team' || resource.data.by==request.auth.uid || resource.data.audience==request.auth.uid);
- allow create: if gs11New() && request.resource.data.keys().hasOnly(['by','audience','task','body','created']) && request.resource.data.body is string && request.resource.data.body.size()>0 && request.resource.data.body.size()<=2000 && (request.resource.data.audience=='team' || exists(/databases/$(database)/documents/users/$(request.resource.data.audience)));
+ allow create: if gs11New() && okId(id) && request.resource.data.keys().hasOnly(['by','audience','task','body','created']) && (!('task' in request.resource.data) || gs11Text(request.resource.data.task,64)) && request.resource.data.body is string && request.resource.data.body.size()>0 && request.resource.data.body.size()<=2000 && (request.resource.data.audience=='team' || exists(/databases/$(database)/documents/users/$(request.resource.data.audience)));
 }
 // 3.2.0: آخر وقت قرأ فيه كل عضو محادثاته (لعلامة ✓✓). كل عضو يكتب وثيقته فقط.
 match /farmSeen/{uid} {
@@ -109,24 +137,28 @@ match /farmSeen/{uid} {
  allow create, update: if gs11Member() && request.auth.uid == uid && request.resource.data.keys().hasOnly(['rooms','at']) && request.resource.data.rooms is map && request.resource.data.at == request.time;
  allow delete: if gs11Member() && request.auth.uid == uid;
 }
+// 3.4.0: نوع القيد من القائمة، والتوزيع التلقائي يُخزَّن أوزاناً (عدد النباتات) حتى تبقى الأرقام ثابتة تاريخياً، والمبيعات تحمل الوزن المبيع
+function ledgerOk(d){return d.amount is number && d.amount>=0 && d.by==request.auth.uid && gs11Day(d.date) && d.allocation is list && d.allocation.size()<=300
+ && (!('kind' in d) || d.kind in ['تكلفة','مبيعات','شراء مخزون','شراء أصل']) && (!('kg' in d) || (d.kg is number && d.kg>=0))
+ && (!('memo' in d) || gs11Text(d.memo,500)) && (!('basis' in d) || gs11Text(d.basis,40)) && (!('category' in d) || gs11Text(d.category,60));}
 match /farmLedger/{id} {
  allow read: if gs11Owner();
- allow create,update: if gs11Owner() && request.resource.data.amount is number && request.resource.data.amount>=0 && request.resource.data.by==request.auth.uid && gs11Day(request.resource.data.date) && request.resource.data.allocation is list;
-}
-function gs11Entry(d){
- return d.keys().hasOnly(['type','sec','date','time','ts','by','v','grp','photo','thumb','open','review']) && d.sec in ['n','t','g'] && gs11Day(d.date) && d.time is string && d.time.matches('[0-2][0-9]:[0-5][0-9]') && d.v is map && d.type in ['sow','xplant','harvest','refill','waterOnly','mix','light','note','temp','ecph','photo','spray','pump','irr','batt','cal'];
+ allow create,update: if gs11Owner() && ledgerOk(request.resource.data);
+ // 3.3.0: المالك يحذف قيداً أدخله بالخطأ
+ allow delete: if gs11Owner();
 }
 function gs11AuditPair(id,prior){
  let a=getAfter(/databases/$(database)/documents/farmChanges/$(request.resource.data.v.auditId)).data;
  return a.created==request.time && a.by==request.auth.uid && a.entry==id && a.date==request.resource.data.date && a.type==request.resource.data.type && a.before==prior && a.after==request.resource.data.v && !a.requested;
 }
 match /entries/{id} {
- allow create: if gs11Member() && okId(id) && cropCreate(id,request.resource.data) && okEntry(request.resource.data) && (isSup() || ordinaryEntry(request.resource.data)) && dayOf(request.resource.data.date)<=farmDay() && gs11Entry(request.resource.data) && request.resource.data.by==request.auth.uid && !('review' in request.resource.data) && gs11AuditPair(id,null);
- allow update: if gs11Member() && cropUpdate(id,request.resource.data,resource.data) && (isSup() || ordinaryEntry(resource.data)) && resource.data.by==request.auth.uid && !('review' in resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v','time','open','photo','thumb']) && okEntry(request.resource.data) && (isSup() || ordinaryEntry(request.resource.data)) && gs11Entry(request.resource.data) && gs11AuditPair(id,resource.data.v);
+ // 3.4.0: okEntry يتحقق من المفاتيح والقسم والتاريخ وصيغة الوقت؛ أُزيلت gs11Entry لأنها كانت تكرر الفحص نفسه وتقرّب الطلب من حد 1000 تعبير
+ allow create: if request.resource.data.by==request.auth.uid && !('review' in request.resource.data) && ('auditId' in request.resource.data.v) && request.resource.data.type!='selftest' && request.resource.data.time is string && gs11Member() && okId(id) && okEntry(request.resource.data) && dayOf(request.resource.data.date)<=farmDay() && gs11AuditPair(id,null) && (ordinaryEntry(request.resource.data) || isSup()) && cropCreate(id,request.resource.data);
+ allow update: if resource.data.by==request.auth.uid && !('review' in resource.data) && ('auditId' in request.resource.data.v) && request.resource.data.type!='selftest' && request.resource.data.time is string && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['v','time','open','photo','thumb']) && gs11Member() && okEntry(request.resource.data) && gs11AuditPair(id,resource.data.v) && ((ordinaryEntry(resource.data) && ordinaryEntry(request.resource.data)) || isSup()) && cropUpdate(id,request.resource.data,resource.data);
 }
 match /farmChanges/{id} {
  allow read: if gs11Member() && (gs11Supervisor() || resource.data.by==request.auth.uid);
- allow create: if gs11New() && request.resource.data.keys().hasOnly(['entry','by','date','type','sec','before','after','requested','reason','created']) && request.resource.data.reason is string && request.resource.data.reason.size()>0 && request.resource.data.reason.size()<=300 && request.resource.data.after.auditId==id && gs11ChangeTarget(id);
+ allow create: if gs11New() && okId(id) && request.resource.data.keys().hasOnly(['entry','by','date','type','sec','before','after','requested','reason','created']) && request.resource.data.reason is string && request.resource.data.reason.size()>0 && request.resource.data.reason.size()<=300 && request.resource.data.after.auditId==id && gs11ChangeTarget(id);
  allow update: if gs11Supervisor() && resource.data.requested && !('resolution' in resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['resolution','reviewedBy','reviewedAt','resolutionReason']) && request.resource.data.reviewedBy==request.auth.uid && request.resource.data.reviewedAt==request.time && request.resource.data.resolution in ['معتمد','مرفوض'] && (!('resolutionReason' in request.resource.data) || (request.resource.data.resolutionReason is string && request.resource.data.resolutionReason.size()<=300));
 }
 function gs11ChangeTarget(id){
@@ -138,7 +170,7 @@ function gs11ChangeTarget(id){
 
 match /farmLevels/{id}{
  allow read: if gs11Member();
- allow create: if gs11Supervisor() && gs11New() && request.resource.data.keys().hasOnly(['by','date','time','observed','tons','memo','created']) && gs11Day(request.resource.data.date) && request.resource.data.observed is int && request.resource.data.tons is number && request.resource.data.tons>=0 && request.resource.data.tons<=18;
+ allow create: if gs11Supervisor() && gs11New() && okId(id) && request.resource.data.keys().hasOnly(['by','date','time','observed','tons','memo','created']) && gs11Day(request.resource.data.date) && request.resource.data.observed is int && request.resource.data.tons is number && request.resource.data.tons>=0 && request.resource.data.tons<=18;
 }
 
  match /{document=**}{allow read,write: if false;}

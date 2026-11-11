@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.2.0 — إيصال تعويض الماء وقائمة الإرسال المحلية (واجهة الوردية القديمة محفوظة للرجوع) */
+/* GREEN SIDE 3.4.0 — إيصال تعويض الماء وقائمة الإرسال المحلية (واجهة الوردية القديمة محفوظة للرجوع) */
 var Shift=(()=>{
 'use strict';
 const sending=new Set(), errors=new Map();
@@ -124,7 +124,7 @@ function home(tools){
  if(live)h+=tools.liveCards();
  if(!owner&&!isWorker())h+=production();
  h+='<section class="shift-panel"><h3>جولات القسم</h3>'+(!S.dayLoaded||S.dayError?'<p>لم يكتمل تحميل سجل الجولات.</p>':todo.length?todo.map(x=>'<div class="ux-row"><span>'+E(typeDef(x[0],S.sec).label)+' · '+doneOf(rows,x[0])+' / '+needOf(S.sec,x)+'</span>'+newEntry('سجّل',x[0])+'</div>').join(''):'<p>لا جولات متبقية بحسب السجل المحمّل.</p>')+'</section>';
- const last=rows.filter(e=>['waterOnly','refill','mix','irr','pump','harvest'].includes(e.type)).at(-1);
+ const lastRows=rows.filter(e=>['waterOnly','refill','mix','irr','pump','harvest'].includes(e.type)),last=lastRows[lastRows.length-1];
  if(last)h+='<section class="shift-panel"><small>آخر تدخل مسجّل في القسم</small><h3>'+E(typeDef(last.type,S.sec).label)+'</h3><p>'+E(fmtTime(last.time))+' · '+E(nameOf(last.by))+'</p>'+route('فتح سجل القسم','ops')+'</section>';
  h+='<details class="shift-panel"><summary>أدوات المزرعة وبقية الملخصات</summary>'+Farm.home(live)+'</details>';
  return h+'<p class="shift-alt"><button type="button" class="linkbtn" data-shift="classic">التبديل إلى الواجهة السابقة للرئيسية</button></p>';

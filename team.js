@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.2.0 — «الفريق»: محادثات مثل تطبيقات المراسلة (الفريق + محادثة لكل شخص) والمهام.
+/* GREEN SIDE 3.4.0 — «الفريق»: محادثات مثل تطبيقات المراسلة (الفريق + محادثة لكل شخص) والمهام.
    الرسائل والمهام من مجموعات farmMessages و farmJobs الحالية. غير المقروء يُحفظ على الجهاز،
    وعلامة القراءة ✓✓ تعمل عند نشر قاعدة farmSeen (كل مستخدم يكتب وثيقته فقط). */
 var Team=(()=>{
@@ -44,7 +44,7 @@ let rt=0;function renderTabsSoon(){clearTimeout(rt);rt=setTimeout(()=>{if(typeof
 /* ---------- علامة القراءة ✓✓ (وثيقة لكل مستخدم في farmSeen) ---------- */
 function start(){
  if(T.seenOff||!S.db||!S.uid||!S.role)return;const uid=S.uid;
- T.seenOff=S.db.collection('farmSeen').onSnapshot(q=>{if(S.uid!==uid)return;const m={};q.forEach(d=>{m[d.id]=d.data();});T.docs=m;T.seenOk=true;if(S.tab==='chat')render();},()=>{T.seenOk=false;});
+ T.seenOff=S.db.collection('farmSeen').onSnapshot(q=>{if(S.uid!==uid)return;const m={};q.forEach(d=>{const x=d.data()||{};m[d.id]={rooms:plain(x.rooms)?x.rooms:{}};});T.docs=m;T.seenOk=true;if(S.tab==='chat')render();},()=>{T.seenOk=false;});
 }
 function stop(){if(T.seenOff){T.seenOff();T.seenOff=null;}T.docs={};T.seenOk=null;T.seen=null;T.room=null;T.draft={};T.q='';T.tab=null;clearTimeout(T.wt);T.pend={};}
 function pushSeen(room,t){if(T.seenOk===false||!S.db)return;T.pend[room]=Math.max(T.pend[room]||0,t);clearTimeout(T.wt);T.wt=setTimeout(flushSeen,1200);}

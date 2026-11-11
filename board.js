@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.2.0 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
+/* GREEN SIDE 3.4.0 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
    يقرأ البيانات المحمّلة فقط (التسجيلات، الإعدادات، الحساسات، المزرعة) ولا يكتب شيئاً في قاعدة البيانات. */
 var Board=(()=>{
 'use strict';
@@ -125,6 +125,8 @@ function brief(e){
   case 'pump':if(num(v.gauge1)!=null)o.push(f(num(v.gauge1),1)+' بار');break;
   case 'harvest':if(num(v.weight)!=null)o.push(f(num(v.weight),1)+' كغ');break;
   case 'sow':if(num(v.seeds)!=null)o.push(f(num(v.seeds))+' بذرة');break;
+  case 'count':if(num(v.usable)!=null)o.push(f(num(v.usable))+' شتلة صالحة');break;
+  case 'xplant':if(num(v.count)!=null)o.push(f(num(v.count))+' شتلة');if(v.zone)o.push(v.zone);break;
  }
  return o.slice(0,2).join(' · ');
 }
@@ -351,8 +353,8 @@ function batchesCard(sec){
  const t=todayStr(),list=sec==='n'?B.nursery.slice().sort((a,b)=>b.age-a.age).slice(0,3):B.towers.slice().sort((a,b)=>a.age-b.age).slice(0,3),caU=num(cfg('caUntil','t'))||0;
  const rows=list.map(b=>{
   if(b.kind==='n'){const left=b.target-b.age,ready=left<=0,p=Math.max(2,Math.min(100,b.age/b.target*100));
-   return '<div class="bd-b"><div class="bd-b-h"><span><i class="s-n"></i>'+E(b.name)+'</span><em class="'+(ready?'warn':left<=3?'soon':'')+'">'+(ready?'جاهزة للنقل':'النقل بعد '+dN(left))+'</em></div><div class="bd-prog"><i style="width:'+p.toFixed(0)+'%"></i></div><small>عمر '+b.age+' من '+b.target+' يوماً'+(b.remaining!=null?' · '+f(b.remaining)+' شتلة صالحة':b.seeds?' · '+f(b.seeds)+' بذرة':'')+(b.counted?'':' · لم يُعتمد الجرد')+'</small></div>';}
-  return '<div class="bd-b"><div class="bd-b-h"><span><i class="s-t"></i>'+E(b.name)+'</span><em>'+(b.age===0?'نُقلت اليوم':dN(b.age)+' في الأبراج')+'</em></div><small>نُقلت '+E(DT(b.date))+(b.count?' · '+f(b.count)+' شتلة':'')+(b.zone?' · '+E(b.zone):'')+(caU&&b.age<=caU?' · فترة رش الكالسيوم':'')+(b.harvested?' · بدأ الحصاد':'')+'</small></div>';
+   return '<a href="#" class="bd-b" data-cy="batch" data-id="'+E(b.id)+'"><div class="bd-b-h"><span><i class="s-n"></i>'+E(b.name)+'</span><em class="'+(ready?'warn':left<=3?'soon':'')+'">'+(ready?'جاهزة للنقل':'النقل بعد '+dN(left))+'</em></div><div class="bd-prog"><i style="width:'+p.toFixed(0)+'%"></i></div><small>عمر '+b.age+' من '+b.target+' يوماً'+(b.remaining!=null?' · '+f(b.remaining)+' شتلة في المشتل':b.seeds?' · '+f(b.seeds)+' بذرة':'')+(b.counted?'':' · لم تُعدّ بعد')+'</small></a>';}
+  return '<a href="#" class="bd-b" data-cy="batch" data-id="'+E(b.id)+'"><div class="bd-b-h"><span><i class="s-t"></i>'+E(b.name)+'</span><em>'+(b.age===0?'نُقلت اليوم':dN(b.age)+' في الأبراج')+'</em></div><small>نُقلت '+E(DT(b.date))+(b.count?' · '+f(b.count)+' نبتة':'')+(b.zone?' · '+E(b.zone):'')+(caU&&b.age<=caU?' · فترة رش الكالسيوم':'')+(b.harvested?' · بدأ الحصاد':'')+'</small></a>';
  }).join('');
  const weeks=[];for(let i=5;i>=0;i--){const to=addDays(t,-7*i),from=addDays(to,-6),h=Farm.harvestSummary(Farm.crops(),from,to);weeks.push({v:h.total,cur:i===0,label:i===0?'هذا':(+from.slice(8))+'/'+(+from.slice(5,7))});}
  const mxW=Math.max.apply(null,weeks.map(w=>w.v))||0,prevW=weeks[4].v,curW=weeks[5].v,pc=prevW?Math.round((curW-prevW)/prevW*100):null;
@@ -480,13 +482,13 @@ function hub(){
  const tSub=T.error?'تعذّر تحميل سجل المياه':!T.ready?'جارٍ التحميل…':T.none?'لم يُسجَّل جرد للخزان بعد':T.old?'آخر جرد قديم · سجّل جرداً جديداً':T.lastWater?'آخر حمولة '+DT(T.lastWater.date)+' · '+f(T.lastWater.tons,1)+' طن':'لا حمولات مسجلة خلال 120 يوماً';
  const okBal=T.ready&&T.balance!=null&&!T.unknown&&!T.bad;
  h+=tile({icon:'truck',tone:'info',title:'المياه والخزان',sub:tSub,warn:T.ready&&(T.none||T.old||!!T.unknown||T.bad),stat:okBal?f(T.balance,1):'',statU:'طن متبقٍ',main:'data-farm="water"',mainLabel:'استلام حمولة ماء',acts:act('استلام حمولة ماء','data-farm="water"',true)+act('السجل','data-farm="route" data-id="deliveries"')});
- const ready=B?B.nursery.filter(b=>b.age>=b.target).length:0,nB=B?B.nursery.length+B.towers.length:null;
- h+=tile({icon:'sprout',tone:'green',title:'دفعات الزراعة',sub:!B?(fe('crop')?'تعذّر تحميل سجل الزراعة':'جارٍ التحميل…'):ready?pl(ready,'دفعة جاهزة للنقل','دفعتان جاهزتان للنقل','دفعات جاهزة للنقل','دفعة جاهزة للنقل'):'لا دفعات جاهزة للنقل اليوم',warn:ready>0,stat:nB==null?'':String(nB),statU:'دفعات',main:'data-farm="sow"',mainLabel:'زراعة بذور',acts:act('زراعة بذور','data-farm="sow"',true)+act('نقل','data-farm="moveBatch"')+act('السجل','data-farm="route" data-id="crop"')});
+ const ready=B?B.nursery.filter(b=>b.age>=b.target).length:0,nB=B?new Set(B.nursery.concat(B.towers).map(b=>b.id)).size:null;
+ h+=tile({icon:'sprout',tone:'green',title:'دورة الزراعة',sub:!B?(fe('crop')?'تعذّر تحميل سجل الزراعة':'جارٍ التحميل…'):ready?pl(ready,'دفعة جاهزة للنقل','دفعتان جاهزتان للنقل','دفعات جاهزة للنقل','دفعة جاهزة للنقل'):'لا دفعات جاهزة للنقل اليوم',warn:ready>0,stat:nB==null?'':String(nB),statU:'دفعات قائمة',main:'data-farm="route" data-id="crop"',mainLabel:'الدفعات',acts:act('دفعة جديدة','data-farm="sow"',true)+act('الدفعات','data-farm="route" data-id="crop"')});
  if(sup){const low=['A','B'].filter(k=>stc[k]).map(k=>({k,o:stc[k]})).sort((a,b)=>a.o.pct-b.o.pct)[0];
   h+=tile({icon:'flask',tone:'purple',title:'المحلول والعبوات',sub:low?'عبوة '+low.k+' متبقٍ نحو '+f(low.o.pct)+'%':'سجّل وصفة العبوات لمتابعة المتبقي',warn:!!low&&low.o.pct<25,stat:low?f(low.o.pct)+'%':'',statU:low?'عبوة '+low.k:'',main:'data-bd="tab" data-t="sup"',mainLabel:'العبوات والخلطة',acts:act('وصفة عبوة جديدة','data-act="newRecipe"',true)+act('العبوات','data-bd="tab" data-t="sup"')});}
  const hs=D&&!D.access&&D.health,sIss=hs?hs.stale.length+hs.lowBatt.length+(hs.late?1:0):0;
  h+=tile({icon:'radio',tone:'teal',title:'المراقبة والحساسات',sub:!hs?'الحساسات غير متصلة الآن':!hs.n?'لا حساسات في هذا القسم':sIss?pl(sIss,'ملاحظة على الحساسات','ملاحظتان على الحساسات','ملاحظات على الحساسات','ملاحظة على الحساسات'):'كل الحساسات تعمل',warn:sIss>0,stat:hs?String(hs.n):'',statU:'حساسات',main:'data-bd="tab" data-t="sens"',mainLabel:'فتح المراقبة',acts:act('فتح المراقبة','data-bd="tab" data-t="sens"',true)+(sup?act('التقارير','data-bd="tab" data-t="rep"'):'')});
- if(owner)h+=tile({icon:'coins',tone:'gray',title:'التكاليف',sub:'للمالك فقط · تكلفة الدورة الزراعية',main:'data-farm="route" data-id="finance"',mainLabel:'التكاليف',acts:act('إضافة قيد','data-farm="cost"',true)+act('السجل','data-farm="route" data-id="finance"')});
+ if(owner)h+=tile({icon:'coins',tone:'gold',title:'التكاليف والمبيعات',sub:'للمالك فقط · الهامش وتكلفة الكيلو لكل دفعة',main:'data-farm="route" data-id="finance"',mainLabel:'التكاليف والمبيعات',acts:act('تكلفة','data-farm="cost"',true)+act('مبيعات','data-farm="sale"',true)+act('السجل','data-farm="route" data-id="finance"')});
  h+='</div>';
  /* أدوات أخرى: قائمة مختصرة */
  const row=(icon,title,sub,attrs,badge)=>'<a href="#" class="bd-li" '+attrs+'><span class="bd-hic sm">'+I(icon,16)+'</span><span class="bd-li-t"><b>'+E(title)+'</b><small>'+E(sub)+'</small></span>'+(badge?'<span class="bd-badge">'+E(badge)+'</span>':'')+I('chev',16,2)+'</a>';

@@ -1,9 +1,9 @@
-/* GREEN SIDE 3.2.0 — متابعة المشتل والأبراج في البيت المحمي
+/* GREEN SIDE 3.4.0 — متابعة المشتل والأبراج في البيت المحمي
    البيانات في Firebase Firestore، والدخول عبر Firebase Authentication.
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "3.2.0";
+var APP_VERSION = "3.4.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -13,7 +13,7 @@ var DEF = {
   /* حدود النهار والليل للجو (المشتل = مرحلة الشتلة) */
   airDayMin: 18, airDayMax: 28, airNightMin: 12, airNightMax: 22, rhDayMin: 50, rhDayMax: 85, rhNightMin: 55, rhNightMax: 92, avgMin: 18, avgMax: 23, dayFrom: 6, dayTo: 18,
   nMix: 1, nEcph: 3, nTemp: 5, nLight: 5, nIrr: 3, nPhoto: 1, nNote: 1, pumpL: 20, tankL: 25, zoneNote: "",
-  flowLitres: 60, flowMinutes: 1, flowSeconds: 6, atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, capR: 3000, capL: 3000, daysToTransplant: 21,
+  flowLitres: 60, flowMinutes: 1, flowSeconds: 6, atc: false, ecCoef: 0.019, battHours: 24, battMaxCharge: 8, calDays: 14, capacity: 6000, capR: 3000, capL: 3000, daysToTransplant: 21, daysToHarvest: 35,
   levelUnit: "L", lPerCm: 10, useLearned: true, noteCats: [], atcChecked: "",
   caFirst: 7, caEvery: 7, caUntil: 42, insEvery: 0, fungEvery: 0,
   doses: [2.5, 5, 7.5, 10, 12.5], fullDose: 12.5,
@@ -265,7 +265,33 @@ TYPES_T.waterOnly = {
     {k:"waterAdd",l:"الكمية المضافة",t:"n",u:"لتر",req:1},MEMO
   ]
 };
-var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "note", "spray", "photo"], t: ["waterOnly", "refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
+/* 3.4.0 دورة الزراعة: «عدّ الشتلات» يسجّله العامل، والنقل والحصاد بأزرار سريعة (المنطقة والجودة)، و«آخر حصاد» يُقفل الدفعة */
+TYPES_N.count = { label: "عدّ الشتلات", short: "العدّ", desc: "عدد الشتلات الصالحة في دفعة الآن", fields: [
+  { k: "batch", l: "دفعة البذر", t: "batch", req: 1, w: "full" },
+  { k: "usable", l: "عدد الشتلات الصالحة الآن", t: "n", u: "شتلة", req: 1, w: "full", integer: 1, sep: 1, big: 1 },
+  { k: "time", l: "وقت العدّ", t: "t", req: 1, w: "full" },
+  MEMO] };
+TYPES_T.xplant.fields = [
+  { k: "batch", l: "دفعة الزراعة", t: "batch", req: 1, w: "full" },
+  { k: "count", l: "عدد الشتلات المنقولة", t: "n", u: "شتلة", req: 1, w: "full", integer: 1, sep: 1, big: 1 },
+  { k: "zone", l: "المنطقة", t: "chips", o: ZONE_T, w: "full" },
+  { k: "towers", l: "أرقام الأبراج", t: "x", w: "full" },
+  { k: "time", l: "وقت النقل", t: "t", req: 1, w: "full" },
+  { k: "emptied", l: "لم يبقَ شيء في المشتل من هذه الدفعة", t: "chk", hint: "استخدمه عند نقل آخر الشتلات إن لم تُعدّ الدفعة", w: "full" },
+  MEMO];
+TYPES_T.harvest.fields = [
+  { k: "batch", l: "دفعة البذر", t: "batch", w: "full" },
+  { k: "weight", l: "الوزن", t: "n", u: "كغ", req: 1, big: 1 },
+  { k: "count", l: "عدد الرؤوس", t: "n", u: "رأس", integer: 1, big: 1 },
+  { k: "rejected", l: "منها مستبعدة", t: "n", u: "رأس", integer: 1 },
+  { k: "saleable", l: "الصالح للبيع", t: "calc" },
+  { k: "grade", l: "الجودة", t: "chips", o: ["ممتاز", "جيد", "مقبول"], w: "full" },
+  { k: "zone", l: "المنطقة", t: "chips", o: ZONE_T, w: "full" },
+  { k: "crop", l: "الصنف", t: "x", w: "full", list: "crops", show: function (v) { return !v.batch; } },
+  { k: "time", l: "وقت الحصاد", t: "t", req: 1, w: "full" },
+  { k: "final", l: "هذا آخر حصاد للدفعة", t: "chk", hint: "تُقفل الدفعة وتُحسب نتيجتها النهائية", w: "full" },
+  MEMO];
+var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "count", "note", "spray", "photo"], t: ["waterOnly", "refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
 var TASKS = { n: [["mix", "nMix"], ["temp", "nTemp"], ["irr", "nIrr"], ["light", "nLight"], ["note", "nNote"], ["photo", "nPhoto"]],
   t: [["refill", "nRefill"], ["ecph", "nEcph"], ["temp", "nTemp"], ["light", "nLight"], ["pump", "nPump"], ["photo", "nPhoto"]] };
 var SHARED = ["mix", "ecph", "note", "photo"];
@@ -277,22 +303,25 @@ var S = {
   settings: clone(DEF), users: {}, date: todayStr(), entries: [], signoff: {}, openNotes: [], recipes: [], hist: [], meta: [],
   tab: "today", sec: lsGet("gs_sec") === "t" ? "t" : "n", repDays: 7, rep: null, photos: {}, dirty: false, installEvt: null
 };
-var unsubDay = [], unsubAll = [], memberSubs = false;
+var unsubDay = [], unsubAll = [], unsubMe = [], memberSubs = false;
 
 /* ================= utils ================= */
 function clone(o) { return JSON.parse(JSON.stringify(o)); }
 function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
 function lsSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 function pad(n) { return (n < 10 ? "0" : "") + n; }
-function farmDate(d){return new Date((d?d.getTime():Date.now())+10800000);}
+/* وقت المزرعة (الرياض). تاريخ غير صالح يُعامل كـ«الآن» بدل أن يوقف الصفحة */
+function farmDate(d){var t=d&&!isNaN(d)?d.getTime():Date.now(),r=new Date(t+10800000);return isNaN(r)?new Date(Date.now()+10800000):r;}
 function todayStr(d){return farmDate(d).toISOString().slice(0,10);}
 function nowTime(){return farmDate().toISOString().slice(11,16);}
-function addDays(s,n){return todayStr(new Date(Date.parse(s+'T12:00:00+03:00')+n*864e5));}
+function addDays(s,n){return todayStr(new Date(Date.parse((okDay(s)?s:todayStr())+'T12:00:00+03:00')+(+n||0)*864e5));}
 function daysBetween(a, b) { return Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 864e5); }
-function fmtDate(s, opt) { try { return new Date(s + "T12:00:00").toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", opt || { weekday: "long", day: "numeric", month: "long" }); } catch (e) { return s; } }
+function fmtDate(s, opt) { if (!okDay(s)) return ""; try { return new Date(s + "T12:00:00").toLocaleDateString("ar-SA-u-ca-gregory-nu-latn", opt || { weekday: "long", day: "numeric", month: "long" }); } catch (e) { return ""; } }
 function fmtShort(s) { return fmtDate(s, { day: "numeric", month: "short" }); }
-function fmtTime(t) { if (!t) return ""; var p = String(t).split(":"); var h = +p[0]; if (isNaN(h)) return t; return (h % 12 || 12) + ":" + p[1] + " " + (h < 12 ? "ص" : "م"); }
-function tsHM(ts) { return farmDate(new Date(ts)).toISOString().slice(11,16); }
+/* «13:05» ← «1:05 م». أي قيمة ليست وقتاً صحيحاً تُعرض فارغة (لا يُعاد النص كما هو: كان ثغرة حقن) */
+function fmtTime(t) { var m = /^(\d{1,2}):(\d{2})$/.exec(typeof t === "string" ? t : ""); if (!m || +m[1] > 23 || +m[2] > 59) return ""; var h = +m[1]; return (h % 12 || 12) + ":" + m[2] + " " + (h < 12 ? "ص" : "م"); }
+function okTs(ts) { return typeof ts === "number" && isFinite(ts) && ts > 0 && ts < 4102444800000; }
+function tsHM(ts) { ts = +ts; return okTs(ts) ? farmDate(new Date(ts)).toISOString().slice(11,16) : ""; }
 function tsTime(ts) { return fmtTime(tsHM(ts)); }
 function fmtAgo(h) { if (h == null) return "—"; if (h < 1) return "أقل من ساعة"; if (h < 48) return Math.round(h) + " ساعة"; return Math.round(h / 24) + " يوم"; }
 function safeImg(v) { v = String(v || ""); return /^data:image\/(jpeg|png|gif|webp);base64,[A-Za-z0-9+\/=]+$/.test(v) ? v : ""; }
@@ -304,6 +333,57 @@ function fml(n) { return f(n, Math.abs(n) < 20 ? 1 : 0); }
 function avg(a) { a = a.filter(function (x) { return x != null && isFinite(x); }); return a.length ? a.reduce(function (s, x) { return s + x; }, 0) / a.length : null; }
 function sum(a) { return a.filter(function (x) { return x != null && isFinite(x); }).reduce(function (s, x) { return s + x; }, 0); }
 function median(a) { a = a.filter(function (x) { return x != null && isFinite(x); }).sort(function (x, y) { return x - y; }); if (!a.length) return null; var m = Math.floor(a.length / 2); return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; }
+/* ===== تنقية ما يُقرأ من قاعدة البيانات =====
+   قواعد الحماية تتحقق من الأنواع عند الكتابة، وهذه طبقة ثانية عند القراءة: وثيقة واحدة بقيمة غير متوقعة
+   (تسجيل قديم، أو حساب عضو أُسيء استخدامه) لا تعطّل الصفحة عند بقية الفريق ولا تُدخل نصاً غير آمن. */
+function okHM(t) { return typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t); }
+function okDay(d) { return typeof d === "string" && /^\d{4}-\d{2}-\d{2}$/.test(d) && !isNaN(Date.parse(d + "T12:00:00Z")); }
+function plain(o) { return !!o && typeof o === "object" && !Array.isArray(o) && typeof o.toMillis !== "function"; }
+function txt(x, max) { return (typeof x === "string" ? x : typeof x === "number" && isFinite(x) ? String(x) : "").slice(0, max || 5000); }
+function normHM(t) { if (okHM(t)) return t; var m = /^(\d{1,2}):(\d{2})$/.exec(typeof t === "string" ? t : ""); return m && +m[1] < 24 && +m[2] < 60 ? pad(+m[1]) + ":" + m[2] : ""; }
+function normStamp(x) { return x && typeof x === "object" && typeof x.seconds === "number" && isFinite(x.seconds) && x.seconds > 0 && x.seconds < 4102444800 ? x : null; }
+function normSpecs(x) {
+  if (!plain(x)) return null; var out = {};
+  ["gauge1", "gauge2"].forEach(function (k) {
+    var g = x[k]; if (!plain(g)) return;
+    var n = [g.min, g.max, g.step, g.ideal];
+    if (n.every(function (q) { return typeof q === "number" && isFinite(q); }) && g.step > 0 && g.max > g.min && (g.max - g.min) / g.step <= 500)
+      out[k] = { name: txt(g.name, 60) || (k === "gauge1" ? "عداد ١" : "عداد ٢"), min: g.min, max: g.max, step: g.step, ideal: g.ideal };
+  });
+  return out.gauge1 && out.gauge2 ? out : null;
+}
+function normEntry(e) {
+  if (!plain(e)) e = {};
+  e.id = txt(e.id, 200); e.type = txt(e.type, 24); e.by = txt(e.by, 128);
+  if (e.sec != null && e.sec !== "n" && e.sec !== "t" && e.sec !== "g") e.sec = "n";
+  if (!okDay(e.date)) e.date = "";
+  if (e.time != null) e.time = normHM(e.time);
+  if (e.ts != null && !okTs(e.ts)) e.ts = 0;
+  var v = plain(e.v) ? e.v : {}; e.v = v;
+  Object.keys(v).forEach(function (k) {
+    var x = v[k]; if (x === null || typeof x !== "object") return;
+    if (k === "pressureSpecs") { var sp = normSpecs(x); if (sp) v[k] = sp; else delete v[k]; }
+    else if (k === "flowCalibration") v[k] = plain(x) && [x.litres, x.minutes, x.seconds].every(function (q) { return num(q) != null; }) ? x : null;
+    else v[k] = "";
+  });
+  ["start", "end"].forEach(function (k) { if (v[k] != null && !okTs(v[k])) v[k] = null; });
+  if (v.stockAt != null && !okTs(v.stockAt)) delete v.stockAt;
+  if (v.time != null) v.time = normHM(v.time);
+  if (e.review != null) { var r = plain(e.review) ? e.review : {}; e.review = { s: txt(r.s, 12), by: txt(r.by, 128), at: okTs(r.at) ? r.at : 0, c: txt(r.c, 2000) }; }
+  if (e.photo != null && !(typeof e.photo === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(e.photo))) delete e.photo;
+  if (e.thumb != null && typeof e.thumb !== "string") delete e.thumb;
+  if (e.grp != null) e.grp = txt(e.grp, 40);
+  if (e.open != null) e.open = e.open === true;
+  return e;
+}
+function entryOf(d) { return normEntry(Object.assign({}, d.data(), { id: d.id })); }
+function entriesOf(q) { return q.docs.map(entryOf); }
+function normUser(u) { u = plain(u) ? u : {}; u.name = txt(u.name, 80); u.role = txt(u.role, 16); u.login = txt(u.login, 160); return u; }
+function normRecipe(r) {
+  r = plain(r) ? r : {}; r.id = txt(r.id, 200); r.tank = txt(r.tank, 4); r.date = okDay(r.date) ? r.date : ""; r.ts = okTs(r.ts) ? r.ts : 0; r.by = txt(r.by, 128); r.notes = txt(r.notes, 2000);
+  r.items = (Array.isArray(r.items) ? r.items : []).filter(plain).map(function (it) { return { name: txt(it.name, 120), qty: num(it.qty), unit: txt(it.unit, 12) }; });
+  return r;
+}
 function $(id) { return document.getElementById(id); }
 function toast(m) { var t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(function () { t.remove(); }, 2800); }
 function nameOf(id) { var u = S.users[id]; return (u && u.name) || "مستخدم"; }
@@ -438,7 +518,7 @@ function closeSheet(fromPop) {
   var steps = (had && !fromPop ? 1 : 0) + (kpw ? 1 : 0);
   if (steps) { NAV.ignore++; history.go(-steps); }
   if (S.dirty) render();
-  repaint();
+  repaint(); dayTick();
 }
 function sheetHead(title, sec, icon) {
   return '<div class="sheet-h">' + (icon ? '<span class="e-ic">' + ico(icon, 19) + "</span>" : "") + '<div class="sh-t">' + (sec ? secTag(sec) : "") + "<h2>" + esc(title) + '</h2></div><button class="iconbtn" type="button" data-act="close" aria-label="إغلاق">✕</button></div>';
@@ -450,11 +530,18 @@ function sheetHead(title, sec, icon) {
 function withAppCheck(app) {
   var k = window.GS_CONFIG && window.GS_CONFIG.appCheckKey;
   if (k && app && typeof app.appCheck === "function") { try { app.appCheck().activate(k, true); } catch (e) { console.warn(e); } }
+  var emu = window.GS_CONFIG && window.GS_CONFIG.emulator;
+  if (emu && app) { try { app.firestore().useEmulator(emu.host, emu.firestore); app.auth().useEmulator("http://" + emu.host + ":" + emu.auth, { disableWarnings: true }); } catch (e) { console.warn(e); } }
   return app;
 }
 function boot() {
   var cfgF = window.GS_CONFIG && window.GS_CONFIG.firebase;
-  if (!window.firebase || !cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
+  if (!window.firebase || !firebase.firestore || !firebase.auth) {
+    /* ملفات المكتبة لم تُحمَّل (اتصال ضعيف عند أول فتح، أو نسخة محفوظة تالفة): نعرض السبب الحقيقي مع إعادة محاولة تمسح النسخة المحفوظة */
+    $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>تعذّر تحميل التطبيق</h2><p class="muted">لم تكتمل ملفات التطبيق. تحقق من اتصال الإنترنت ثم أعد المحاولة.</p><button class="btn pri block" type="button" id="bootRetry">إعادة المحاولة</button></div></div>';
+    $("bootRetry").onclick = function () { hardReload(true); }; return;
+  }
+  if (!cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
   withAppCheck(firebase.initializeApp(cfgF));
   S.auth = firebase.auth(); S.db = firebase.firestore();
   S.db.enablePersistence({ synchronizeTabs: true }).then(function(){S.persistence=true;}).catch(function(){S.persistence=false;});
@@ -469,14 +556,46 @@ function boot() {
   });
 }
 function netState() { var nb = $("netbar"); if (nb) nb.hidden = navigator.onLine; }
-function stopAll() { if(window.Team)Team.stop(); if(window.Rec)Rec.stop(); if(window.Farm)Farm.stop(); if(window.GSUI)GSUI.stop(); unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; }
+/* إعادة التحميل. clear = امسح ملفات التطبيق المحفوظة على الجوال أولاً (لا يمس البيانات ولا التسجيلات المنتظرة للإرسال) */
+function hardReload(clear) {
+  if (!navigator.onLine) { toast("لا يوجد اتصال بالإنترنت الآن"); return; }
+  var go = function () { location.reload(); };
+  if (clear) { try { if (window.caches && caches.keys) { caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.indexOf("greenside-") === 0; }).map(function (k) { return caches.delete(k); })); }).then(go, go); return; } } catch (e) {} }
+  go();
+}
+/* ===== التحديث: التطبيق المثبّت يبقى مفتوحاً أياماً فلا يصله الإصدار الجديد. عند العودة إليه نسأل الخادم عن رقم الإصدار ===== */
+var UPD = { at: 0, ver: "", busy: false };
+function checkUpdate(force) {
+  if (!navigator.onLine || UPD.busy || location.protocol === "file:") return;
+  var now = Date.now(); if (!force && now - UPD.at < 30 * 60000) return; UPD.at = now; UPD.busy = true;
+  fetch("sw.js?t=" + now, { cache: "no-store" }).then(function (r) { return r.ok ? r.text() : ""; }).then(function (t) {
+    UPD.busy = false; var m = /app\.js\?v=(\d+\.\d+\.\d+)/.exec(t || "");
+    if (!m || m[1] === APP_VERSION) return;
+    UPD.ver = m[1]; showUpdate();
+  }).catch(function () { UPD.busy = false; });
+}
+function showUpdate() {
+  if (!UPD.ver || $("updbar")) return;
+  var b = document.createElement("div"); b.id = "updbar"; b.className = "updbar"; b.setAttribute("role", "status");
+  b.innerHTML = "<span>يتوفر إصدار جديد من التطبيق (" + esc(UPD.ver) + ")</span><button class=\"btn sm pri\" type=\"button\" id=\"updGo\">تحديث الآن</button>";
+  document.body.appendChild(b); $("updGo").onclick = applyUpdate;
+}
+function updTried() { try { var x = (sessionStorage.getItem("gs_upd") || "").split("|"); return x[0] === UPD.ver && Date.now() - (+x[1] || 0) < 20 * 60000; } catch (e) { return true; } }
+function applyUpdate() { try { sessionStorage.setItem("gs_upd", UPD.ver + "|" + Date.now()); } catch (e) {} hardReload(false); }
+/* عند العودة للتطبيق وهناك إصدار جديد معروف: يُحدَّث تلقائياً إن لم يكن المستخدم يكتب شيئاً */
+function resumeUpdate() {
+  if (UPD.ver && !NAV.sheet && S.tab !== "chat" && S.persistence !== false && !(window.Shift && Shift.hasPending()) && !updTried()) { applyUpdate(); return; }
+  checkUpdate();
+}
+function stopMember() { if(window.Team)Team.stop(); if(window.Rec)Rec.stop(); if(window.Farm)Farm.stop(); if(window.GSUI)GSUI.stop(); unsubDay.concat(unsubAll).forEach(function (u) { try { u(); } catch (e) {} }); unsubDay = []; unsubAll = []; memberSubs = false; }
+function stopAll() { stopMember(); unsubMe.forEach(function (u) { try { u(); } catch (e) {} }); unsubMe = []; }
 function applySec() {
   document.body.classList.toggle("sec-t", S.sec === "t"); document.body.classList.toggle("sec-n", S.sec === "n");
   document.querySelectorAll("#secsw [data-sec]").forEach(function (b) { b.setAttribute("aria-pressed", b.getAttribute("data-sec") === S.sec); });
-  chrome();
+  paintChrome();
 }
 /* 3.0: الشريط العلوي بلون القسم في اللوحة، وبلون الصفحة في غيرها. لون شريط الجوال (theme-color) يتبعه */
-function chrome() {
+function paintChrome() {
   var home = !!S.role && S.tab === "today", dark = document.documentElement.dataset.theme === "dark";
   document.body.classList.toggle("on-home", home);
   document.body.classList.toggle("in-chat", !!S.role && S.tab === "chat");
@@ -488,7 +607,7 @@ function chrome() {
 var AUTH_MODE = "login";
 function showAuth() {
   $("top").hidden = true; $("tabsNav").hidden = true; if (NAV.sheet) closeSheet(true);
-  S.db.collection("config").doc("owner").get().then(function (s) { S.ownerUid = s.exists ? s.data().uid : null; if (!S.ownerUid) AUTH_MODE = "setup"; renderAuth(); }).catch(function () { renderAuth(); });
+  S.db.collection("config").doc("owner").get().then(function (s) { S.ownerUid = s.exists ? s.data().uid : null; S.ownerChecked = true; if (!S.ownerUid) AUTH_MODE = "setup"; renderAuth(); }).catch(function () { renderAuth(); });
   renderAuth();
 }
 function renderAuth() {
@@ -506,7 +625,7 @@ function renderAuth() {
   } else {
     h += '<div class="card"><form id="authForm" class="fgrid" novalidate><label class="f full" for="a_id">اسم المستخدم أو البريد<input class="in" id="a_id" dir="ltr" autocapitalize="off" autocomplete="username"></label>' +
       '<label class="f full" for="a_pw">كلمة المرور<input class="in" id="a_pw" type="password" dir="ltr" autocomplete="current-password"></label><div class="err full" id="a_err"></div><button class="btn pri block full" type="submit">تسجيل الدخول</button></form></div>' +
-      '<button class="linkbtn" type="button" data-act="authMode" data-m="reset">نسيت كلمة المرور</button>' + (S.ownerUid === null ? '<button class="linkbtn" type="button" data-act="authMode" data-m="setup">إعداد الحساب الأول</button>' : "");
+      '<button class="linkbtn" type="button" data-act="authMode" data-m="reset">نسيت كلمة المرور</button>' + (S.ownerChecked && S.ownerUid === null ? '<button class="linkbtn" type="button" data-act="authMode" data-m="setup">إعداد الحساب الأول</button>' : "");
   }
   $("view").innerHTML = h + '<p class="muted" style="text-align:center;font-size:12px">الإصدار ' + APP_VERSION + ' · بواسطة <bdi>Hamed</bdi></p></div>';
   $("authForm").addEventListener("submit", onAuthSubmit);
@@ -536,8 +655,9 @@ function startSession() {
     }
     S.ownerUid = s.exists ? s.data().uid : null;
   }).then(function () {
-    unsubAll.push(db.collection("users").doc(uid).onSnapshot(function (s) {
-      S.me = s.exists ? s.data() : null;
+    unsubMe.push(db.collection("users").doc(uid).onSnapshot(function (s) {
+      if (S.uid !== uid) return;
+      S.me = s.exists ? normUser(s.data()) : null;
       if (S.me && S.ownerUid === uid && S.user && S.user.email && S.me.login !== S.user.email) db.collection("users").doc(uid).update({ login: S.user.email }).catch(logErr);
       var r = S.ownerUid === uid ? "sup" : (S.me && S.me.role);
       var nr = (r === "sup" || r === "worker") ? r : null, changed = nr !== S.role; S.role = nr;
@@ -547,8 +667,9 @@ function startSession() {
 }
 function onRole() { if(window.Farm)Farm.start(); if(S.role && window.Shift)Shift.flush(); if(S.role && window.Rec)Rec.start(); if(S.role && window.Team)Team.start();
   if (!S.role) {
-    unsubDay.forEach(function (u) { u(); }); unsubDay = []; memberSubs = false;
-    $("top").hidden = true; $("tabsNav").hidden = true;
+    /* الحساب أُوقف والتطبيق مفتوح: نوقف كل الاستماع للبيانات ونغلق أي نافذة مفتوحة */
+    stopMember(); if (NAV.sheet) closeSheet(true); S.entries = []; S.openNotes = []; S.hist = []; S.meta = []; S.recipes = [];
+    $("top").hidden = true; $("tabsNav").hidden = true; document.body.classList.remove("on-home", "in-chat");
     $("view").innerHTML = '<div class="login"><div class="logo"><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>الحساب غير مفعّل</h2><p class="muted">حسابك غير مفعّل أو موقوف. تواصل مع المشرف.</p><button class="btn block" data-act="logout">تسجيل الخروج</button></div></div>';
     return;
   }
@@ -557,16 +678,29 @@ function onRole() { if(window.Farm)Farm.start(); if(S.role && window.Shift)Shift
   if (!memberSubs) {
     memberSubs = true; var db = S.db;
     unsubAll.push(db.collection("config").doc("settings").onSnapshot(function (s) { S.settings = Object.assign(clone(DEF), s.exists ? s.data() : {}); render(); }, logErr));
-    unsubAll.push(db.collection("users").onSnapshot(function (q) { var m = {}; q.forEach(function (d) { m[d.id] = d.data(); }); S.users = m; render(); }, logErr));
-    unsubAll.push(db.collection("recipes").orderBy("ts", "desc").limit(300).onSnapshot(function (q) { S.recipes = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); render(); }, logErr));
-    unsubAll.push(db.collection("entries").where("type", "==", "note").where("open", "==", true).onSnapshot(function (q) { S.openNotes = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); render(); }, logErr));
-    subWindowed(["mix", "refill"], function (q) { S.hist = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
-    subWindowed(["sow", "xplant", "batt", "cal", "harvest", "spray"], function (q) { S.meta = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
+    unsubAll.push(db.collection("users").onSnapshot(function (q) { var m = {}; q.forEach(function (d) { m[d.id] = normUser(d.data()); }); S.users = m; render(); }, logErr));
+    unsubAll.push(db.collection("recipes").orderBy("ts", "desc").limit(300).onSnapshot(function (q) { S.recipes = q.docs.map(function (d) { return normRecipe(Object.assign({}, d.data(), { id: d.id })); }); render(); }, logErr));
+    unsubAll.push(db.collection("entries").where("type", "==", "note").where("open", "==", true).onSnapshot(function (q) { S.openNotes = entriesOf(q); render(); }, logErr));
+    subWindowed(["mix", "refill"], function (q) { S.hist = entriesOf(q).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
+    subWindowed(["sow", "count", "xplant", "batt", "cal", "harvest", "spray"], function (q) { S.meta = entriesOf(q).sort(function (a, b) { return (a.ts || 0) - (b.ts || 0); }); render(); });
     subDay();
   }
   render();
 }
 function logErr(e) { console.warn(e); }
+/* اعتماد عدد كبير من التسجيلات على دفعات من 8: كل اعتماد تتحقق منه قواعد الحماية بقراءات إضافية، وللطلب الواحد حد أقصى من هذه القراءات */
+function approveChunks(ids) {
+  var at = Date.now(), p = Promise.resolve();
+  for (var i = 0; i < ids.length; i += 8) (function (part) {
+    p = p.then(function () { var bt = S.db.batch(); part.forEach(function (id) { bt.update(S.db.collection("entries").doc(id), { review: { s: "ok", by: S.uid, at: at, c: "" } }); }); return bt.commit(); });
+  })(ids.slice(i, i + 8));
+  return p;
+}
+/* حفظ الجزء المعدَّل فقط من الإعدادات: كان كل حفظ يكتب الوثيقة كاملة فيمحو تعديل مشرف آخر (أو تعديلاً أحدث وصل والجوال بلا اتصال) */
+function saveSettings(patch) {
+  var ref = S.db.collection("config").doc("settings");
+  return ref.update(patch).catch(function (e) { if (e && e.code === "not-found") return ref.set(Object.assign({}, S.settings, patch)); throw e; });
+}
 /* reads are limited to the last WINDOW_DAYS for history used by the calculator, stock, sowing and equipment.
    Needs one composite index on entries (type ↑, date ↑). Until it exists the app falls back to full reads. */
 var WINDOW_DAYS = 120;
@@ -587,7 +721,7 @@ function subDay() {
   S.entries = []; S.signoff = {}; S.dayLoaded=false; S.dayCached=false; S.dayError="";
   unsubDay.push(S.db.collection("entries").where("date", "==", S.date).onSnapshot({includeMetadataChanges:true},function (q) {
     S.dayLoaded=true; S.dayCached=q.metadata.fromCache; S.dayError="";
-    S.entries = q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.time || "").localeCompare(b.time || "") || (a.ts - b.ts); });
+    S.entries = entriesOf(q).sort(function (a, b) { return String(a.time || "").localeCompare(String(b.time || "")) || ((a.ts || 0) - (b.ts || 0)); });
     GSUI.invalidate();render();
   }, function(e){S.dayError=errMsg(e);render();}));
   [["n", S.date + "_n"], ["n0", S.date], ["t", S.date + "_t"]].forEach(function (p) {
@@ -607,6 +741,17 @@ function bindTop() {
   $("tabs").addEventListener("click", function (e) { var b = e.target.closest("[data-tab]"); if (b) setTab(b.getAttribute("data-tab")); });
   $("secsw").addEventListener("click", function (e) { var b = e.target.closest("[data-sec]"); if (b) switchSec(b.getAttribute("data-sec")); });
   $("view").addEventListener("focusout", function () { setTimeout(function () { if (S.dirty && !NAV.sheet && !$("view").contains(document.activeElement)) render(); }, 0); });
+}
+/* منتصف الليل: التطبيق المثبّت يبقى مفتوحاً من الأمس. إن كان المستخدم على «اليوم» ينتقل تلقائياً إلى اليوم الجديد
+   (كان يبقى على تاريخ الأمس فتُحفظ تسجيلات الصباح بتاريخ قديم ويُطلب من العامل «سبب التسجيل المتأخر») */
+var LIVE_DAY = todayStr();
+function dayTick() {
+  var t = todayStr(); if (t === LIVE_DAY) return;
+  if (NAV.sheet) return;                       /* نافذة مفتوحة: ننتظر إغلاقها حتى لا يتغيّر تاريخ تسجيل قيد الكتابة */
+  var was = LIVE_DAY; LIVE_DAY = t;
+  if (!S.role) return;
+  if (S.date === was) { S.date = t; var dp = $("datePick"); if (dp) dp.value = t; subDay(); if (S.tab === "repLegacy") loadReport(); render(true); toast("بدأ يوم جديد · " + fmtDate(t, { weekday: "long", day: "numeric", month: "long" })); }
+  else render(true);
 }
 function switchSec(s) {
   if (s === S.sec) return; S.sec = s; lsSet("gs_sec", s); applySec();
@@ -666,6 +811,7 @@ function renderNow(force) {
   if (!force && NAV.sheet) { S.dirty = true; return; }
   S.dirty = false;
   var html, after = null;
+  try {
   if (window.Rec) Rec.leave(S.tab);
   if (S.tab === "add" && canAdd()) html = Rec.view();
   else if (S.tab === "recType" && canAdd()) html = Rec.typeLog();
@@ -682,14 +828,43 @@ function renderNow(force) {
   else if(S.tab === "ops") html=GSUI.operations();
   else if(S.tab === "legacy") html=legacyTodayView();
   else { S.tab = "today"; html = isSup() ? Board.home() : Board.worker(); }
-  chrome();
+  } catch (err) { logCrash(err, "عرض صفحة " + S.tab); html = crashHTML(err); after = null; }
+  paintChrome();
   // تحديثات البيانات التي لا تغيّر شيئاً في الصفحة لا تعيد بناءها (أقل وميضاً وأخف على الجوال). الرسوم تُحدَّث دائماً
   /* الصفحات الفرعية (المعدات، المهام، الفريق، التقارير التفصيلية…) ليس لها زر في الشريط السفلي: زر رجوع ظاهر أعلاها */
   if (MAIN_TABS.indexOf(S.tab) < 0 && S.tab !== "chat" && NAV.tabs.length) html = '<div class="backbar"><button class="backbtn" type="button" data-act="goBack">' + Board.icon("back", 18, 2.2) + "<span>رجوع</span></button></div>" + html;
-  if (!force && html === v.__h && v.firstElementChild) { if (after) after(); return; }
-  v.innerHTML = html; v.__h = html; if (after) after();
+  var run = function () { if (!after) return; try { after(); } catch (err) { logCrash(err, "تجهيز صفحة " + S.tab); } };
+  if (!force && html === v.__h && v.firstElementChild) { run(); return; }
+  v.innerHTML = html; v.__h = html; run();
   loadPhotos(v);
 }
+/* ===== شبكة أمان العرض: خطأ في صفحة لا يترك الشاشة بيضاء. يُعرض ما حدث مع طريق للرجوع، ويُحفظ آخر 20 خطأ على الجوال (تظهر في «فحص النظام») ===== */
+var CRASH = [];
+try { CRASH = JSON.parse(lsGet("gs_errs") || "[]") || []; if (!Array.isArray(CRASH)) CRASH = []; } catch (e) { CRASH = []; }
+function logCrash(err, where) {
+  try {
+    console.error(err);
+    var m = txt(err && (err.message || String(err)), 300), st = txt(err && err.stack, 2000).split("\n").slice(1, 3).join(" ").replace(/https?:\/\/[^\s)]*\//g, "").slice(0, 200);
+    var last = CRASH[CRASH.length - 1];
+    if (last && last.m === m && last.w === where) { last.n = (last.n || 1) + 1; last.t = Date.now(); }
+    else CRASH.push({ t: Date.now(), v: APP_VERSION, w: txt(where, 60), m: m, s: st });
+    CRASH = CRASH.slice(-20); lsSet("gs_errs", JSON.stringify(CRASH));
+  } catch (e) {}
+}
+function crashLogHTML() {
+  if (!CRASH.length) return "";
+  return '<details class="crashlog"><summary>أخطاء سُجّلت على هذا الجوال (' + CRASH.length + ")</summary>" + CRASH.slice().reverse().map(function (c) {
+    return '<p class="num" dir="ltr">' + esc(tsDay(c.t) + " " + tsHM(c.t) + " · " + c.v + " · " + c.m + (c.n ? " ×" + c.n : "") + (c.s ? " · " + c.s : "")) + '</p><p class="muted">' + esc(c.w) + "</p>";
+  }).join("") + '<button class="btn sm" type="button" data-act="clearCrash">مسح السجل</button></details>';
+}
+function tsDay(ts) { return okTs(+ts) ? todayStr(new Date(+ts)) : ""; }
+function crashHTML(err) {
+  return '<section class="sec"><div class="card crash"><h2>تعذّر عرض هذه الصفحة</h2><p class="muted">حدث خطأ غير متوقع. بياناتك محفوظة ولم تتأثر.</p><p class="crash-m num" dir="ltr">' + esc(txt(err && (err.message || String(err)), 200)) + '</p>' +
+    '<div class="ux-actions"><button class="btn pri" type="button" data-act="goTab" data-t="today">العودة إلى اللوحة</button><button class="btn" type="button" data-act="reloadApp">إعادة تحميل التطبيق</button></div>' +
+    '<p class="muted" style="font-size:12.5px">إن تكرر الخطأ صوّر هذه الشاشة وأرسلها · الإصدار ' + APP_VERSION + "</p></div></section>";
+}
+window.addEventListener("error", function (ev) { if (ev && ev.error) logCrash(ev.error, "تشغيل"); });
+window.addEventListener("unhandledrejection", function (ev) { var r = ev && ev.reason; if (r && r.code !== "permission-denied" && r.code !== "unavailable" && !(r.code && String(r.code).indexOf("auth/") === 0)) logCrash(r, "عملية غير مكتملة"); });
 
 /* ---------- تبويبات داخلية وأقسام قابلة للطي (يُحفظ اختيار كل مستخدم في جواله) ---------- */
 var SUB = {}, FOLD = {};
@@ -852,8 +1027,12 @@ function sowBody() {
   var m = S.date.slice(0, 7), caps = [num(cfg("capR")) || 0, num(cfg("capL")) || 0], sow = sowBatches().filter(function (e) { return (e.date || "").slice(0, 7) === m; });
   var bySide = [0, 0], unk = 0; sow.forEach(function (e) { var n = num(e.v.seeds) || 0, si = sideIdx(e.v); if (si >= 0) bySide[si] += n; else unk += n; });
   var d = new Date(S.date + "T12:00:00"), last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(), left = last - d.getDate() + 1;
-  var inNow = [0, 0]; sowBatches().forEach(function (e) { var si = sideIdx(e.v), age = daysBetween(e.date, todayStr()); if (si < 0 || age < 0 || age > 60) return; inNow[si] += Math.max(0, (num(e.v.seeds) || 0) - transplanted(e.id)); });
-  var ready = sowBatches().filter(function (e) { var age = daysBetween(e.date, todayStr()); return age >= num(cfg("daysToTransplant")) && transplanted(e.id) < (num(e.v.seeds) || 0) && age < 60; });
+  var inNow = [0, 0], ready;
+  if (window.Cycle && Farm.cropReady()) { var run = Cycle.active().filter(function (b) { return b.inNursery; }); run.forEach(function (b) { var si = sideIdx(b.e.v); if (si >= 0) inNow[si] += b.nursery; }); ready = run.filter(function (b) { return b.stage === "ready"; }); }
+  else {
+  sowBatches().forEach(function (e) { var si = sideIdx(e.v), age = daysBetween(e.date, todayStr()); if (si < 0 || age < 0 || age > 60) return; inNow[si] += Math.max(0, (num(e.v.seeds) || 0) - transplanted(e.id)); });
+  ready = sowBatches().filter(function (e) { var age = daysBetween(e.date, todayStr()); return age >= num(cfg("daysToTransplant")) && transplanted(e.id) < (num(e.v.seeds) || 0) && age < 60; });
+  }
   var h = '<div class="fold-act"><span class="muted">' + fmtDate(S.date, { month: "long" }) + '</span><button class="btn sm" data-act="sowPlan">جدول الزراعة</button></div>';
   [0, 1].forEach(function (si) {
     var cap = caps[si], seeds = bySide[si], p = cap ? Math.min(100, seeds / cap * 100) : 0, rem = Math.max(0, cap - seeds);
@@ -861,7 +1040,7 @@ function sowBody() {
       '<div class="help">' + (rem ? "المتبقي " + f(rem) + " · نحو <b>" + f(Math.ceil(left ? rem / left : 0)) + "</b> بذرة يومياً" : "اكتملت طاقة هذا الشهر ✓") + " · في المشتل الآن ≈ " + f(inNow[si]) + "</div></div>";
   });
   if (unk) h += '<div class="help">مسجّلة قبل تقسيم المشتل (بدون جهة): ' + f(unk) + " بذرة</div>";
-  if (ready.length) h += '<div class="help"><b style="color:var(--warn)">' + ready.length + " دفعة جاهزة للنقل إلى الأبراج</b></div>";
+  if (ready.length) h += '<div class="help"><a href="#" data-farm="route" data-id="crop"><b style="color:var(--warn)">' + esc(Board.pl(ready.length, "دفعة جاهزة للنقل", "دفعتان جاهزتان للنقل", "دفعات جاهزة للنقل", "دفعة جاهزة للنقل")) + " إلى الأبراج</b></a></div>";
   return { h: h, ready: ready.length };
 }
 
@@ -1053,6 +1232,13 @@ function gridHTML(fd, v) {
   });
   return h + '</tbody><tfoot><tr><td colspan="' + (D.cols.length + 2) + '" id="avgall_' + fd.k + '"></td></tr></tfoot></table></div><span class="hint" id="h_' + fd.k + '">المستهدف ' + rangeTxt(fd.c, FORM.vsec) + "</span></div>";
 }
+document.addEventListener("click", function (ev) {
+  var b = ev.target.closest && ev.target.closest("[data-chip]"); if (!b) return;
+  var inp = $(b.dataset.chip); if (!inp) return; ev.preventDefault();
+  var on = b.getAttribute("aria-pressed") !== "true"; inp.value = on ? b.dataset.v : "";
+  b.parentNode.querySelectorAll("[data-chip]").forEach(function (x) { x.setAttribute("aria-pressed", String(x === b && on)); });
+  inp.dispatchEvent(new Event("change", { bubbles: true }));
+});
 function inVal(el) { return el.hasAttribute("data-sep") ? el.value.replace(/[,،]/g, "") : el.value; }
 function sepFmt(raw) { raw = String(raw).replace(/[٠-٩]/g, function (d) { return "٠١٢٣٤٥٦٧٨٩".indexOf(d); }).replace(/[^\d]/g, ""); return raw ? Number(raw).toLocaleString("en-US") : ""; }
 document.addEventListener("input", function (ev) { var t = ev.target; if (t && t.hasAttribute && t.hasAttribute("data-sep") && !t.__kp) { var nv = sepFmt(t.value); if (nv !== t.value) { t.value = nv; caretEnd(t); } } }, true);
@@ -1073,11 +1259,16 @@ function fieldHTML(fd, v) {
   if (fd.grp) out += '<div class="grp-h">' + numTitle(fd.grp) + "</div>";
   if(fd.k==="gauge1"||fd.k==="gauge2"){var choices=Farm.gaugeChoices(FORM.pressureSpecs[fd.k],val);inp='<select class="in" id="'+id+'"><option value="">لم يُقَس</option>'+choices.map(n=>'<option value="'+n+'" '+(val!==""&&val!=null&&num(val)===n?'selected':'')+'>'+String(n)+' بار</option>').join('')+'</select>';}
   else if (fd.t === "s") { var o = opts(fd); if (val && o.indexOf(val) < 0) o = o.concat([val]); inp = '<select class="in" id="' + id + '"><option value="">—</option>' + o.map(function (x) { return "<option" + (x === val ? " selected" : "") + ">" + esc(x) + "</option>"; }).join("") + "</select>"; }
+  else if (fd.t === "batch" && FORM.lockBatch) return '<input type="hidden" id="' + id + '" value="' + esc(val) + '">';
   else if (fd.t === "batch") inp = '<select class="in" id="' + id + '">' + batchOptions(val) + "</select>";
+  else if (fd.t === "chips") { var co = opts(fd); if (val && co.indexOf(val) < 0) co = co.concat([val]);
+    return out + '<div class="f ' + (fd.w || "") + '" id="w_' + fd.k + '"><span>' + esc(fd.l) + '</span><input type="hidden" id="' + id + '" value="' + esc(val) + '"><div class="cy-chips" role="group" aria-label="' + esc(fd.l) + '">' + co.map(function (x) { return '<button type="button" data-chip="' + id + '" data-v="' + esc(x) + '" aria-pressed="' + (x === val) + '">' + esc(x) + "</button>"; }).join("") + "</div></div>"; }
+  else if (fd.t === "chk") return out + '<label class="cy-check ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><input type="checkbox" id="' + id + '"' + (val === true || val === "1" ? " checked" : "") + '><span>' + esc(fd.l) + (fd.hint ? "<small>" + esc(fd.hint) + "</small>" : "") + "</span></label>";
+  else if (fd.t === "calc") return out + '<div class="f ' + (fd.w || "") + '" id="w_' + fd.k + '"><span>' + esc(fd.l) + '</span><div class="cy-calc"><span id="cv_' + fd.k + '"><b>—</b></span><small id="ch_' + fd.k + '"></small></div><input type="hidden" id="' + id + '" value="' + esc(val) + '"></div>';
   else if (fd.t === "ta") inp = '<textarea class="in" id="' + id + '">' + esc(val) + "</textarea>";
   else if (fd.t === "t") inp = (fd.opt && !val ? '<span class="muted" style="font-size:12.5px"><input type="checkbox" id="on_' + fd.k + '"> تسجيل هذا الوقت</span>' : "") + timePicker(id, val || (fd.k === "time" && FORM.e ? FORM.e.time : ""));
   else if (fd.t === "x") inp = '<input class="in" id="' + id + '" enterkeyhint="next" value="' + esc(val) + '"' + (fd.list ? ' list="dl_' + fd.list + '"' : "") + (fd.ph ? ' placeholder="' + esc(fd.ph) + '"' : "") + ">";
-  else inp = '<div class="unitwrap"><input class="in num" id="' + id + '" ' + KPA() + ' autocomplete="off"' + (fd.integer ? ' data-integer="1"' : '') + ' value="' + esc(val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
+  else inp = '<div class="unitwrap"><input class="in num' + (fd.big ? " cy-bigin" : "") + '" id="' + id + '" ' + KPA() + ' autocomplete="off"' + (fd.integer ? ' data-integer="1"' : '') + (fd.sep ? ' data-sep="1"' : '') + ' value="' + esc(fd.sep && num(val) != null ? f(num(val)) : val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
   out += '<label class="f ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><span>' + esc(fd.l) + (fd.req ? ' <span class="req">*</span>' : "") + "</span>" + inp + (fd.c || fd.comp ? '<span class="hint" id="h_' + fd.k + '"></span>' : "") + "</label>";
   return out;
 }
@@ -1091,11 +1282,11 @@ function buildFields(T, split) {
   });
   return [shared[0]].concat(blocks, shared.slice(1));
 }
-function openForm(type, e, prefill) {
-  var sec = e ? secOf(e) : (TYPES_G[type] ? "g" : S.sec), vsec = sec === "g" ? S.sec : sec, T = typeDef(type, vsec);
-  FORM = { type: type, e: e, sec: sec, vsec: vsec, photos: {}, modeTouched: !!e, split: !!(T.split && !e) };
+/* forceSec: قسم التسجيل من صفحة دورة الزراعة (العدّ في المشتل، النقل والحصاد في الأبراج) دون تبديل القسم المعروض */
+function openForm(type, e, prefill, forceSec) {
+  var sec = e ? secOf(e) : (TYPES_G[type] ? "g" : (forceSec || S.sec)), vsec = sec === "g" ? S.sec : sec, T = typeDef(type, vsec);
+  FORM = { type: type, e: e, sec: sec, vsec: vsec, photos: {}, modeTouched: !!e, split: !!(T.split && !e), lockBatch: !e && !!(prefill && prefill.batch) };
   FORM.fields = buildFields(T, FORM.split);
-  if(type==="xplant"&&!e)FORM.moveId=S.db.collection("entries").doc().id;
   if(type==="waterOnly"&&!e){
     if(Shift.hasPending()){Shift.showPending();return;}
     const draft=Shift.draft(S.date);prefill=draft?.values||{waterMethod:"إدخال اللترات مباشرة"};
@@ -1115,13 +1306,13 @@ function openForm(type, e, prefill) {
     FORM.lastWaterMethod=v.waterMethod;
   }
   if (type === "batt" && e) { if (v.start) v.time = tsHM(v.start); if (v.end) v.endTime = tsHM(v.end); }
-  var h = '<div class="sheet-bg" data-close><div class="sheet form-sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + (window.Rec ? Rec.formHead(T, sec, type, e) : sheetHead(T.label, sec, type)) + '<form id="entryForm" class="fgrid" novalidate>';
+  var h = '<div class="sheet-bg" data-close><div class="sheet form-sheet" role="dialog" aria-modal="true" aria-label="' + esc(T.label) + '">' + (window.Rec ? Rec.formHead(T, sec, type, e, window.Cycle ? Cycle.formSub(type, FORM, v) : "") : sheetHead(T.label, sec, type)) + (window.Cycle ? Cycle.formNote(type) : "") + '<form id="entryForm" class="fgrid" novalidate>';
   if (T.fields.some(function (x) { return x.t === "grid"; })) { var zn = cfg("zoneNote", vsec); if (zn) h += '<div class="zone-note" style="margin:0">' + esc(zn) + "</div>"; }
-  if(type==="xplant")h+='<p class="help full">يتطلب النقل اتصالًا وجردًا معتمدًا. لإلغاء نقل مسجل بعد الجرد صحّح عدده إلى صفر.</p>';
+  if(type==="xplant"&&e&&e.v.stockTracked===true)h+='<p class="help full">نقل مسجّل قبل الإصدار 3.4.0 ومرتبط برصيد الجرد: تصحيح عدده يحتاج اتصالاً، ولإلغائه صحّح العدد إلى صفر.</p>';
   if(isWorker()&&e&&e.review)h+='<p class="help full">حفظ التعديل يعيد السجل للمشرف مع السبب والقيم الجديدة.</p>';
   if(type === "refill" || type === "waterOnly")h += '<p class="help full">التعبئة مباشرة إلى خزان الري. أوقف الماء عند علامة الماسورة المثبتة في الموضع والعمق نفسيهما. احسب وقت جريان الماء فقط. الكمية تقديرية وتعتمد على ثبات التدفق. معايرة هذه العملية: '+esc(FORM.flow.litres)+' لتر / '+esc(FORM.flow.minutes)+' دقيقة و '+esc(FORM.flow.seconds)+' ثانية.</p><p class="help full" id="flowResult" aria-live="polite"></p>';
   if(isWorker() && (e || S.date<todayStr()))h+='<label class="f full">سبب التعديل أو التسجيل المتأخر<input class="in" id="changeReason" maxlength="300"></label>';
-  if(type==="pump"){FORM.pressureSpecs=clone(e?.v.pressureSpecs||{gauge1:Farm.gaugeSpec('gauge1'),gauge2:Farm.gaugeSpec('gauge2')});FORM.fields=FORM.fields.map(fd=>FORM.pressureSpecs[fd.k]?Object.assign({},fd,{l:FORM.pressureSpecs[fd.k].name+" · المثالي "+FORM.pressureSpecs[fd.k].ideal+" بار"}):fd);}
+  if(type==="pump"){FORM.pressureSpecs=clone(normSpecs(e?.v.pressureSpecs)||{gauge1:Farm.gaugeSpec('gauge1'),gauge2:Farm.gaugeSpec('gauge2')});FORM.fields=FORM.fields.map(fd=>FORM.pressureSpecs[fd.k]?Object.assign({},fd,{l:FORM.pressureSpecs[fd.k].name+" · المثالي "+FORM.pressureSpecs[fd.k].ideal+" بار"}):fd);}
   if(['refill','waterOnly','mix','irr'].includes(type)&&!v.stockSource)v.stockSource=Farm.sourceDefault(type,!!e);
   if(type==="waterOnly"){
     h+='<p class="help full">إضافة ماء فقط · EC وpH لم يُقاسا. تبقى جولة القياس مفتوحة.</p>';
@@ -1137,7 +1328,7 @@ function openForm(type, e, prefill) {
   if (FORM.split) h += '<p class="help full" style="margin:0">' + (T.photo ? "صوّر كل جهة في خانتها. إذا صوّرت جهة واحدة فقط تُحفظ وحدها." : "عبّئ الجهة التي زرعتها أو الجهتين معاً. كل جهة تُحفظ كتسجيل مستقل.") + "</p>";
   if (type === "mix") h += '<div class="full help" id="mixHint"></div>';
   h += '<datalist id="dl_crops">' + uniqueCrops().map(function (c) { return '<option value="' + esc(c) + '">'; }).join("") + "</datalist>";
-  h += '</form><div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions">' + ((e && type!=="xplant" && !(type==="sow"&&Farm.balanceOf(e.id)) && (!isWorker() || (!e.review && e.date===todayStr()))) ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
+  h += '</form><div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions">' + ((e && !(type==="xplant"&&e.v.stockTracked===true) && !(type==="sow"&&(Farm.balanceOf(e.id)||(window.Cycle&&Cycle.get(e.id)&&Cycle.get(e.id).events.length))) && (!isWorker() || (!e.review && e.date===todayStr()))) ? '<button class="btn danger" type="button" data-act="del" data-id="' + esc(e.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="save">' + (sec === "g" ? "حفظ" : "حفظ في " + SECS[sec].name) + "</button></div></div></div>";
   openSheet(h);
   var form = $("entryForm");
   form.addEventListener("input", updForm); form.addEventListener("change", updForm);
@@ -1148,6 +1339,7 @@ function openForm(type, e, prefill) {
     function remember(){if(FORM?.waterId)Shift.remember(S.date,FORM.waterId,formValues());}
     form.addEventListener("input",remember); form.addEventListener("change",remember);
   }
+  if (window.Cycle) Cycle.formInit(FORM);
   updForm(); loadPhotos($("sheetRoot"));
 }
 function uniqueCrops() { var s = {}; S.meta.forEach(function (e) { if (e.v && e.v.crop) s[e.v.crop] = 1; }); return Object.keys(s); }
@@ -1162,7 +1354,8 @@ function formValues() {
     if (fd.t === "photo") return;
     if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var el = $("f_" + k); v[k] = el ? inVal(el).trim() : ""; }); return; }
     if (fd.t === "t") { var on = $("on_" + fd.k); v[fd.k] = on && !on.checked ? "" : readTime("f_" + fd.k); return; }
-    var el = $("f_" + fd.k); v[fd.k] = el ? el.value.trim() : "";
+    if (fd.t === "chk") { var cb = $("f_" + fd.k); v[fd.k] = cb && cb.checked ? "1" : ""; return; }
+    var el = $("f_" + fd.k); v[fd.k] = el ? inVal(el).trim() : "";
   });
   return v;
 }
@@ -1225,6 +1418,7 @@ function updForm() {
     el.textContent = (n == null ? "المستهدف " + rangeTxt(fd.c, sec, ts) : st === "ok" ? "✓ ضمن المستهدف " + rangeTxt(fd.c, sec, ts) : (st === "lo" ? "أقل" : "أعلى") + " من المستهدف " + rangeTxt(fd.c, sec, ts)) + (tag ? " · " + tag : "");
   });
   if (FORM.type === "mix") mixExpect(v);
+  if (window.Cycle) Cycle.formUpdate(FORM, v);
 }
 /* mixing: from water + A + B, the dose per litre and the salts this mix should give on the meter (±5%) */
 function mixExpect(v) {
@@ -1287,6 +1481,7 @@ function saveForm(btn) {
     if (T.photo === "req" && !FORM.photos._ && !(e && e.photo)) miss.push("الصورة");
   }
   if(isWorker() && (e?.date||S.date)>todayStr())miss.push("لا يمكن تسجيل عملية بتاريخ مستقبلي");
+  if(window.Cycle)Cycle.validate(type,v,miss,FORM);
   Farm.validateEntry(type,v,miss);
   if(type==="waterOnly"&&!(num(v.waterAdd)>0))miss.push("كمية الماء المضافة يجب أن تكون موجبة");
   var reason=$("changeReason");
@@ -1301,7 +1496,8 @@ function saveForm(btn) {
     catch(error){btn.disabled=false;btn.textContent="إعادة المحاولة";$("formErrors").hidden=false;$("formErrors").textContent=errMsg(error);}
     return;
   }
-  if(type==="xplant"){
+  /* نقل 3.3.0 المتتبَّع برصيد الجرد يُصحَّح داخل transaction. النقل الجديد تسجيل عادي (يُحفظ بدون إنترنت) */
+  if(type==="xplant"&&e&&e.v.stockTracked===true){
     const submitted=FORM;submitted.saving=true;
     GSUI.commit(Farm.saveMovement(submitted,v,reason?.value.trim()||""),btn,()=>{if(FORM===submitted)closeSheet();toast(e&&isWorker()&&e.review?"أُرسل طلب التصحيح":"أكد الخادم حفظ النقل");}).finally(()=>{submitted.saving=false;});return;
   }
@@ -1522,7 +1718,12 @@ function openSowPlan() {
 }
 
 /* ================= review ================= */
-function findEntry(id) { return S.entries.filter(function (x) { return x.id === id; })[0] || S.openNotes.filter(function (x) { return x.id === id; })[0] || S.meta.filter(function (x) { return x.id === id; })[0]; }
+/* يبحث في تسجيلات اليوم المختار ثم في كل ما حُمّل (أيام سابقة، سجل النوع، صفحة التفاصيل): كان «تعديل» و«صحّح» لا يعملان لتسجيل من يوم آخر */
+function findEntry(id) {
+  if (!id || String(id).indexOf("svc:") === 0) return null;
+  var hit = function (a) { return (a || []).filter(function (x) { return x.id === id; })[0]; };
+  return hit(S.entries) || hit(S.openNotes) || hit(S.meta) || hit(S.hist) || (window.Rec && Rec.find ? Rec.find(id) : null) || null;
+}
 function openFlag(id) {
   var e = findEntry(id);
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("ملاحظة المشرف") + '<label class="f" for="flagTxt">اكتب ما يجب تصحيحه أو متابعته<textarea class="in" id="flagTxt">' + esc(e && e.review && e.review.c || "") + "</textarea></label>" +
@@ -1534,7 +1735,7 @@ function loadReport() {
   S.rep = { loading: true }; S.repSens = null; S.repSensForce = true; if (S.tab === "rep") render(true);
   var end = S.date, start = addDays(end, -(S.repDays - 1));
   S.db.collection("entries").where("date", ">=", start).where("date", "<=", end).get().then(function (q) {
-    S.rep = { start: start, end: end, all: q.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }).sort(function (a, b) { return (a.date + a.time).localeCompare(b.date + b.time); }) };
+    S.rep = { start: start, end: end, all: entriesOf(q).sort(function (a, b) { return (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")); }) };
     render(true);
   }).catch(function () { S.rep = { err: 1 }; render(true); });
 }
@@ -1836,7 +2037,7 @@ function placeTip(tip, r, px, ys) {
 var CH_UNIT = { ec: "µS/cm", ph: "", wt: "°C", air: "°C", rh: "%", lux: "lux" };
 function drawChart(el, series, c) {
   var COL = ["var(--ln1)", "var(--ln2)", "var(--ln3)"];
-  series = series.map(function (sr, i) { return { name: sr.name || "", col: COL[i % 3], pts: sr.pts.filter(function (p) { return p.y != null && isFinite(p.y); }).sort(function (a, b) { return a.t - b.t; }) }; }).filter(function (sr) { return sr.pts.length; });
+  series = series.map(function (sr, i) { return { name: sr.name || "", col: COL[i % 3], pts: sr.pts.filter(function (p) { return p.y != null && isFinite(p.y) && Math.abs(p.y) < 1e9 && isFinite(p.t); }).sort(function (a, b) { return a.t - b.t; }) }; }).filter(function (sr) { return sr.pts.length; });
   if (!series.length) { el.innerHTML = '<div class="muted" style="font-size:13px;text-align:center;padding:16px">لا توجد قراءات</div>'; return; }
   var all = [].concat.apply([], series.map(function (sr) { return sr.pts; })).sort(function (a, b) { return a.t - b.t; });
   var unit = CH_UNIT[c] || "", vdec = c === "ph" ? 2 : (c === "wt" || c === "air") ? 1 : 0, adec = c === "ph" ? 1 : 0;
@@ -2000,7 +2201,7 @@ function supView() {
     '<label class="f full" for="ss_zoneNote">تعريف المناطق (يظهر بخط صغير تحت القياسات)<input class="in" id="ss_zoneNote" value="' + esc(cfg("zoneNote", sec)) + '"></label>' +
     '<div class="full"><button class="btn pri block" type="button" data-act="saveSec">حفظ حدود ' + SECS[sec].name + "</button></div></form></section>";
   PT.lim = h; h = "";
-  var g = [["flowLitres", "معايرة تدفق التعبئة: حجم الماء", "لتر"], ["flowMinutes", "زمن المعايرة: دقائق", "دقيقة"], ["flowSeconds", "زمن المعايرة: ثوانٍ (0–59)", "ثانية"], ["dayFrom", "بداية النهار (للحدود والتحليل)", "ساعة"], ["dayTo", "نهاية النهار", "ساعة"], ["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"],
+  var g = [["flowLitres", "معايرة تدفق التعبئة: حجم الماء", "لتر"], ["flowMinutes", "زمن المعايرة: دقائق", "دقيقة"], ["flowSeconds", "زمن المعايرة: ثوانٍ (0–59)", "ثانية"], ["dayFrom", "بداية النهار (للحدود والتحليل)", "ساعة"], ["dayTo", "نهاية النهار", "ساعة"], ["battHours", "التذكير بشحن البطارية بعد", "ساعة"], ["battMaxCharge", "تنبيه فصل الشاحن بعد", "ساعة"], ["calDays", "معايرة جهاز القياس كل", "يوم"], ["daysToTransplant", "مدة الشتلة قبل النقل", "يوم"], ["daysToHarvest", "مدة البقاء في الأبراج حتى الحصاد", "يوم"], ["lPerCm", "كل 1 سم في خزان الأبراج", "لتر"],
     ["caFirst", "أول رش كالسيوم بعد النقل للأبراج", "يوم"], ["caEvery", "تكرار رش الكالسيوم كل", "يوم"], ["caUntil", "التوقف عن تذكير الكالسيوم بعد النقل بـ", "يوم"], ["insEvery", "الرش الوقائي الحشري كل (0 = بدون تذكير)", "يوم"], ["fungEvery", "الرش الوقائي الفطري كل (0 = بدون تذكير)", "يوم"]];
   h += '<section class="sec"><h2>إعدادات عامة</h2><form class="card fgrid" id="setGlob" novalidate>' +
     '<label class="f" for="sg_levelUnit">قياس مستوى خزان الأبراج<select class="in" id="sg_levelUnit"><option value="L"' + (cfg("levelUnit") !== "cm" ? " selected" : "") + '>باللتر</option><option value="cm"' + (cfg("levelUnit") === "cm" ? " selected" : "") + ">بالسنتيمتر</option></select></label>" +
@@ -2024,7 +2225,7 @@ function schedCard(sec) {
 function saveSched(sec, type, arr) {
   var sc = clone(S.settings.sched || DEF.sched); sc[sec] = sc[sec] || {};
   var u = {}; sc[sec][type] = arr.filter(function (t) { if (u[t]) return false; u[t] = 1; return true; }).sort();
-  return S.db.collection("config").doc("settings").set(Object.assign({}, S.settings, { sched: sc }));
+  return saveSettings({ sched: sc });
 }
 function openSchAdd(sec, type) {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("موعد جديد · " + typeDef(type, sec).label, sec, "bell") +
@@ -2189,8 +2390,10 @@ function caretEnd(t) { setTimeout(function () { try { var n = t.value.length; t.
 var FOCUS_T = 0;
 document.addEventListener("pointerdown", function (ev) { var t = ev.target.closest && ev.target.closest("[data-kp]"); if (!t || t.hasAttribute("data-computed") || t.disabled) return; if (kpOn()) { t.setAttribute("readonly", ""); t.setAttribute("inputmode", "none"); } else { t.removeAttribute("readonly"); t.setAttribute("inputmode", "decimal"); } }, true);
 /* leaving the app (recent apps, home) drops the focus so the phone keyboard does not pop up on return */
-document.addEventListener("visibilitychange", function () { if (document.hidden) { var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); kpHide(); } else repaint(); });
-window.addEventListener("pageshow", function () { repaint(); });
+document.addEventListener("visibilitychange", function () { if (document.hidden) { var a = document.activeElement; if (a && a.blur && a !== document.body) a.blur(); kpHide(); } else { repaint(); dayTick(); resumeUpdate(); } });
+window.addEventListener("pageshow", function () { repaint(); dayTick(); });
+window.addEventListener("focus", function () { dayTick(); });
+setInterval(dayTick, 30000);
 document.addEventListener("focusin", function (ev) {
   var t = ev.target; if (!t || !t.matches) return;
   if (t.matches("input.in, textarea.in")) { FOCUS_T = Date.now(); caretEnd(t); }
@@ -2255,6 +2458,18 @@ async function runSelfTest() {
       stRefs.push(r.id); return "يُقبل تسجيل الأمس";
     });
     await step("العامل لا يسجّل بتاريخ أقدم دون سبب", function () { return expectDenied(wdb.collection("entries").doc().set(wNote(addDays(today, -3)))); });
+    var newRules = function (what) { var er = new Error(what + ": انشر ملف firestore.rules الجديد (3.4.0) في Firebase"); er.code = "rules"; return er; };
+    await step("القواعد ترفض بيانات بصيغة غير صالحة", async function () {
+      var r = wdb.collection("entries").doc(), bad = wNote(today); bad.time = "<b>x</b>";
+      try { await r.set(bad); } catch (e) { if (e && e.code === "permission-denied") return "مُنع كما يجب"; throw e; }
+      stRefs.push(r.id); throw newRules("قُبلت");
+    });
+    await step("العامل يسجّل بتاريخ سابق مع السبب ولا يحذفه لاحقاً", async function () {
+      var r = wdb.collection("entries").doc(), a = wdb.collection("farmChanges").doc(), d = wNote(addDays(today, -3)); d.v.auditId = a.id;
+      var b = wdb.batch(); b.set(a, { entry: r.id, by: wuid, date: d.date, type: "note", sec: "n", before: null, after: d.v, requested: false, reason: "فحص النظام", created: firebase.firestore.FieldValue.serverTimestamp() }); b.set(r, d); await b.commit();
+      try { await r.delete(); } catch (e) { if (e && e.code === "permission-denied") { await db.collection("entries").doc(r.id).delete(); return "يُقبل مع السبب · حذف القديم ممنوع كما يجب"; } throw e; }
+      throw newRules("حُذف تسجيل قديم");
+    });
     await step("العامل يقرأ سجلات المزرعة", async function () {
       var c = function (k) { return wdb.collection(k); }, w0 = addDays(today, -120);
       await Promise.all([c("cropBalances").limit(1).get({ source: "server" }), c("farmLevels").orderBy("observed", "desc").limit(1).get({ source: "server" }),
@@ -2264,6 +2479,31 @@ async function runSelfTest() {
       return "المعدات والمهام والتوريدات والرسائل والدفعات";
     });
     await step("العامل لا يرى التكاليف", function () { return expectDenied(wdb.collection("farmLedger").limit(1).get({ source: "server" })); });
+    /* 3.4.0 دورة الزراعة: تسجيلات حقيقية باسم حساب الفحص (لا تظهر في صفحة الدورة) تُحذف في نهاية الخطوات */
+    var cyRefs = [];
+    await step("دورة الزراعة: العامل يبذر ويعدّ وينقل بدون جرد معتمد", async function () {
+      var c = wdb.collection("entries"), sr = c.doc(), cr = c.doc(), mr = c.doc(), b = wdb.batch(), t = nowTime();
+      b.set(sr, { type: "sow", sec: "n", date: today, time: t, ts: Date.now(), by: wuid, v: { time: t, crop: "فحص النظام", seeds: 10, side: SIDES[0] } });
+      b.set(cr, { type: "count", sec: "n", date: today, time: t, ts: Date.now(), by: wuid, v: { time: t, batch: sr.id, usable: 9 } });
+      b.set(mr, { type: "xplant", sec: "t", date: today, time: t, ts: Date.now(), by: wuid, v: { time: t, batch: sr.id, count: 4, zone: ZONE_T[0] } });
+      try { await b.commit(); } catch (e) { if (e && e.code === "permission-denied") throw newRules("مُنع"); throw e; }
+      cyRefs = [mr.id, cr.id, sr.id]; return "مسموح · العدّ من العامل والنقل تسجيل عادي يعمل بدون إنترنت";
+    });
+    if (cyRefs.length) {
+      await step("دورة الزراعة: القواعد ترفض نقلاً غير صالح", async function () {
+        var t = nowTime(), mv = function (v) { return { type: "xplant", sec: "t", date: today, time: t, ts: Date.now(), by: wuid, v: Object.assign({ time: t }, v) }; };
+        await expectDenied(wdb.collection("entries").doc().set(mv({ batch: cyRefs[2], count: 2.5 })));
+        await expectDenied(wdb.collection("entries").doc().set(mv({ batch: wdb.collection("entries").doc().id, count: 3 })));
+        await expectDenied(wdb.collection("entries").doc().set(mv({ batch: cyRefs[2], count: 3, stockTracked: true })));
+        return "عدد كسري، ودفعة غير موجودة، ورصيد قديم بلا خصم: مُنعت كما يجب";
+      });
+      await step("دورة الزراعة: «آخر حصاد» يُقفل الدفعة", async function () {
+        var h = wdb.collection("entries").doc(), t = nowTime();
+        await h.set({ type: "harvest", sec: "t", date: today, time: t, ts: Date.now(), by: wuid, v: { time: t, batch: cyRefs[2], weight: 0.5, count: 4, rejected: 0, saleable: 4, final: true } });
+        cyRefs.unshift(h.id); return "مسموح";
+      });
+      await step("دورة الزراعة: العامل يحذف تسجيلاته في يومه", async function () { for (var i = 0; i < cyRefs.length; i++) await wdb.collection("entries").doc(cyRefs[i]).delete(); cyRefs = []; return "مسموح"; });
+    }
     await step("العامل يحذف تسجيلاته العادية", async function () { for (var i = 0; i < stRefs.length; i++) await wdb.collection("entries").doc(stRefs[i]).delete(); stRefs = []; return "مسموح"; });
     await step("العامل لا يعدّل الإعدادات", function () { return expectDenied(wdb.collection("config").doc("settings").update({ x: 1 })); });
     await step("العامل لا يعتمد التسجيلات", function () { return expectDenied(wref.update({ review: { s: "ok", by: wuid } })); });
@@ -2286,11 +2526,24 @@ async function runSelfTest() {
     });
     await step("إيقاف الحساب يمنع الوصول فوراً", async function () { await db.collection("users").doc(wuid).update({ role: "disabled" }); return expectDenied(wdb.collection("entries").limit(1).get({ source: "server" })); });
   }
+  if (S.ownerUid === uid) await step("التكاليف والمبيعات: المالك يسجّل مبيعات ويحذفها", async function () {
+    var col = db.collection("farmLedger"), r = col.doc(), bad = col.doc(), stamp = firebase.firestore.FieldValue.serverTimestamp();
+    try { await r.set({ kind: "مبيعات", category: "مبيعات", amount: 1, kg: 0.1, date: today, by: uid, memo: "فحص النظام", source: "", basis: "مباشر للدفعة", allocation: [], created: stamp }); }
+    catch (e) { if (e && e.code === "permission-denied") { var er = new Error("مُنع: انشر ملف firestore.rules الجديد (3.4.0) في Firebase"); er.code = "rules"; throw er; } throw e; }
+    await r.delete();
+    try { await expectDenied(bad.set({ kind: "مبيعات", category: "مبيعات", amount: 1, kg: "x", date: today, by: uid, allocation: [], created: stamp })); }
+    catch (e) { await bad.delete().catch(function () {}); var er2 = new Error("قُبل وزن غير رقمي: انشر ملف firestore.rules الجديد (3.4.0) في Firebase"); er2.code = "rules"; throw er2; }
+    return "مسموح · والقيد غير الصالح مرفوض";
+  });
   await step("تنظيف بيانات الاختبار", async function () {
     if (ownerRef) await ownerRef.delete();
+    if (typeof cyRefs !== "undefined") for (var c = 0; c < cyRefs.length; c++) await db.collection("entries").doc(cyRefs[c]).delete();
     if (wref) await db.collection("entries").doc(wref.id).delete();
     if (typeof stRefs !== "undefined") for (var i = 0; i < stRefs.length; i++) await db.collection("entries").doc(stRefs[i]).delete();
     if (wApp && wApp.auth().currentUser) { try { await wApp.auth().currentUser.delete(); } catch (e) { await wApp.auth().signOut(); } }
+    /* وثائق حسابات الفحص (الحالي وما تراكم من فحوص سابقة) تُحذف إن سمحت القواعد الجديدة */
+    var olds = Object.keys(S.users).filter(function (k) { return S.users[k] && S.users[k].selftest; }); if (wuid && olds.indexOf(wuid) < 0) olds.push(wuid);
+    for (var j = 0; j < olds.length; j++) { try { await db.collection("users").doc(olds[j]).delete(); } catch (e) { break; } }
     if (wApp) await wApp.delete(); if (anon) await anon.delete();
     return "حُذفت بيانات وحساب الاختبار";
   });
@@ -2320,7 +2573,7 @@ async function runSelfTest() {
   });
   draw();
   var ok = res.filter(function (r) { return r.ok; }).length, sm = $("stSum");
-  if (sm) sm.innerHTML = '<div class="banner ' + (ok === res.length ? "ok" : "warn") + '"><b>' + ok + " / " + res.length + "</b>&nbsp;" + (ok === res.length ? "نجحت كل الاختبارات" : "بعض الاختبارات لم تنجح، صوّر هذه الشاشة وأرسلها") + "</div>";
+  if (sm) sm.innerHTML = '<div class="banner ' + (ok === res.length ? "ok" : "warn") + '"><b>' + ok + " / " + res.length + "</b>&nbsp;" + (ok === res.length ? "نجحت كل الاختبارات" : "بعض الاختبارات لم تنجح، صوّر هذه الشاشة وأرسلها") + "</div>" + crashLogHTML();
 }
 
 /* ================= actions ================= */
@@ -2359,6 +2612,8 @@ document.addEventListener("click", function (ev) {
     case "jump": jumpTo(b.getAttribute("data-to")); break;
     case "goTasks": var ts = $("tasksSec"); if (ts) window.scrollTo({ top: ts.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); break;
     case "goTab": setTab(b.getAttribute("data-t")); break;
+    case "reloadApp": hardReload(true); break;
+    case "clearCrash": CRASH = []; lsSet("gs_errs", "[]"); var cl = b.closest(".crashlog"); if (cl) cl.remove(); break;
     case "schDel": var sd1 = b.getAttribute("data-sec"), ty1 = b.getAttribute("data-type"), tt1 = b.getAttribute("data-t"); saveSched(sd1, ty1, schedOf(sd1, ty1).filter(function (x) { return x !== tt1; })).catch(fail); toast("حُذف موعد " + fmtTime(tt1)); break;
     case "schAdd": openSchAdd(b.getAttribute("data-sec"), b.getAttribute("data-type")); break;
     case "schSave": var sd2 = b.getAttribute("data-sec"), ty2 = b.getAttribute("data-type"), tt2 = readTime("sch_tp"); saveSched(sd2, ty2, schedOf(sd2, ty2).concat([tt2])).catch(fail); closeSheet(); toast("أُضيف موعد " + fmtTime(tt2)); break;
@@ -2369,10 +2624,10 @@ document.addEventListener("click", function (ev) {
       var rowsD = Array.prototype.map.call(document.querySelectorAll("#doseList [data-dose]"), function (el) { return num(el.value); }).filter(function (x) { return x > 0; }).sort(function (x, y) { return x - y; });
       if (!rowsD.length) { toast("أضف جرعة واحدة على الأقل"); return; }
       var fromD = b.getAttribute("data-from");
-      db.collection("config").doc("settings").set(Object.assign({}, S.settings, { doses: rowsD, fullDose: rowsD[rowsD.length - 1] })).catch(fail);
+      saveSettings({ doses: rowsD, fullDose: rowsD[rowsD.length - 1] }).catch(fail);
       toast("حُفظت الجرعات"); setTimeout(function () { if (fromD === "calc") openCalc(); else closeSheet(); }, 60); break;
     case "atcTest": openAtcTest(); break;
-    case "saveAtc": if (!ATC_RES) return; var oa = { atc: ATC_RES.atc, atcChecked: todayStr() }; if (!ATC_RES.atc) oa.ecCoef = ATC_RES.coef; db.collection("config").doc("settings").set(Object.assign({}, S.settings, oa)).catch(fail); closeSheet(); toast(ATC_RES.atc ? "اعتُمد: الجهاز يعوّض الحرارة (ATC)" : "اعتُمد معامل الحرارة " + f(ATC_RES.coef * 100, 2) + "% لكل درجة"); break;
+    case "saveAtc": if (!ATC_RES) return; var oa = { atc: ATC_RES.atc, atcChecked: todayStr() }; if (!ATC_RES.atc) oa.ecCoef = ATC_RES.coef; saveSettings(oa).catch(fail); closeSheet(); toast(ATC_RES.atc ? "اعتُمد: الجهاز يعوّض الحرارة (ATC)" : "اعتُمد معامل الحرارة " + f(ATC_RES.coef * 100, 2) + "% لكل درجة"); break;
     case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); if (S.tab === "rep") loadReport(); render(true); break;
     case "calc": openCalc(); break;
     case "cmode": CALC.mode = b.getAttribute("data-m"); b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); break;
@@ -2394,9 +2649,8 @@ document.addEventListener("click", function (ev) {
     case "toggleNote": var e2 = findEntry(id); if (e2) db.collection("entries").doc(id).update({ open: !e2.open }).catch(fail); break;
     case "signoff":
       b.disabled = true; var batch = db.batch(), sec = S.sec;
-      secEntries(S.entries, sec).filter(function (x) { return !x.review; }).forEach(function (x) { batch.update(db.collection("entries").doc(x.id), { review: { s: "ok", by: S.uid, at: Date.now(), c: "" } }); });
-      batch.set(db.collection("signoffs").doc(S.date + "_" + sec), { by: S.uid, at: Date.now(), sec: sec });
-      GSUI.commit(batch.commit(),b,function(){toast("تم اعتماد " + SECS[sec].name);}); break;
+      var ids = secEntries(S.entries, sec).filter(function (x) { return !x.review; }).map(function (x) { return x.id; });
+      GSUI.commit(approveChunks(ids).then(function () { return db.collection("signoffs").doc(S.date + "_" + sec).set({ by: S.uid, at: Date.now(), sec: sec }); }),b,function(){toast("تم اعتماد " + SECS[sec].name);}); break;
     case "battStart":
       var now = Date.now(), nt = nowTime();
       db.collection("entries").add({ type: "batt", sec: "g", date: todayStr(), time: nt, ts: now, by: S.uid, v: { time: nt, start: now, end: null } }).catch(fail);
@@ -2413,7 +2667,7 @@ document.addEventListener("click", function (ev) {
     case "saveFormula":
       var fo = { name: $("fo_name").value.trim() || "الخلطة", fullA: num($("fo_fullA").value), fullB: num($("fo_fullB").value), ecRaw: num($("fo_ecRaw").value), ecFull: num($("fo_ecFull").value), date: $("fo_date").value || todayStr() };
       if (!fo.fullA || !fo.fullB || fo.ecRaw == null || !fo.ecFull || fo.ecFull <= fo.ecRaw) { toast("تحقق من الأرقام: الجرعة والأملاح"); return; }
-      b.disabled = true; db.collection("config").doc("settings").set(Object.assign({}, S.settings, { formula: fo })).then(function () { toast("اعتُمدت الخلطة"); closeSheet(); }).catch(fail); break;
+      b.disabled = true; saveSettings({ formula: fo }).then(function () { toast("اعتُمدت الخلطة"); closeSheet(); }).catch(fail); break;
     case "newRecipe": openRecipe(null); break;
     case "editRecipe": openRecipe(S.recipes.filter(function (r) { return r.id === id; })[0]); break;
     case "addRi": $("riList").insertAdjacentHTML("beforeend", riRow({ name: "", qty: "", unit: "غ" })); break;
@@ -2445,15 +2699,16 @@ document.addEventListener("click", function (ev) {
     case "setRole": db.collection("users").doc(id).update({ role: b.getAttribute("data-r") }).then(function () { toast("تم تحديث الصلاحية"); }).catch(fail); break;
     case "saveSec":
       var o = {}; document.querySelectorAll("#setSec [id^=ss_]").forEach(function (el) { var k = el.id.slice(3); if (k === "zoneNote") o[k] = el.value.trim(); else { var n = num(el.value); if (n != null) o[k] = n; } });
-      var ns = Object.assign({}, S.settings); if (S.sec === "t") ns.tw = Object.assign({}, S.settings.tw || {}, o); else Object.assign(ns, o);
-      db.collection("config").doc("settings").set(ns).then(function () { toast("حُفظت حدود " + SECS[S.sec].name); }).catch(fail); break;
+      var ns = S.sec === "t" ? { tw: Object.assign({}, S.settings.tw || {}, o) } : o;
+      if (!Object.keys(ns).length) { toast("لا توجد قيم للحفظ"); return; }
+      saveSettings(ns).then(function () { toast("حُفظت حدود " + SECS[S.sec].name); }).catch(fail); break;
     case "saveGlob":
       var flowValid=["flowLitres","flowMinutes","flowSeconds"].every(function(k){return $("sg_"+k).value.trim()!=="" && num($("sg_"+k).value)!==null;});
       if(!flowValid){toast("أكمل حجم وزمن معايرة التدفق بأرقام صحيحة؛ يمكن كتابة صفر للدقائق أو الثواني");return;}
       var og = { levelUnit: $("sg_levelUnit").value, useLearned: $("sg_useLearned").value === "1" };
       document.querySelectorAll("#setGlob input[id^=sg_]").forEach(function (el) { var n = num(el.value); if (n != null) og[el.id.slice(3)] = n; });
       if(flowVolume({litres:og.flowLitres,minutes:og.flowMinutes,seconds:og.flowSeconds},1,0)===null){toast("صحح معايرة التدفق: حجم موجب وزمن موجب، والثواني 0–59");return;}
-      GSUI.commit(db.collection("config").doc("settings").set(Object.assign({}, S.settings, og)),b,function(){toast("حُفظت الإعدادات");}); break;
+      GSUI.commit(saveSettings(og),b,function(){toast("حُفظت الإعدادات");}); break;
   }
 });
 document.addEventListener("keydown", function (e) {
