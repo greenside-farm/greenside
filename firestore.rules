@@ -1,5 +1,6 @@
 rules_version = '2';
-// GREEN SIDE 3.4.0 — green-side-2d792 (الجديد: دورة الزراعة — تسجيل «عدّ الشتلات» من العامل، النقل دون جرد معتمد ويعمل بدون إنترنت،
+// GREEN SIDE 3.4.1 — green-side-2d792 (3.4.1: المشرف يربط نقلاً قديماً بلا دفعة بدفعة البذر)
+// 3.4.0 (الجديد: دورة الزراعة — تسجيل «عدّ الشتلات» من العامل، النقل دون جرد معتمد ويعمل بدون إنترنت،
 // «آخر حصاد» يُقفل الدفعة، التحقق من قيود التكاليف والمبيعات. الدفعات القديمة المرتبطة بـ cropBalances تبقى كما هي)
 // انسخ هذا الملف كاملاً إلى Firebase ← Firestore Database ← Rules ثم Publish.
 service cloud.firestore {
@@ -48,6 +49,13 @@ service cloud.firestore {
   // نقل 3.4.0: تسجيل عادي (لا يلمس cropBalances). النقل المتتبَّع من الإصدارات السابقة يبقى مشروطاً بتحديث الرصيد
   function newMove(v){return !tracked(v) && v.count is int && v.count>0 && sowOf(v.batch) && flag(v,'emptied');}
   function okCount(v){return v.usable is int && v.usable>=0 && v.usable<=1000000;}
+  // 3.4.1 «ربط بدفعة»: يُسمح بتغيير الدفعة فقط إن كانت فارغة في التسجيل القديم وغير متتبَّع (stockTracked ليس true)، للمشرف،
+  // والدفعة الجديدة تسجيل بذر بتاريخ لا يلي تاريخ النقل. يُقيَّم فقط عندما تتغيّر الدفعة، فلا يزيد كلفة التعديل العادي.
+  function noBatch(v){return !('batch' in v) || v.batch==null || v.batch=='';}
+  function linkOk(d,old){
+    let s=getAfter(/databases/$(database)/documents/entries/$(d.v.batch)).data;
+    return noBatch(old.v) && !tracked(old.v) && d.v.batch is string && d.v.batch.size()>0 && d.v.batch.size()<=64 && isSup() && s.type=='sow' && s.date<=d.date;
+  }
   function cropCreate(id,d){
     return (d.type!='xplant' || (d.sec=='t' && (tracked(d.v) ? (d.v.count>0 && movePair(id,d.v,0)) : newMove(d.v))))
       && (d.type!='count' || (d.sec=='n' && okCount(d.v) && sowOf(d.v.batch)))
@@ -55,7 +63,7 @@ service cloud.firestore {
   }
   function cropUpdate(id,d,old){
     return old.type==d.type
-      && (old.type!='xplant' || (d.sec==old.sec && d.v.get('batch','')==old.v.get('batch','') && tracked(d.v)==tracked(old.v) && flag(d.v,'emptied')
+      && (old.type!='xplant' || (d.sec==old.sec && (d.v.get('batch','')==old.v.get('batch','') || linkOk(d,old)) && tracked(d.v)==tracked(old.v) && flag(d.v,'emptied')
         && (d.v.count==old.v.count || (tracked(old.v) ? movePair(id,d.v,old.v.count) : (d.v.count is int && d.v.count>=0)))))
       && (old.type!='count' || (d.sec==old.sec && d.v.get('batch','')==old.v.get('batch','') && okCount(d.v)))
       && (old.type!='harvest' || (flag(d.v,'final') && (d.v.get('final',false)!=true || d.v.batch is string)));

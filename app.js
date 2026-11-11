@@ -1,9 +1,9 @@
-/* GREEN SIDE 3.4.0 — متابعة المشتل والأبراج في البيت المحمي
+/* GREEN SIDE 3.4.1 — متابعة المشتل والأبراج في البيت المحمي
    البيانات في Firebase Firestore، والدخول عبر Firebase Authentication.
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "3.4.0";
+var APP_VERSION = "3.4.1";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -2458,7 +2458,7 @@ async function runSelfTest() {
       stRefs.push(r.id); return "يُقبل تسجيل الأمس";
     });
     await step("العامل لا يسجّل بتاريخ أقدم دون سبب", function () { return expectDenied(wdb.collection("entries").doc().set(wNote(addDays(today, -3)))); });
-    var newRules = function (what) { var er = new Error(what + ": انشر ملف firestore.rules الجديد (3.4.0) في Firebase"); er.code = "rules"; return er; };
+    var newRules = function (what) { var er = new Error(what + ": انشر ملف firestore.rules الجديد (3.4.1) في Firebase"); er.code = "rules"; return er; };
     await step("القواعد ترفض بيانات بصيغة غير صالحة", async function () {
       var r = wdb.collection("entries").doc(), bad = wNote(today); bad.time = "<b>x</b>";
       try { await r.set(bad); } catch (e) { if (e && e.code === "permission-denied") return "مُنع كما يجب"; throw e; }
@@ -2529,10 +2529,10 @@ async function runSelfTest() {
   if (S.ownerUid === uid) await step("التكاليف والمبيعات: المالك يسجّل مبيعات ويحذفها", async function () {
     var col = db.collection("farmLedger"), r = col.doc(), bad = col.doc(), stamp = firebase.firestore.FieldValue.serverTimestamp();
     try { await r.set({ kind: "مبيعات", category: "مبيعات", amount: 1, kg: 0.1, date: today, by: uid, memo: "فحص النظام", source: "", basis: "مباشر للدفعة", allocation: [], created: stamp }); }
-    catch (e) { if (e && e.code === "permission-denied") { var er = new Error("مُنع: انشر ملف firestore.rules الجديد (3.4.0) في Firebase"); er.code = "rules"; throw er; } throw e; }
+    catch (e) { if (e && e.code === "permission-denied") { var er = new Error("مُنع: انشر ملف firestore.rules الجديد (3.4.1) في Firebase"); er.code = "rules"; throw er; } throw e; }
     await r.delete();
     try { await expectDenied(bad.set({ kind: "مبيعات", category: "مبيعات", amount: 1, kg: "x", date: today, by: uid, allocation: [], created: stamp })); }
-    catch (e) { await bad.delete().catch(function () {}); var er2 = new Error("قُبل وزن غير رقمي: انشر ملف firestore.rules الجديد (3.4.0) في Firebase"); er2.code = "rules"; throw er2; }
+    catch (e) { await bad.delete().catch(function () {}); var er2 = new Error("قُبل وزن غير رقمي: انشر ملف firestore.rules الجديد (3.4.1) في Firebase"); er2.code = "rules"; throw er2; }
     return "مسموح · والقيد غير الصالح مرفوض";
   });
   await step("تنظيف بيانات الاختبار", async function () {

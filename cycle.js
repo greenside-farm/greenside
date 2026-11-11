@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.4.0 — دورة الزراعة: كل دفعة من البذرة إلى الحصاد في مكان واحد، والتكاليف والمبيعات للمالك.
+/* GREEN SIDE 3.4.1 — دورة الزراعة: كل دفعة من البذرة إلى الحصاد في مكان واحد، والتكاليف والمبيعات للمالك.
    الدفعة = تسجيل بذر (sow). المراحل تُحسب من التسجيلات المرتبطة بها (v.batch):
    «عدّ» count (العامل يسجّله) ← «نقل» xplant (تسجيل عادي يعمل بدون إنترنت) ← «حصاد» harvest (v.final=true يُقفل الدفعة).
    الدفعات القديمة (cropBalances من 3.3.0): جرد المشرف يُعامل كأول «عدّ» بتاريخ اعتماده، والنقل المتتبَّع يُخصم منه كما كان. */
@@ -32,11 +32,15 @@ function build(){
  const crops=window.Farm&&Farm.cropReady()?Farm.crops():null;if(!crops)return null;
  const bal=Farm.balances(),t=todayStr(),d2t=num(cfg('daysToTransplant'))||21,d2h=num(cfg('daysToHarvest'))||35;
  if(cache&&cache.crops===crops&&cache.bal===bal&&cache.t===t&&cache.d2t===d2t&&cache.d2h===d2h&&cache.users===S.users)return cache.res;
- const by={},orphans=[];
+ const by={},orphans=[],loose=[];
  crops.forEach(e=>{if(e.type==='sow'&&!testUser(e.by))by[e.id]={e,ev:[]};});
- crops.forEach(e=>{if(e.type==='sow'||testUser(e.by))return;const b=by[txt(e.v.batch,64)];if(b)b.ev.push(e);else if(e.type==='xplant'||e.type==='harvest')orphans.push(e);});
+ crops.forEach(e=>{if(e.type==='sow'||testUser(e.by))return;const id=txt(e.v.batch,64),b=by[id];if(b)b.ev.push(e);else if(e.type==='xplant'&&!id&&e.v.stockTracked!==true)loose.push(e);else if(e.type==='xplant'||e.type==='harvest')orphans.push(e);});
+ /* 3.4.1: نقل سابق بلا دفعة (قبل أن يصبح ربط النقل بدفعة إلزامياً): يُحسب ضمن «في الأبراج» حتى يُربط بدفعة أو يمر 60 يوماً */
+ const lz=loose.filter(e=>daysBetween(e.date,t)<=IDLE&&(int(e.v.count)||0)>0).sort(order);
+ loose.forEach(e=>{if(!lz.includes(e))orphans.push(e);});
  const list=Object.values(by).map(o=>batch(o,bal.find(x=>x.id===o.e.id),t,d2t,d2h)).sort((a,b)=>b.date.localeCompare(a.date)||(b.e.ts||0)-(a.e.ts||0));
- const res={list,byId:Object.fromEntries(list.map(b=>[b.id,b])),orphans:orphans.sort(order).reverse(),t,d2t,d2h};
+ const res={list,byId:Object.fromEntries(list.map(b=>[b.id,b])),orphans:orphans.sort(order).reverse(),t,d2t,d2h,
+  loose:{moves:lz,plants:lz.reduce((n,e)=>n+(int(e.v.count)||0),0),from:lz.length?lz[0].date:'',to:lz.length?lz[lz.length-1].date:''}};
  cache={crops,bal,t,d2t,d2h,users:S.users,res};return res;
 }
 function batch(o,legacy,t,d2t,d2h){
@@ -68,7 +72,7 @@ function batch(o,legacy,t,d2t,d2h){
  else stage=harv.length?'harvest':'towers';
  const name=Farm.batchName(e);
  return {id:e.id,e,name,crop:v.crop||'صنف غير محدد',side:v.side||'',date:e.date,age,seeds,trays:int(v.trays),lot:txt(v.lot,80),
-  events:ev,counts,moves,harv,known,estimated:!known,usable:base,germ:base!=null&&seeds?base/seeds*100:null,nursery,conflict:known&&rem<0,
+  events:ev,counts,moves,harv,known,rawRem:rem,estimated:!known,usable:base,germ:base!=null&&seeds?base/seeds*100:null,nursery,conflict:known&&rem<0,
   moved,heads,kg,saleable,towers,final,stage,why,lastAct,firstMove,zone:lastMove?.v.zone||'',lastCount,emptiedAt,legacy:!!legacy,
   inNursery:['count','grow','ready'].includes(stage),inTowers:['towers','harvest'].includes(stage)||(stage!=='done'&&moved>0),
   plants:stage==='done'?0:nursery*(['count','grow','ready'].includes(stage)?1:0)+towers,
@@ -81,7 +85,8 @@ const active=()=>all().filter(b=>b.stage!=='done');
 function now(){
  const m=build();if(!m)return null;const t=m.t;
  return {nursery:m.list.filter(b=>b.inNursery).map(b=>({id:b.id,kind:'n',name:b.name,crop:b.crop,side:b.side,date:b.date,age:b.age,target:m.d2t,remaining:b.known?b.nursery:null,moved:b.moved,seeds:b.seeds,usable:b.usable,counted:b.known})),
-  towers:m.list.filter(b=>b.stage!=='done'&&b.moved>0&&b.towers>0).map(b=>({id:b.id,kind:'t',name:b.name,date:b.firstMove,age:Math.max(0,daysBetween(b.firstMove,t)),count:b.towers,zone:b.zone,harvested:b.harv.length>0}))};
+  towers:m.list.filter(b=>b.stage!=='done'&&b.moved>0&&b.towers>0).map(b=>({id:b.id,kind:'t',name:b.name,date:b.firstMove,age:Math.max(0,daysBetween(b.firstMove,t)),count:b.towers,zone:b.zone,harvested:b.harv.length>0}))
+   .concat(m.loose.moves.length?[{id:'',kind:'t',name:'نقل سابق بلا دفعة',date:m.loose.from,age:Math.max(0,daysBetween(m.loose.from,t)),count:m.loose.plants,zone:'',harvested:false}]:[])};
 }
 
 /* ================= التكاليف ================= */
@@ -180,20 +185,76 @@ function listPage(){
  if(!m)return h+loading();
  const L=m.list,ready=L.filter(b=>b.stage==='ready'),grow=L.filter(b=>b.stage==='grow'||b.stage==='count'),tw=L.filter(b=>b.stage==='towers'||b.stage==='harvest'),done=L.filter(b=>b.stage==='done');
  const mo=todayStr().slice(0,7),kgMonth=Farm.crops().filter(e=>e.type==='harvest'&&String(e.date).slice(0,7)===mo&&!testUser(e.by)).reduce((n,e)=>n+(kgOf(e.v.weight)||0),0);
- const sumN=a=>a.reduce((n,b)=>n+b.nursery,0);
+ const sumN=a=>a.reduce((n,b)=>n+b.nursery,0),lz=m.loose;
  h+='<div class="cy-pipe"><div><span>في المشتل</span><b>'+grow.length+'</b><small>'+E(f(sumN(grow))+' شتلة')+'</small></div><div class="warn"><span>جاهزة للنقل</span><b>'+ready.length+'</b><small>'+E(f(sumN(ready))+' شتلة')+'</small></div>'+
-  '<div class="t"><span>في الأبراج</span><b>'+tw.length+'</b><small>'+E(f(tw.reduce((n,b)=>n+b.towers,0))+' نبتة')+'</small></div><div class="ok"><span>حصاد الشهر</span><b>'+E(f(kgMonth,kgMonth<10?1:0))+'</b><small>كغ</small></div></div>';
+  '<div class="t"><span>في الأبراج</span><b>'+(tw.length+(lz.moves.length?1:0))+'</b><small>'+E(f(tw.reduce((n,b)=>n+b.towers,0)+lz.plants)+' نبتة')+'</small></div><div class="ok"><span>حصاد الشهر</span><b>'+E(f(kgMonth,kgMonth<10?1:0))+'</b><small>كغ</small></div></div>';
  if(Farm.cropCached())h+='<p class="cy-off">'+I('cloud',14,2)+'نسخة محفوظة على الجهاز · تتحدّث عند الاتصال</p>';
  h+='<a href="#" class="rc-big" data-cy="sow">'+I('plus',20,2.6)+'دفعة جديدة · بذر</a>';
  if(ready.length)h+=head('جاهزة للنقل',ready.length,'warn')+ready.sort((a,b)=>b.age-a.age).map(card).join('');
  if(grow.length)h+=head('في المشتل',grow.length)+grow.sort((a,b)=>b.age-a.age).map(card).join('');
- if(tw.length)h+=head('في الأبراج',tw.length,'t')+tw.sort((a,b)=>(a.firstMove||'').localeCompare(b.firstMove||'')).map(card).join('');
- if(!ready.length&&!grow.length&&!tw.length)h+='<p class="bd-empty">لا توجد دفعات قائمة. ابدأ بتسجيل البذر.</p>';
- if(m.orphans.length)h+='<details class="cy-orph"><summary>'+E(pl(m.orphans.length,'تسجيل قديم بلا دفعة','تسجيلان قديمان بلا دفعة','تسجيلات قديمة بلا دفعة','تسجيلاً قديماً بلا دفعة'))+'</summary><div class="rc-box">'+m.orphans.slice(0,30).map(logRow).join('')+'</div></details>';
+ if(tw.length||lz.moves.length)h+=head('في الأبراج',tw.length+(lz.moves.length?1:0),'t')+tw.sort((a,b)=>(a.firstMove||'').localeCompare(b.firstMove||'')).map(card).join('')+looseCard(lz);
+ if(!ready.length&&!grow.length&&!tw.length&&!lz.moves.length)h+='<p class="bd-empty">لا توجد دفعات قائمة. ابدأ بتسجيل البذر.</p>';
+ if(m.orphans.length)h+='<details class="cy-orph"><summary>'+E(pl(m.orphans.length,'تسجيل قديم بلا دفعة','تسجيلان قديمان بلا دفعة','تسجيلات قديمة بلا دفعة','تسجيلاً قديماً بلا دفعة'))+'</summary><div class="rc-box">'+m.orphans.slice(0,30).map(e=>isLoose(e)?lrow(e):logRow(e)).join('')+'</div></details>';
  if(done.length)h+='<a href="#" class="cy-done" data-cy="done">'+E('الدفعات المنتهية · '+done.length)+I('chev',16,2.2)+'</a>';
  if(isSup()&&Farm.harvestWeeks)h+='<details class="cy-orph"><summary>الحصاد الفعلي خلال أسبوعين</summary>'+Farm.harvestWeeks()+'</details>';
  return h;
 }
+/* ---------- 3.4.1: نقل سابق بلا دفعة ---------- */
+const isLoose=e=>e.type==='xplant'&&!txt(e.v.batch,64)&&e.v.stockTracked!==true;
+function range(a,b){return a===b?DT(a):DT(a)+' – '+DT(b);}
+function lrow(e){
+ const v=e.v,bits=[DT(e.date)+(e.time?' · '+fmtTime(e.time):''),v.zone,v.towers?'أبراج '+v.towers:'',String(nameOf(e.by)).trim().split(/\s+/)[0]].filter(Boolean);
+ return '<div class="cy-lrow"><a href="#" data-rc="detail" data-id="'+E(e.id)+'"><b><i>'+E(f(int(v.count)))+'</i> شتلة</b><small>'+E(bits.join(' · '))+'</small></a>'+(isSup()?'<button type="button" class="cy-link" data-cy="link" data-id="'+E(e.id)+'">'+I('layers',14,2.2)+'ربط بدفعة</button>':'')+'</div>';
+}
+function looseCard(lz){
+ if(!lz.moves.length)return '';
+ return '<article class="cy-card cy-loose"><div class="cy-top"><span class="bd-hic warn">'+I('leaf',18)+'</span><div class="cy-t"><b>نقل سابق بلا دفعة</b><small>'+E(range(lz.from,lz.to)+' · '+pl(lz.moves.length,'تسجيل واحد','تسجيلان','تسجيلات','تسجيلاً'))+'</small></div><span class="cy-st warn">بلا دفعة</span></div>'+
+  flow([[f(lz.plants),' في الأبراج','hl']])+'<div class="cy-lrows">'+lz.moves.slice().reverse().map(lrow).join('')+'</div>'+
+  '<p class="cy-tip cy-lnote">'+E(isSup()?'تُحسب ضمن «في الأبراج». اربط كل تسجيل بدفعة البذر ليُخصم من المشتل ويدخل في نتيجة الدفعة.':'تُحسب ضمن «في الأبراج» حتى يربطها المشرف بدفعاتها.')+'</p></article>';
+}
+let LK=null;   /* نافذة الربط المفتوحة */
+function linkChoices(e){return all().filter(b=>b.date<=e.date&&daysBetween(b.date,e.date)<=90).sort((a,b)=>b.date.localeCompare(a.date));}
+function simulate(b,e){
+ const m=build(),mv=Object.assign({},e,{v:Object.assign({},e.v,{batch:b.id})});
+ return batch({e:b.e,ev:b.events.concat([mv])},Farm.balances().find(x=>x.id===b.id),m.t,m.d2t,m.d2h);
+}
+function linkForm(id){
+ if(!isSup())return;
+ const e=Farm.crops().find(x=>x.id===id);
+ if(!e||!isLoose(e)){toast('هذا النقل مرتبط بدفعة بالفعل');return;}
+ const ch=linkChoices(e);LK={e,pick:''};
+ const v=e.v,info=[DT(e.date)+(e.time?' · '+fmtTime(e.time):''),v.zone,v.towers?'أبراج '+v.towers:'',nameOf(e.by)].filter(Boolean).join(' · ');
+ openSheet('<div class="sheet-bg" data-close><div class="sheet form-sheet" role="dialog" aria-modal="true" aria-label="ربط النقل بدفعة"><div class="fh"><span class="bd-hic info md">'+I('moveup',21)+'</span><div class="fh-t"><h2>ربط النقل بدفعة</h2><span>'+E(info)+'</span></div><button class="iconbtn" type="button" data-act="close" aria-label="إغلاق">✕</button></div>'+
+  '<p class="cy-note">نقل <b>'+E(f(int(v.count)))+'</b> شتلة إلى الأبراج بلا دفعة</p>'+
+  '<div class="f full"><span>دفعة البذر</span>'+(ch.length?'<div class="cy-who" role="radiogroup" id="cyLinkList">'+ch.map(b=>{const [st]=status(b);
+   return '<label><input type="radio" name="cyLink" value="'+E(b.id)+'"><span><b>'+E(b.name)+'</b><small>'+E(st+' · '+(b.inNursery?(b.known?'في المشتل ':'في المشتل تقديرياً ')+f(b.nursery):'منقولة '+f(b.moved)))+'</small></span></label>';}).join('')+'</div>':
+   '<p class="bd-empty">لا توجد دفعات بذر قبل تاريخ هذا النقل خلال 90 يوماً.</p>')+'</div>'+
+  '<div class="cy-preview" id="cyLinkPrev" aria-live="polite"></div>'+
+  '<div id="formErrors" class="full form-errors" role="alert" hidden></div><div class="sheet-actions"><button class="btn pri" type="button" data-cy="link-save" disabled>ربط بالدفعة</button></div></div></div>');
+ const list=$('cyLinkList');if(list)list.addEventListener('change',ev=>{if(ev.target.name!=='cyLink')return;LK.pick=ev.target.value;list.querySelectorAll('label').forEach(l=>l.classList.toggle('on',l.querySelector('input').checked));linkPreview();});
+}
+function linkPreview(){
+ const el=$('cyLinkPrev'),btn=document.querySelector('[data-cy="link-save"]');if(!el||!LK)return;
+ const b=get(LK.pick);if(!b){el.innerHTML='';if(btn)btn.disabled=true;return;}
+ const a=simulate(b,LK.e),n=int(LK.e.v.count)||0,notes=[];
+ const lastC=b.lastCount&&b.lastCount.t!=null?b.lastCount:null,before=lastC&&at(LK.e)<lastC.t;
+ if(a.rawRem<0)notes.push(['warn','أكثر من المتاح في المشتل ('+f(Math.max(0,b.rawRem))+' شتلة). راجع العدد أو اختر دفعة أخرى.']);
+ else if(before)notes.push(['','النقل قبل آخر عدّ ('+DT(lastC.date)+')، فالعدّ يشمله: يبقى رصيد المشتل كما هو ويُضاف العدد إلى الشتلات الصالحة.']);
+ if(a.usable!=null&&a.seeds&&a.usable>a.seeds)notes.push(['warn','الشتلات الصالحة ستتجاوز عدد البذور ('+f(a.usable)+' من '+f(a.seeds)+').']);
+ if(b.stage==='done')notes.push(['','الدفعة منتهية؛ يُضاف النقل إلى نتيجتها.']);
+ const row=(l,x,y)=>'<div><span>'+E(l)+'</span><b>'+E(x)+'</b><i aria-hidden="true">←</i><b class="hl">'+E(y)+'</b></div>';
+ el.innerHTML='<div class="cy-pv">'+row(b.known||a.known?'في المشتل':'في المشتل تقديرياً',f(b.nursery),f(a.nursery))+row('منقولة للأبراج',f(b.moved),f(a.moved))+(b.usable!==a.usable?row('شتلات صالحة',b.usable==null?'—':f(b.usable),a.usable==null?'—':f(a.usable)):'')+'</div>'+
+  notes.map(x=>'<p class="cy-pnote '+x[0]+'">'+E(x[1])+'</p>').join('');
+ if(btn)btn.disabled=a.rawRem<0;
+}
+function saveLink(btn){
+ if(!isSup()||!LK||!LK.pick||btn.disabled)return;
+ const b=get(LK.pick);if(!b)return;
+ if(simulate(b,LK.e).rawRem<0){linkPreview();return;}
+ const done=LK,ref=S.db.collection('entries').doc(LK.e.id);
+ GSUI.commit(ref.update({'v.batch':b.id,'v.linkedBy':S.uid,'v.linkedAt':Date.now()}),btn,()=>{if(LK===done)closeSheet();toast('رُبط النقل بدفعة '+b.crop);});
+}
+
 /* ---------- الدفعات المنتهية ---------- */
 function donePage(){
  const m=build();
@@ -224,7 +285,7 @@ function logRow(e){
  const [ic,tone]=TYPE_LOOK[e.type]||['list','gray'],v=e.v,vals=[];
  if(e.type==='sow'&&int(v.trays)!=null)vals.push(f(int(v.trays))+' صواني');
  if(e.type==='count'){const b=get(v.batch);if(b&&b.seeds&&int(v.usable)!=null&&b.lastCount?.e===e&&b.germ!=null)vals.push('إنبات '+f(b.germ)+'%');}
- if(e.type==='xplant'){if(v.zone)vals.push(v.zone);if(v.towers)vals.push('أبراج '+v.towers);if(v.stockTracked===true)vals.push('قبل 3.4.0');}
+ if(e.type==='xplant'){if(v.zone)vals.push(v.zone);if(v.towers)vals.push('أبراج '+v.towers);if(v.stockTracked===true)vals.push('قبل 3.4.0');if(txt(v.linkedBy,128))vals.push('رُبط لاحقاً');}
  if(e.type==='harvest'){if(v.grade)vals.push(v.grade);if(int(v.rejected))vals.push('مستبعد '+f(int(v.rejected)));}
  vals.push(String(nameOf(e.by)).trim().split(/\s+/)[0]);
  const st=window.Shift&&Shift.stateOf?REVIEW[Shift.stateOf(e)]:null;
@@ -500,7 +561,9 @@ document.addEventListener('click',ev=>{
  switch(a){
   case 'tab':tab=id==='costs'&&owner()?'costs':'batches';if(S.tab!=='crop')setTab('crop');else render(true);break;
   case 'month':{const [y,m]=(month||todayStr().slice(0,7)).split('-').map(Number),d=new Date(Date.UTC(y,m-1+(+id),15));month=d.toISOString().slice(0,7);render(true);break;}
-  case 'batch':if(inSheet&&NAV.sheet)closeSheet();batchID=id;go('batch');break;
+  case 'batch':if(inSheet&&NAV.sheet)closeSheet();if(!id){Cycle.setTab('batches');go('crop');break;}batchID=id;go('batch');break;
+  case 'link':linkForm(id);break;
+  case 'link-save':saveLink(b);break;
   case 'done':go('cropDone');break;
   case 'sow':open('sow');break;
   case 'count':open('count',id);break;
@@ -519,5 +582,5 @@ document.addEventListener('click',ev=>{
 });
 return {view,now,get,all,active,autoAlloc,costForm,saleForm,open,formSub,formNote,formInit,formUpdate,validate,money,
  openBatch:id=>{batchID=id;go('batch');},setTab:t=>{tab=t;},
- _test:{build,batch,autoAlloc,money,allocText,status,stepState}};
+ linkForm,_test:{build,batch,autoAlloc,money,allocText,status,stepState,simulate}};
 })();

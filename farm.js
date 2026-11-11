@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.4.0 — تشغيل المزرعة (دورة الزراعة والتكاليف في cycle.js) */
+/* GREEN SIDE 3.4.1 — تشغيل المزرعة (دورة الزراعة والتكاليف في cycle.js) */
 var Farm=(()=>{
 'use strict';
 const pages=['equipment','deliveries','crop','batch','cropDone','finance','team','jobs','changes'];
