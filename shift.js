@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.4.1 — إيصال تعويض الماء وقائمة الإرسال المحلية (واجهة الوردية القديمة محفوظة للرجوع) */
+/* GREEN SIDE 3.7.0 — إيصال تعويض الماء وقائمة الإرسال المحلية (واجهة الوردية القديمة محفوظة للرجوع) */
 var Shift=(()=>{
 'use strict';
 const sending=new Set(), errors=new Map();
@@ -24,7 +24,7 @@ function pending(uid=S.uid){
 }
 function hasPending(){return pending().length>0;}
 function enqueue(id,data,reason){
- if(data.by!==S.uid||!id)throw Error('تعذر تحديد صاحب العملية');
+ if(data.by!==S.uid||!id)throw userError('تعذّر تحديد صاحب العملية. سجّل الخروج ثم الدخول وأعد المحاولة.');
  const item={id,data,reason,auditId:S.db.collection('farmChanges').doc().id};
  const k=key('send:'+id);
  if(!read(k))localStorage.setItem(k,JSON.stringify(item));
@@ -44,10 +44,10 @@ async function flush(){
        const prior=await tx.get(ref);
        if(prior.exists){
          const d=prior.data();
-         if(d.by!==uid||d.ts!==data.ts||d.type!=='waterOnly')throw Error('معرّف مرتبط بعملية مختلفة؛ راجع المشرف');
+         if(d.by!==uid||d.ts!==data.ts||d.type!=='waterOnly')throw userError('رقم هذه العملية مرتبط بتسجيل آخر في الخادم؛ راجع المشرف.');
          return;
        }
-       if(S.uid!==uid)throw Error('تغيّر الحساب');
+       if(S.uid!==uid)throw userError('تغيّر الحساب أثناء الإرسال. سيُرسَل التسجيل عند دخول صاحبه.');
        if(data.date<todayStr() && isWorker()){
          const v={...data.v,auditId:item.auditId};
          tx.set(db.collection('farmChanges').doc(item.auditId),{entry:item.id,by:uid,date:data.date,type:data.type,sec:data.sec,before:null,after:v,requested:false,reason:item.reason||'اكتمل إرسال تسجيل محفوظ على الجهاز بعد نهاية اليوم',created:firebase.firestore.FieldValue.serverTimestamp()});
@@ -113,13 +113,13 @@ function home(tools){
  const todo=TASKS[S.sec].filter(x=>doneOf(rows,x[0])<needOf(S.sec,x));
  const notice=live?tools.notice():'',p=priority(rows,todo,live);
  let cta=p.type?newEntry(p.cta,p.type):p.filter?action(p.cta,p.filter):route(p.cta,p.page);
- const water=S.sec==='t'&&live?newEntry('＋ تعويض ماء فقط','waterOnly'):'';
+ /* 3.5.0: أُزيل زر «تعويض ماء فقط»؛ التسجيلات القديمة تُعرض، وما حُفظ على الجهاز قبل التحديث يُرسَل كالمعتاد */
  const kpis=[['تسجيلات القسم',rows.length],['جولات متبقية',tasksFor(S.sec,S.entries).left],['تحتاج تصحيحًا',rows.filter(e=>stateOf(e)==='fix').length]];
  let h='<section class="shift-head"><div class="shift-id"><span>'+E(owner?'لوحة المالك':isSup()?'لوحة المشرف':'وردية العامل')+'</span></div><h2>'+E(SECS[S.sec].name)+' <small> / '+(live?'اليوم':'الأرشيف')+'</small></h2>'+tools.status()+'</section>';
  if(live)h+=receipts();
  h+=notice+'<section class="shift-focus"><small>'+(!live?'التاريخ المختار':isSup()?'أولوية المتابعة':'الخطوة التالية')+'</small><h2>'+E(p.title)+'</h2><p>'+E(p.detail)+'</p>'+cta+'</section>';
  h+='<div class="shift-metrics">'+kpis.map(([l,v])=>'<div><small>'+l+'</small><strong>'+(!S.dayLoaded?'—':v)+'</strong></div>').join('')+'</div>';
- if(water)h+='<div class="shift-tools">'+water+route('توريد ناقلة','deliveries')+'</div>';
+ if(S.sec==='t'&&live)h+='<div class="shift-tools">'+route('توريد ناقلة','deliveries')+'</div>';
  if(owner)h+=production();
  if(live)h+=tools.liveCards();
  if(!owner&&!isWorker())h+=production();

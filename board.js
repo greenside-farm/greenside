@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.4.1 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
+/* GREEN SIDE 3.7.0 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
    يقرأ البيانات المحمّلة فقط (التسجيلات، الإعدادات، الحساسات، المزرعة) ولا يكتب شيئاً في قاعدة البيانات. */
 var Board=(()=>{
 'use strict';
@@ -49,7 +49,13 @@ const P={
  settings:'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
  moon:'<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
  truck:'<path d="M3 6h11v10H3zM14 9h4l3 3v4h-7"/><circle cx="7" cy="18" r="2"/><circle cx="17" cy="18" r="2"/>',
- layers:'<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>'
+ layers:'<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
+ more:'<circle cx="12" cy="5.5" r="1.4" fill="currentColor"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/><circle cx="12" cy="18.5" r="1.4" fill="currentColor"/>',
+ pause:'<rect x="6.5" y="5" width="3.5" height="14" rx="1"/><rect x="14" y="5" width="3.5" height="14" rx="1"/>',
+ bellx:'<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6.5 2 6.5H4S6 14 6 9"/><path d="M10 19a2 2 0 0 0 4 0"/><path d="M3 3l18 18"/>',
+ bell:'<path d="M6 9a6 6 0 0 1 12 0c0 5 2 6.5 2 6.5H4S6 14 6 9"/><path d="M10 19a2 2 0 0 0 4 0"/>',
+ image:'<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="M21 16l-5-5-8 9"/>',
+ sort:'<path d="M7 4v16M3.5 16.5 7 20l3.5-3.5M17 20V4M13.5 7.5 17 4l3.5 3.5"/>'
 };
 const I=(n,s=20,w=1.8)=>'<svg aria-hidden="true" width="'+s+'" height="'+s+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="'+w+'" stroke-linecap="round" stroke-linejoin="round">'+(P[n]||'')+'</svg>';
 const live=()=>S.date===todayStr();
@@ -62,6 +68,16 @@ const hN=h=>h<1?'أقل من ساعة':h<48?pl(Math.round(h),'ساعة','ساع�
 function withSec(sec,fn){const o=S.sec;if(o===sec)return fn();S.sec=sec;try{return fn();}finally{S.sec=o;}}
 function firstName(id){return String(nameOf(id)||'').trim().split(/\s+/)[0]||'';}
 function names(ids){const n=[...new Set(ids)].map(firstName).filter(Boolean);return n.length<=1?n.join(''):n.slice(0,-1).join('، ')+' و'+n[n.length-1];}
+
+/* ---------- 3.6.0: إيقاف التنبيهات وتأجيلها ----------
+   settings.alertOff[key] = {until:'' | 'YYYY-MM-DD', by, at, label, sec}. until فارغ = حتى يُفعَّل؛ التاريخ = يعود صباح ذلك اليوم.
+   يحفظه المشرف في إعدادات المزرعة فيسري على كل الفريق. التنبيه الذي يجمع عدة مفاتيح (مثل صيانة عدة معدات) يُوقف بها كلها */
+function offMap(){const m=S.settings&&S.settings.alertOff;return m&&typeof m==='object'&&!Array.isArray(m)?m:{};}
+function offOf(k){const o=offMap()[k];if(!o||typeof o!=='object'||Array.isArray(o))return null;if(o.until&&!okDay(o.until))return null;return {k,until:okDay(o.until)?o.until:'',by:txt(o.by,128),at:okTs(o.at)?o.at:0,label:txt(o.label,120)||'تنبيه',sec:o.sec==='n'||o.sec==='t'?o.sec:''};}
+function muted(k){if(!k)return false;if(Array.isArray(k))return k.length>0&&k.every(muted);const o=offOf(k);return !!o&&(!o.until||todayStr()<o.until);}
+function mutedList(){return Object.keys(offMap()).map(offOf).filter(o=>o&&(!o.until||todayStr()<o.until)).sort((a,b)=>b.at-a.at);}
+/* يُحذف من الحفظ ما انتهى تأجيله، فلا تكبر الإعدادات */
+function liveMap(){const m={},t=todayStr();Object.keys(offMap()).forEach(k=>{const o=offOf(k);if(o&&(!o.until||t<o.until))m[k]=offMap()[k];});return m;}
 
 /* ---------- بيانات الحساسات: تُحسب مرة واحدة لكل قسم في الرسم الواحد ---------- */
 let SC=null;
@@ -83,8 +99,8 @@ function slots(sec){
  const rows=secEntries(S.entries,sec),t=todayStr(),isT=S.date===t,past=S.date<t,nm=nowMin(),out=[];
  TASKS[sec].forEach(x=>{
   const type=x[0],T=typeDef(type,sec);if(!T)return;
-  const times=schedOf(sec,type),need=needOf(sec,x),seen={},done=[];
-  rows.filter(e=>e.type===type).sort((a,b)=>String(a.time||'').localeCompare(String(b.time||''))||(a.ts||0)-(b.ts||0)).forEach(e=>{const g=e.grp||e.id;if(seen[g])return;seen[g]=1;done.push(e);});
+  const times=activeTimes(sec,type),need=needOf(sec,x),seen={},done=[];
+  rows.filter(e=>taskTypes(type).includes(e.type)).sort((a,b)=>String(a.time||'').localeCompare(String(b.time||''))||(a.ts||0)-(b.ts||0)).forEach(e=>{const g=e.grp||e.id;if(seen[g])return;seen[g]=1;done.push(e);});
   /* كل تسجيل يُحسب للموعد الأقرب إلى وقته (تسجيل 12:05 يغطي موعد 12:00 وليس 10:00) */
   const slotT=times.length?times.slice(0,need):[],taken=new Array(slotT.length).fill(false),extra=[];
   done.forEach(e=>{
@@ -103,13 +119,13 @@ function slots(sec){
 function chores(sec){
  if(!live())return [];
  const t=todayStr(),out=[];
- (Farm.maintenance()||[]).filter(m=>m.due<=t).forEach(m=>out.push({kind:'chore',maint:true,icon:'wrench',shared:true,label:m.name,state:m.due<t?'late':'due',sub:m.due<t?'متأخرة منذ '+dN(daysBetween(m.due,t)):'صيانة مستحقة اليوم',act:'data-farm="service" data-id="'+E(m.name)+'"'}));
+ (Farm.maintenance()||[]).filter(m=>m.due<=t).forEach(m=>out.push({kind:'chore',maint:true,icon:'wrench',shared:true,mk:'mt:'+m.name,ml:'صيانة: '+m.name,label:m.name,state:m.due<t?'late':'due',sub:m.due<t?'متأخرة منذ '+dN(daysBetween(m.due,t)):'صيانة مستحقة اليوم',act:'data-farm="service" data-id="'+E(m.name)+'"'}));
  const c=lastCal(),cd=num(cfg('calDays'))||0;
- if(c&&cd){const over=daysBetween(c.date,t)-cd;if(over>=0)out.push({kind:'chore',icon:'wrench',shared:true,label:'معايرة جهاز EC/pH',state:over>0?'late':'due',sub:over>0?'متأخرة منذ '+dN(over):'مستحقة اليوم',act:'data-act="new" data-type="cal"'});}
+ if(c&&cd){const over=daysBetween(c.date,t)-cd;if(over>=0)out.push({kind:'chore',icon:'wrench',shared:true,mk:'cal',ml:'معايرة جهاز EC/pH',label:'معايرة جهاز EC/pH',state:over>0?'late':'due',sub:over>0?'متأخرة منذ '+dN(over):'مستحقة اليوم',act:'data-act="new" data-type="cal"'});}
  const SP=sprayPlan(sec);
- if(SP.ca&&SP.ca.list.length)out.push({kind:'chore',icon:'spray',label:'رش الكالسيوم',state:'due',sub:'للدفعات المنقولة · '+pl(SP.ca.list.length,'دفعة واحدة','دفعتان','دفعات','دفعة'),act:'data-act="new" data-type="spray"'});
- SP.prev.filter(x=>x.due<=t).forEach(x=>out.push({kind:'chore',icon:'spray',label:x.name,state:x.due<t?'late':'due',sub:x.last?'آخر رش منذ '+dN(daysBetween(x.last.date,t)):'لم يُسجَّل رش بعد',act:'data-act="new" data-type="spray"'}));
- return out;
+ if(SP.ca&&SP.ca.list.length)out.push({kind:'chore',icon:'spray',mk:'ca:'+sec,ml:'رش الكالسيوم · '+SECS[sec].name,label:'رش الكالسيوم',state:'due',sub:'للدفعات المنقولة · '+pl(SP.ca.list.length,'دفعة واحدة','دفعتان','دفعات','دفعة'),act:'data-act="new" data-type="spray"'});
+ SP.prev.filter(x=>x.due<=t).forEach(x=>out.push({kind:'chore',icon:'spray',mk:'sp'+x.k+':'+sec,ml:x.name+' · '+SECS[sec].name,label:x.name,state:x.due<t?'late':'due',sub:x.last?'آخر رش منذ '+dN(daysBetween(x.last.date,t)):'لم يُسجَّل رش بعد',act:'data-act="new" data-type="spray"'}));
+ return out.filter(c=>!muted(c.mk));
 }
 /* ملخص قصير لقيم التسجيل */
 function brief(e){
@@ -143,20 +159,20 @@ function attention(sec){
    const D=sensors(sec);
    if(D&&!D.access&&D.live){const L=D.live;
     [['temp','air','°','حرارة ',1],['hum','rh','%','رطوبة ',0]].forEach(([k,c,u,lab,d])=>{const q=L[k];if(!q||!isBad(q.state))return;const lm=lim(c,sec,Date.now());
-     add('warn',{icon:k==='temp'?'therm':'drop',title:lab+L.name+' '+f(q.v,d)+u,sub:(q.state==='hi'?'فوق الحد '+f(lm[1])+u:'تحت الحد '+f(lm[0])+u)+(q.at?' · '+SENS.api.age(q.at):''),act:'data-bd="tab" data-t="sens"',pri:1});});}
-   if(D&&!D.access&&D.water){[['wt','حرارة ماء الخزان ','°',1],['ph','pH الخزان ','',2]].forEach(([k,lab,u,d])=>{const q=D.water[k];if(q&&isBad(q.state))add('warn',{icon:'drop',title:lab+f(q.v,d)+u,sub:q.label+(q.at?' · '+SENS.api.age(q.at):''),act:'data-bd="tab" data-t="sens"',pri:1});});}
+     add('warn',{icon:k==='temp'?'therm':'drop',mk:'clim:'+sec+':'+k,ml:(k==='temp'?'حرارة الجو':'الرطوبة')+' خارج الحدود · '+SECS[sec].name,title:lab+L.name+' '+f(q.v,d)+u,sub:(q.state==='hi'?'فوق الحد '+f(lm[1])+u:'تحت الحد '+f(lm[0])+u)+(q.at?' · '+SENS.api.age(q.at):''),act:'data-bd="tab" data-t="sens"',pri:1});});}
+   if(D&&!D.access&&D.water){[['wt','حرارة ماء الخزان ','°',1],['ph','pH الخزان ','',2]].forEach(([k,lab,u,d])=>{const q=D.water[k];if(q&&isBad(q.state))add('warn',{icon:'drop',mk:'water:'+sec+':'+k,ml:lab.trim()+' خارج الحدود · '+SECS[sec].name,title:lab+f(q.v,d)+u,sub:q.label+(q.at?' · '+SENS.api.age(q.at):''),act:'data-bd="tab" data-t="sens"',pri:1});});}
    if(S.dayLoaded){const late=slots(sec).filter(x=>x.state==='late');
     if(late.length)add(late.length>1?'bad':'warn',{icon:'clock',title:late.length===1?late[0].label+' متأخر':pl(late.length,'','','جولات متأخرة','جولة متأخرة'),sub:late.length===1?(late[0].time?'موعده '+fmtTime(late[0].time)+' · ':'')+'لم يُسجَّل بعد':lateSummary(late),btn:'سجّل',act:'data-act="new" data-type="'+late[0].type+'"',pri:2});}
    const ch=chores(sec),mt=ch.filter(c=>c.maint);
    /* أكثر من عمل صيانة مستحق: تنبيه واحد يفتح صفحة المعدات */
-   if(mt.length>1){const lateM=mt.filter(c=>c.state==='late').length;add(lateM?'bad':'warn',{icon:'wrench',title:lateM?'صيانة متأخرة':'صيانة مستحقة اليوم',sub:mt.map(c=>c.label).join('، '),act:'data-farm="route" data-id="equipment"',shared:true,pri:3});}
-   ch.filter(c=>!(c.maint&&mt.length>1)).forEach(c=>add(c.state==='late'?'bad':'warn',{icon:c.icon,title:c.label,sub:c.sub,btn:'سجّل',act:c.act,shared:!!c.shared,pri:3}));
-   if(!lastCal())add('warn',{icon:'wrench',title:'معايرة جهاز EC/pH',sub:'لم تُسجَّل معايرة بعد',btn:'سجّل',act:'data-act="new" data-type="cal"',shared:true,pri:4});
+   if(mt.length>1){const lateM=mt.filter(c=>c.state==='late').length;add(lateM?'bad':'warn',{icon:'wrench',mk:mt.map(c=>c.mk),ml:mt.map(c=>c.ml),title:lateM?'صيانة متأخرة':'صيانة مستحقة اليوم',sub:mt.map(c=>c.label).join('، '),act:'data-farm="route" data-id="equipment"',shared:true,pri:3});}
+   ch.filter(c=>!(c.maint&&mt.length>1)).forEach(c=>add(c.state==='late'?'bad':'warn',{icon:c.icon,mk:c.mk,ml:c.ml,title:c.label,sub:c.sub,btn:'سجّل',act:c.act,shared:!!c.shared,pri:3}));
+   if(!lastCal())add('warn',{icon:'wrench',mk:'cal',ml:'معايرة جهاز EC/pH',title:'معايرة جهاز EC/pH',sub:'لم تُسجَّل معايرة بعد',btn:'سجّل',act:'data-act="new" data-type="cal"',shared:true,pri:4});
    const bi=battInfo(),bh=num(cfg('battHours')),bm=num(cfg('battMaxCharge'));
-   if(bi.state==='none')add('warn',{icon:'batt',title:'بطارية مضخة الري',sub:'لم يُسجَّل شحن بعد',btn:canAdd()?'بدء الشحن':'',act:'data-act="battStart"',shared:true,pri:4});
-   else if(bi.state==='idle'&&bh&&bi.h>bh)add('bad',{icon:'batt',title:'شحن بطارية مضخة الري',sub:'آخر شحن انتهى منذ '+hN(bi.h),btn:canAdd()?'بدء الشحن':'',act:'data-act="battStart"',shared:true,pri:3});
-   else if(bi.state==='charging'&&bm&&bi.h>bm)add('warn',{icon:'batt',title:'البطارية على الشاحن منذ '+hN(bi.h),sub:'افصل الشاحن إذا اكتمل الشحن',btn:canAdd()?'انتهى الشحن':'',act:'data-act="battEnd" data-id="'+E(bi.b.id)+'"',shared:true,pri:4});
-   if(D&&!D.access&&D.health&&D.health.n&&D.health.late&&!D.health.cached)add('warn',{icon:'radio',title:'الحساسات لم تُحدَّث',sub:D.health.lastRun?'آخر مزامنة '+SENS.api.age(D.health.lastRun):'لا توجد مزامنة بعد',act:'data-bd="tab" data-t="sens"',shared:true,pri:5});
+   if(bi.state==='none')add('warn',{icon:'batt',mk:'batt',ml:'شحن بطارية مضخة الري',title:'بطارية مضخة الري',sub:'لم يُسجَّل شحن بعد',btn:canAdd()?'بدء الشحن':'',act:'data-act="battStart"',shared:true,pri:4});
+   else if(bi.state==='idle'&&bh&&bi.h>bh)add('bad',{icon:'batt',mk:'batt',ml:'شحن بطارية مضخة الري',title:'شحن بطارية مضخة الري',sub:'آخر شحن انتهى منذ '+hN(bi.h),btn:canAdd()?'بدء الشحن':'',act:'data-act="battStart"',shared:true,pri:3});
+   else if(bi.state==='charging'&&bm&&bi.h>bm)add('warn',{icon:'batt',mk:'battEnd',ml:'فصل شاحن بطارية المضخة',title:'البطارية على الشاحن منذ '+hN(bi.h),sub:'افصل الشاحن إذا اكتمل الشحن',btn:canAdd()?'انتهى الشحن':'',act:'data-act="battEnd" data-id="'+E(bi.b.id)+'"',shared:true,pri:4});
+   if(D&&!D.access&&D.health&&D.health.n&&D.health.late&&!D.health.cached)add('warn',{icon:'radio',mk:'sync',ml:'الحساسات لم تُحدَّث',title:'الحساسات لم تُحدَّث',sub:D.health.lastRun?'آخر مزامنة '+SENS.api.age(D.health.lastRun):'لا توجد مزامنة بعد',act:'data-bd="tab" data-t="sens"',shared:true,pri:5});
    const br=badReadings(rows);
    if(br.length)add('warn',{icon:'bang',title:pl(br.length,'قراءة يدوية خارج الحدود','قراءتان يدويتان خارج الحدود','قراءات يدوية خارج الحدود','قراءة يدوية خارج الحدود'),sub:br[0],act:'data-rc="list"',pri:5});
    if(window.Shift&&Shift.hasPending())add('warn',{icon:'cloud',title:'تعويض ماء بانتظار الإرسال',sub:'محفوظ على هذا الجهاز · اضغط لإعادة المحاولة',act:'data-shift="retry"',shared:true,pri:6});
@@ -168,11 +184,11 @@ function attention(sec){
    if(pend.length)add('info',{icon:'clip',title:pl(pend.length,'تسجيل بانتظار مراجعتك','تسجيلان بانتظار مراجعتك','تسجيلات بانتظار مراجعتك','تسجيلاً بانتظار مراجعتك'),sub:'من '+names(pend.map(e=>e.by)),act:'data-bd="queue" data-k="pending"',pri:8});
    const ch=Farm.shiftChanges().length;
    if(ch)add('info',{icon:'edit',title:pl(ch,'طلب تصحيح بانتظار قرارك','طلبا تصحيح بانتظار قرارك','طلبات تصحيح بانتظار قرارك','طلب تصحيح بانتظار قرارك'),sub:'من الفريق',act:'data-farm="route" data-id="changes"',shared:true,pri:8});
-   if(isT){const stc=computeStock();['A','B'].forEach(k=>{const o=stc[k];if(o&&o.pct<15)add('warn',{icon:'flask',title:'عبوة '+k+' قاربت على النفاد',sub:'المتبقي نحو '+f(o.pct)+'%',act:'data-bd="tab" data-t="sup"',shared:true,pri:6});});}
+   if(isT){const stc=computeStock();['A','B'].forEach(k=>{const o=stc[k];if(o&&o.pct<15)add('warn',{icon:'flask',mk:'stock'+k,ml:'عبوة '+k+' قاربت على النفاد',title:'عبوة '+k+' قاربت على النفاد',sub:'المتبقي نحو '+f(o.pct)+'%',act:'data-bd="tab" data-t="sup"',shared:true,pri:6});});}
   }
   const notes=S.openNotes.filter(e=>secOf(e)===sec);
   if(notes.length)add('info',{icon:'leaf',title:pl(notes.length,'ملاحظة مفتوحة على النبات','ملاحظتان مفتوحتان','ملاحظات مفتوحة','ملاحظة مفتوحة'),sub:brief(notes[0])||(notes[0].v&&notes[0].v.memo)||'',act:'data-rc="list" data-f="note"',pri:9});
-  return out.sort((a,b)=>RANK[a.sev]-RANK[b.sev]||a.pri-b.pri);
+  return out.filter(a=>!muted(a.mk)).sort((a,b)=>RANK[a.sev]-RANK[b.sev]||a.pri-b.pri);
  });
 }
 function lateSummary(late){const c=new Map();late.forEach(x=>c.set(x.label,(c.get(x.label)||0)+1));return [...c].map(([l,n])=>n>1?l+' ('+n+')':l).join('، ');}
@@ -181,7 +197,63 @@ function dot(sec){try{return live()&&attention(sec).some(a=>a.sev!=='info'&&!a.s
 
 /* ---------- عناصر الرسم ---------- */
 function alertHTML(a){
- return '<a href="#" class="bd-al '+a.sev+'" '+a.act+'><span class="bd-al-ic">'+I(a.icon,18)+'</span><span class="bd-al-t"><b>'+E(a.title)+'</b>'+(a.sub?'<span>'+E(a.sub)+'</span>':'')+'</span>'+(a.btn?'<span class="bd-al-b">'+E(a.btn)+'</span>':'<span class="bd-al-c">'+I('chev',18,2)+'</span>')+'</a>';
+ const h='<a href="#" class="bd-al '+a.sev+'" '+a.act+'><span class="bd-al-ic">'+I(a.icon,18)+'</span><span class="bd-al-t"><b>'+E(a.title)+'</b>'+(a.sub?'<span>'+E(a.sub)+'</span>':'')+'</span>'+(a.btn?'<span class="bd-al-b">'+E(a.btn)+'</span>':'<span class="bd-al-c">'+I('chev',18,2)+'</span>')+'</a>';
+ if(!(isSup()&&live()&&a.mk&&(!Array.isArray(a.mk)||a.mk.length)))return h;
+ /* المعرّف ثابت (من مفاتيح التنبيه) حتى لا يتغيّر HTML الصفحة في كل رسم */
+ const id=[].concat(a.mk).join('|');if(ALM.size>300)ALM.clear();ALM.set(id,a);
+ return '<div class="bd-alw">'+h+'<button type="button" class="bd-al-x" data-bd="al-menu" data-id="'+id+'" aria-label="'+E('خيارات التنبيه: '+a.title)+'">'+I('more',20)+'</button></div>';
+}
+/* ---------- نافذة خيارات التنبيه: تأجيل حتى تاريخ، أو إيقاف حتى يُفعَّل ---------- */
+const ALM=new Map();let AM=null;
+const SHARED_K=k=>!/^(ca|sp\d|clim|water):/.test(k);
+function amHTML(){
+ const a=AM,t=todayStr(),keys=a.keys,until=a.mode==='snooze'?a.until:'',okU=okDay(until)&&until>t;
+ const days=[[1,'غداً'],[3,'بعد 3 أيام'],[7,'بعد أسبوع']];
+ const chip=(on,attrs,l)=>'<button type="button" '+attrs+' aria-pressed="'+on+'">'+E(l)+'</button>';
+ const custom=a.custom||(okU&&!days.some(d=>addDays(t,d[0])===until));
+ const where=keys.every(SHARED_K)?'في القسمين':'في '+SECS[a.sec].name;
+ return '<div class="sheet-bg" data-close><div class="sheet al-sh" role="dialog" aria-modal="true" aria-label="خيارات التنبيه">'+sheetHead(a.title,null,'bell')+(a.sub?'<p class="help">'+E(a.sub)+'</p>':'')+
+  (keys.length>1?'<p class="help">يشمل: '+E(a.labels.join('، '))+'</p>':'')+
+  '<div class="al-opt'+(a.mode==='snooze'?' on':'')+'"><button type="button" class="al-opt-ic" data-bd="am-mode" data-m="snooze" aria-label="تأجيل حتى تاريخ">'+I('clock',20)+'</button><div class="al-opt-t"><b>تأجيل حتى تاريخ</b><small>يختفي التنبيه ويعود تلقائياً صباح اليوم المختار إن بقي مستحقاً.</small>'+
+  '<div class="al-days">'+days.map(d=>chip(a.mode==='snooze'&&!custom&&addDays(t,d[0])===until,'data-bd="am-days" data-n="'+d[0]+'"',d[1])).join('')+chip(a.mode==='snooze'&&custom,'data-bd="am-custom"','تاريخ آخر…')+'</div>'+
+  (a.mode==='snooze'&&custom?'<label class="al-date" for="am_until">يعود يوم<input class="in" type="date" id="am_until" min="'+addDays(t,1)+'" max="'+addDays(t,365)+'" value="'+E(okU?until:'')+'"></label>':a.mode==='snooze'&&okU?'<div class="al-date">يعود يوم <b style="color:var(--ink)">'+E(DW(until))+'</b></div>':'')+'</div></div>'+
+  '<div class="al-opt'+(a.mode==='off'?' on':'')+'"><button type="button" class="al-opt-ic" data-bd="am-mode" data-m="off" aria-label="إيقاف حتى أفعّله">'+I('bellx',20)+'</button><div class="al-opt-t" data-bd="am-mode" data-m="off" role="button" tabindex="0"><b>إيقاف حتى أفعّله</b><small>لا يظهر هذا التنبيه حتى تعيد تفعيله من الإعدادات ← التنبيهات الموقوفة.</small></div></div>'+
+  '<div class="al-team">'+I('users',16)+E('يسري على كل الفريق '+where+'، ويُسجَّل باسمك.')+'</div>'+
+  '<div class="sheet-actions"><button class="btn pri" type="button" data-bd="am-save"'+(a.mode==='snooze'&&!okU?' disabled':'')+'>'+E(a.mode==='off'?'إيقاف حتى أفعّله':okU?'تأجيل حتى '+DT(until):'اختر تاريخ العودة')+'</button></div></div></div>';
+}
+function openMute(a){
+ if(!isSup()||!a||!a.mk)return;
+ const keys=Array.isArray(a.mk)?a.mk.slice():[a.mk],labels=Array.isArray(a.ml)?a.ml.slice():[a.ml||a.title];
+ AM={keys,labels,title:keys.length>1?a.title:(labels[0]||a.title),sub:a.sub||'',sec:S.sec,mode:'snooze',until:addDays(todayStr(),3),custom:false};
+ openSheet(amHTML());
+}
+function saveMute(){
+ if(!isSup()||!AM)return;
+ const t=todayStr(),until=AM.mode==='off'?'':AM.until;
+ if(AM.mode==='snooze'&&!(okDay(until)&&until>t)){toast('اختر تاريخاً بعد اليوم');return;}
+ const m=liveMap(),at=Date.now();
+ AM.keys.forEach((k,i)=>{m[k]={until,by:S.uid,at,label:txt(AM.labels[i]||AM.title,120),sec:SHARED_K(k)?'':AM.sec};});
+ const n=AM.keys.length;
+ saveSettings({alertOff:m}).catch(e=>toast(errMsg(e)));
+ closeSheet();toast(until?(n>1?'أُجّلت التنبيهات':'أُجّل التنبيه')+' حتى '+DT(until):(n>1?'أُوقفت التنبيهات':'أُوقف التنبيه')+' · تجده في الإعدادات ← التنبيهات الموقوفة');
+}
+function unmute(k){
+ if(!isSup())return;const m=liveMap(),o=offOf(k);if(!m[k])return;delete m[k];
+ saveSettings({alertOff:m}).catch(e=>toast(errMsg(e)));toast('عاد تنبيه «'+(o?o.label:'')+'»');
+}
+/* ---------- الإعدادات ← التنبيهات الموقوفة ---------- */
+const MUTE_IC=k=>/^mt:/.test(k)?['wrench','gray']:k==='cal'?['wrench','info']:/^batt/.test(k)?['batt','info']:/^(ca|sp)/.test(k)?['spray','warn']:k==='sync'?['radio','teal']:/^stock/.test(k)?['flask','purple']:/^clim/.test(k)?['therm','warn']:['drop','info'];
+function mutedPage(){
+ const L=mutedList();
+ let h='<header class="bd-page"><h1>التنبيهات الموقوفة</h1><p>ما يوقفه المشرف لا يظهر لأي عضو في الفريق</p></header>';
+ if(!L.length)return h+'<section class="bd-card"><p class="bd-empty">لا توجد تنبيهات موقوفة أو مؤجّلة. لإيقاف تنبيه اضغط ⋮ بجانبه في اللوحة.</p></section>';
+ h+='<section class="bd-card" style="padding:4px 14px">'+L.map(o=>{const ic=MUTE_IC(o.k),who=firstName(o.by)||'المشرف',d=tsDay(o.at);
+  return '<div class="al-row"><span class="bd-hic '+ic[1]+'">'+I(ic[0],18)+'</span><span class="al-row-t"><b>'+E(o.label)+'</b><em class="'+(o.until?'':'off')+'">'+E(o.until?'مؤجّل حتى '+DW(o.until):'موقوف حتى تفعّله')+'</em><small>'+E((o.until?'أجّله ':'أوقفه ')+who+(d?' · '+DT(d):''))+'</small></span>'+(isSup()?'<button class="btn sm" type="button" data-bd="al-on" data-k="'+E(o.k)+'">تفعيل</button>':'')+'</div>';}).join('')+'</section>';
+ return h+'<p class="help" style="text-align:center;margin:12px 0">التنبيه المؤجّل يعود وحده في تاريخه. «تفعيل» يعيده فوراً.</p>';
+}
+function mutedLink(){
+ if(!isSup())return '';const n=mutedList().length;
+ return '<a href="#" class="set-link" data-bd="tab" data-t="muted"><span class="bd-hic sm">'+I('bellx',16)+'</span><span class="set-link-t"><b>التنبيهات الموقوفة</b><small>'+E(n?pl(n,'تنبيه واحد موقوف أو مؤجّل','تنبيهان','تنبيهات','تنبيهاً'):'لا توجد · أوقف التنبيه من زر ⋮ بجانبه')+'</small></span>'+I('chev',16,2)+'</a>';
 }
 function head(icon,title,tone,side){return '<div class="bd-h"><span class="bd-hic '+(tone||'')+'">'+I(icon,17)+'</span><h2>'+title+'</h2>'+(side||'')+'</div>';}
 function link(label,attrs){return '<a href="#" class="bd-link" '+attrs+'>'+E(label)+I('chev',16,2)+'</a>';}
@@ -364,13 +436,13 @@ function batchesCard(sec){
 }
 function upcomingCard(sec){
  const t=todayStr(),end=addDays(t,7),out=[];
- (Farm.maintenance()||[]).filter(m=>m.due>t&&m.due<=end).forEach(m=>out.push({d:m.due,t:m.name,s:'كل '+dN(m.interval)+(m.last?' · آخر تنفيذ '+DT(m.last):''),c:'p'}));
- const c=lastCal(),cd=num(cfg('calDays'))||0;if(c&&cd){const d=addDays(c.date,cd);if(d>t&&d<=end)out.push({d,t:'معايرة جهاز EC/pH',s:'آخر معايرة '+DT(c.date),c:'p'});}
- const SP=sprayPlan(sec);if(SP.ca&&SP.ca.due>t&&SP.ca.due<=end)out.push({d:SP.ca.due,t:'رش الكالسيوم',s:'حسب موعد نقل الدفعات',c:'w'});
- SP.prev.filter(x=>x.due>t&&x.due<=end).forEach(x=>out.push({d:x.due,t:x.name,s:'كل '+dN(x.every),c:'w'}));
+ (Farm.maintenance()||[]).filter(m=>m.due>t&&m.due<=end&&!muted('mt:'+m.name)).forEach(m=>out.push({d:m.due,t:m.name,s:'كل '+dN(m.interval)+(m.last?' · آخر تنفيذ '+DT(m.last):''),c:'p'}));
+ const c=lastCal(),cd=num(cfg('calDays'))||0;if(c&&cd&&!muted('cal')){const d=addDays(c.date,cd);if(d>t&&d<=end)out.push({d,t:'معايرة جهاز EC/pH',s:'آخر معايرة '+DT(c.date),c:'p'});}
+ const SP=sprayPlan(sec);if(SP.ca&&!muted('ca:'+sec)&&SP.ca.due>t&&SP.ca.due<=end)out.push({d:SP.ca.due,t:'رش الكالسيوم',s:'حسب موعد نقل الدفعات',c:'w'});
+ SP.prev.filter(x=>x.due>t&&x.due<=end&&!muted('sp'+x.k+':'+sec)).forEach(x=>out.push({d:x.due,t:x.name,s:'كل '+dN(x.every),c:'w'}));
  const B=Farm.batchesNow();if(B&&sec==='n')B.nursery.forEach(b=>{const d=addDays(b.date,b.target);if(d>t&&d<=end)out.push({d,t:'نقل دفعة'+(b.crop?' '+b.crop:''),s:b.name,c:'g'});});
  Farm.shiftJobs().filter(j=>j.due>t&&j.due<=end).forEach(j=>out.push({d:j.due,t:j.title,s:'مهمة · '+nameOf(j.assignee),c:'i'}));
- if(isSup()){const st=computeStock();['A','B'].forEach(k=>{const o=st[k];if(o&&o.pct>=15&&o.pct<25)out.push({d:'',t:'عبوة '+k+' تقترب من النفاد',s:'المتبقي نحو '+f(o.pct)+'% · حضّر عبوة جديدة',c:'w'});});}
+ if(isSup()){const st=computeStock();['A','B'].forEach(k=>{const o=st[k];if(o&&o.pct>=15&&o.pct<25&&!muted('stock'+k))out.push({d:'',t:'عبوة '+k+' تقترب من النفاد',s:'المتبقي نحو '+f(o.pct)+'% · حضّر عبوة جديدة',c:'w'});});}
  out.sort((a,b)=>(a.d||'9').localeCompare(b.d||'9'));
  const day=d=>{if(!d)return 'قريباً';const n=daysBetween(t,d);return n===1?'غداً':n===2?'بعد غد':fmtDate(d,{weekday:'long'});};
  return card('upcoming',head('cal','القادم','purple','<span class="bd-side">7 أيام</span>')+(out.length?out.slice(0,5).map(u=>'<div class="bd-u"><span class="bd-u-d '+u.c+'"><i></i><span>'+E(day(u.d))+'</span></span><span class="bd-u-t"><b>'+E(u.t)+'</b><small>'+E(u.s)+'</small></span></div>').join(''):'<p class="bd-empty">لا مواعيد خلال الأيام السبعة القادمة.</p>'));
@@ -419,7 +491,7 @@ function czHTML(){
   '</div><div class="sheet-actions"><button type="button" class="btn" data-bd="cz-reset">الترتيب الأصلي</button><button type="button" class="btn pri" data-bd="cz-save">حفظ</button></div></div></div>';
 }
 function openCustomize(){CZ=layout();openSheet(czHTML());}
-function openAlerts(){const al=attention(S.sec);openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="كل التنبيهات">'+sheetHead('كل التنبيهات · '+SECS[S.sec].name)+'<div class="bd-al-list">'+(al.map(alertHTML).join('')||'<p class="bd-empty">لا توجد تنبيهات.</p>')+'</div><div style="height:12px"></div></div></div>');}
+function openAlerts(){const al=attention(S.sec),nm=isSup()?mutedList().length:0;openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true" aria-label="كل التنبيهات">'+sheetHead('كل التنبيهات · '+SECS[S.sec].name)+'<div class="bd-al-list">'+(al.map(alertHTML).join('')||'<p class="bd-empty">لا توجد تنبيهات.</p>')+'</div>'+(nm?'<button type="button" class="al-muted" data-bd="tab" data-t="muted">'+I('bellx',15)+E(pl(nm,'تنبيه موقوف','تنبيهان موقوفان','تنبيهات موقوفة','تنبيهاً موقوفاً')+' · إدارة')+'</button>':'')+'<div style="height:12px"></div></div></div>');}
 
 /* ---------- رأس اللوحة: الحالة والتنبيهات ---------- */
 function band(sec,worker){
@@ -474,31 +546,37 @@ function hub(){
  if(window.GSUI)GSUI.start();
  const t=todayStr(),M=Farm.maintenance(),due=(M||[]).filter(m=>m.due<=t),T=Farm.tank(),B=Farm.batchesNow(),owner=S.uid===S.ownerUid,sup=isSup(),fe=k=>Farm.err?Farm.err(k):'';
  const D=sensors(S.sec),stc=sup?computeStock():{};
- const act=(label,attrs,pri)=>'<a href="#" class="'+(pri?'pri':'')+'" '+attrs+'>'+(pri?I('plus',15,2.6):I('history',15,2))+E(label)+'</a>';
- const tile=(o)=>'<div class="bd-hub"><a href="#" class="bd-hub-m" '+o.main+' aria-label="'+E(o.title+' · '+o.mainLabel)+'"><span class="bd-hic '+o.tone+' lg">'+I(o.icon,22)+'</span><span class="bd-hub-t"><b>'+E(o.title)+'</b><small class="'+(o.warn?'warn':'')+'">'+E(o.sub)+'</small></span>'+(o.stat!=null&&o.stat!==''?'<span class="bd-hub-s"><b>'+E(o.stat)+'</b><small>'+E(o.statU||'')+'</small></span>':'')+'</a>'+(o.acts?'<div class="bd-hub-a">'+o.acts+'</div>':'')+'</div>';
- let h='<header class="bd-page"><h1>المزرعة</h1><p>اضغط البطاقة للإجراء الأساسي · «السجل» لعرض ما سبق</p></header><div class="bd-hubs">';
+ /* 3.6.0: بطاقات بتصميم «سجّل»، بطاقتان في كل صف وكلها بالحجم نفسه. الضغط على البطاقة = الإجراء الأساسي */
+ const act=(label,attrs,icon,pri)=>'<a href="#" class="'+(pri?'pri':'')+'" '+attrs+'>'+I(icon||(pri?'plus':'history'),14,pri&&!icon?2.6:2)+E(label)+'</a>';
+ const tile=o=>'<div class="rc-card" data-hub="'+o.id+'"><a href="#" class="rc-main" '+o.main+' aria-label="'+E(o.title+' · '+o.mainLabel)+'"><span class="rc-top"><span class="bd-hic '+o.tone+' md">'+I(o.icon,20)+'</span>'+(o.stat?'<span class="rc-cnt '+(o.statC||'')+'">'+E(o.stat)+'</span>':'')+'</span><b>'+E(o.title)+'</b><small class="'+(o.warn?'warn':'')+'">'+E(o.sub)+'</small></a><div class="rc-acts">'+o.acts+'</div></div>';
+ const tiles=[];
  const svc=due.length===1?'data-farm="service" data-id="'+E(due[0].name)+'"':'data-farm="route" data-id="equipment"';
- h+=tile({icon:'wrench',tone:'warn',title:'المعدات والصيانة',sub:!M?(fe('service')?'تعذّر تحميل سجل الصيانة':'جارٍ التحميل…'):due.length?due.map(m=>m.name).join('، ')+(due.length===1?' · مستحق':' · مستحقة'):'لا صيانة مستحقة اليوم',warn:due.length>0,stat:M?String(due.length):'',statU:'مستحقة',main:svc,mainLabel:'تسجيل صيانة',acts:act('تسجيل صيانة',svc,true)+act('السجل','data-farm="route" data-id="equipment"')});
+ tiles.push({id:'equipment',icon:'wrench',tone:'warn',title:'المعدات والصيانة',sub:!M?(fe('service')?'تعذّر تحميل سجل الصيانة':'جارٍ التحميل…'):due.length?due.map(m=>m.name).join('، ')+(due.length===1?' · مستحق':' · مستحقة'):'لا صيانة مستحقة اليوم',warn:due.length>0,stat:M&&due.length?due.length+' مستحقة':'',statC:'warn',main:svc,mainLabel:'تسجيل صيانة',acts:act('صيانة',svc,'',true)+act('السجل','data-farm="route" data-id="equipment"')});
  const tSub=T.error?'تعذّر تحميل سجل المياه':!T.ready?'جارٍ التحميل…':T.none?'لم يُسجَّل جرد للخزان بعد':T.old?'آخر جرد قديم · سجّل جرداً جديداً':T.lastWater?'آخر حمولة '+DT(T.lastWater.date)+' · '+f(T.lastWater.tons,1)+' طن':'لا حمولات مسجلة خلال 120 يوماً';
  const okBal=T.ready&&T.balance!=null&&!T.unknown&&!T.bad;
- h+=tile({icon:'truck',tone:'info',title:'المياه والخزان',sub:tSub,warn:T.ready&&(T.none||T.old||!!T.unknown||T.bad),stat:okBal?f(T.balance,1):'',statU:'طن متبقٍ',main:'data-farm="water"',mainLabel:'استلام حمولة ماء',acts:act('استلام حمولة ماء','data-farm="water"',true)+act('السجل','data-farm="route" data-id="deliveries"')});
+ tiles.push({id:'water',icon:'truck',tone:'info',title:'المياه والخزان',sub:tSub,warn:T.ready&&(T.none||T.old||!!T.unknown||T.bad),stat:okBal?f(T.balance,1)+' طن':'',main:'data-farm="water"',mainLabel:'استلام حمولة ماء',acts:act('حمولة','data-farm="water"','',true)+act('السجل','data-farm="route" data-id="deliveries"')});
  const ready=B?B.nursery.filter(b=>b.age>=b.target).length:0,nB=B?new Set(B.nursery.concat(B.towers).map(b=>b.id)).size:null;
- h+=tile({icon:'sprout',tone:'green',title:'دورة الزراعة',sub:!B?(fe('crop')?'تعذّر تحميل سجل الزراعة':'جارٍ التحميل…'):ready?pl(ready,'دفعة جاهزة للنقل','دفعتان جاهزتان للنقل','دفعات جاهزة للنقل','دفعة جاهزة للنقل'):'لا دفعات جاهزة للنقل اليوم',warn:ready>0,stat:nB==null?'':String(nB),statU:'دفعات قائمة',main:'data-farm="route" data-id="crop"',mainLabel:'الدفعات',acts:act('دفعة جديدة','data-farm="sow"',true)+act('الدفعات','data-farm="route" data-id="crop"')});
+ tiles.push({id:'crop',icon:'sprout',tone:'green',title:'دورة الزراعة',sub:!B?(fe('crop')?'تعذّر تحميل سجل الزراعة':'جارٍ التحميل…'):ready?pl(ready,'دفعة جاهزة للنقل','دفعتان جاهزتان للنقل','دفعات جاهزة للنقل','دفعة جاهزة للنقل'):'لا دفعات جاهزة للنقل اليوم',warn:ready>0,stat:nB==null?'':pl(nB,'دفعة واحدة','دفعتان','دفعات','دفعة'),main:'data-farm="route" data-id="crop"',mainLabel:'الدفعات',acts:act('دفعة','data-farm="sow"','',true)+act('الدفعات','data-farm="route" data-id="crop"')});
+ const ph=secEntries(S.entries,S.sec).filter(e=>e.type==='photo').sort((a,b)=>String(b.time||'').localeCompare(String(a.time||'')));
+ tiles.push({id:'gallery',icon:'image',tone:'teal',title:'صور النمو',sub:ph.length?'آخر صورة '+(live()?'اليوم ':'')+fmtTime(ph[0].time)+' · حسب التاريخ والدفعة':(live()?'لم تُصوَّر اليوم بعد':'لا صور في هذا اليوم')+' · كل الصور مرتبة',stat:ph.length?pl(ph.length,'صورة اليوم','صورتان اليوم','صور اليوم','صورة اليوم'):'',main:'data-rc="gallery"',mainLabel:'معرض صور النمو',acts:act('المعرض','data-rc="gallery"','grid',true)});
  if(sup){const low=['A','B'].filter(k=>stc[k]).map(k=>({k,o:stc[k]})).sort((a,b)=>a.o.pct-b.o.pct)[0];
-  h+=tile({icon:'flask',tone:'purple',title:'المحلول والعبوات',sub:low?'عبوة '+low.k+' متبقٍ نحو '+f(low.o.pct)+'%':'سجّل وصفة العبوات لمتابعة المتبقي',warn:!!low&&low.o.pct<25,stat:low?f(low.o.pct)+'%':'',statU:low?'عبوة '+low.k:'',main:'data-bd="tab" data-t="sup"',mainLabel:'العبوات والخلطة',acts:act('وصفة عبوة جديدة','data-act="newRecipe"',true)+act('العبوات','data-bd="tab" data-t="sup"')});}
+  tiles.push({id:'solution',icon:'flask',tone:'purple',title:'المحلول والعبوات',sub:low?'عبوة '+low.k+' متبقٍ نحو '+f(low.o.pct)+'%':'سجّل وصفة العبوات لمتابعة المتبقي',warn:!!low&&low.o.pct<25,stat:low?'عبوة '+low.k+' · '+f(low.o.pct)+'%':'',statC:low&&low.o.pct<25?'warn':'',main:'data-bd="tab" data-t="sup"',mainLabel:'العبوات والخلطة',acts:act('وصفة','data-act="newRecipe"','',true)+act('العبوات','data-bd="tab" data-t="sup"')});}
  const hs=D&&!D.access&&D.health,sIss=hs?hs.stale.length+hs.lowBatt.length+(hs.late?1:0):0;
- h+=tile({icon:'radio',tone:'teal',title:'المراقبة والحساسات',sub:!hs?'الحساسات غير متصلة الآن':!hs.n?'لا حساسات في هذا القسم':sIss?pl(sIss,'ملاحظة على الحساسات','ملاحظتان على الحساسات','ملاحظات على الحساسات','ملاحظة على الحساسات'):'كل الحساسات تعمل',warn:sIss>0,stat:hs?String(hs.n):'',statU:'حساسات',main:'data-bd="tab" data-t="sens"',mainLabel:'فتح المراقبة',acts:act('فتح المراقبة','data-bd="tab" data-t="sens"',true)+(sup?act('التقارير','data-bd="tab" data-t="rep"'):'')});
- if(owner)h+=tile({icon:'coins',tone:'gold',title:'التكاليف والمبيعات',sub:'للمالك فقط · الهامش وتكلفة الكيلو لكل دفعة',main:'data-farm="route" data-id="finance"',mainLabel:'التكاليف والمبيعات',acts:act('تكلفة','data-farm="cost"',true)+act('مبيعات','data-farm="sale"',true)+act('السجل','data-farm="route" data-id="finance"')});
- h+='</div>';
- /* أدوات أخرى: قائمة مختصرة */
+ tiles.push({id:'sensors',icon:'radio',tone:'teal',title:'المراقبة والحساسات',sub:!hs?'الحساسات غير متصلة الآن':!hs.n?'لا حساسات في هذا القسم':sIss?pl(sIss,'ملاحظة على الحساسات','ملاحظتان على الحساسات','ملاحظات على الحساسات','ملاحظة على الحساسات'):'كل الحساسات تعمل',warn:sIss>0,stat:hs&&hs.n?pl(hs.n,'حساس واحد','حساسان','حساسات','حساساً'):'',main:'data-bd="tab" data-t="sens"',mainLabel:'فتح المراقبة',acts:act('المراقبة','data-bd="tab" data-t="sens"','radio',true)+(sup?act('التقارير','data-bd="tab" data-t="rep"','chart'):'')});
+ if(owner)tiles.push({id:'finance',icon:'coins',tone:'gold',title:'التكاليف والمبيعات',sub:'الهامش وتكلفة الكيلو لكل دفعة',stat:'للمالك',main:'data-farm="route" data-id="finance"',mainLabel:'التكاليف والمبيعات',acts:act('تكلفة','data-farm="cost"','',true)+act('مبيعات','data-farm="sale"','',true)});
+ /* عدد البطاقات زوجي دائماً: إن كان فردياً تنتقل «كل التسجيلات» من «أدوات أخرى» إلى الشبكة */
+ const allIn=tiles.length%2===1;
+ if(allIn)tiles.push({id:'list',icon:'clip',tone:'gray',title:'كل التسجيلات',sub:'البحث في تسجيلات اليوم والأيام السابقة',main:'data-rc="list"',mainLabel:'كل التسجيلات',acts:act('فتح','data-rc="list"','search',true)});
+ let h='<header class="bd-page"><h1>المزرعة</h1><p>اضغط البطاقة للإجراء الأساسي · «السجل» لعرض ما سبق</p></header><div class="rc-grid fm-grid">'+tiles.map(tile).join('')+'</div>';
+ /* أدوات أخرى: قائمة مختصرة كما هي */
  const row=(icon,title,sub,attrs,badge)=>'<a href="#" class="bd-li" '+attrs+'><span class="bd-hic sm">'+I(icon,16)+'</span><span class="bd-li-t"><b>'+E(title)+'</b><small>'+E(sub)+'</small></span>'+(badge?'<span class="bd-badge">'+E(badge)+'</span>':'')+I('chev',16,2)+'</a>';
  const ch=sup?Farm.shiftChanges().length:0;
  h+='<section class="bd-card bd-list"><h2 class="bd-list-h">أدوات أخرى</h2>'+
-  row('clip','كل التسجيلات','البحث في تسجيلات اليوم والأيام السابقة','data-rc="list"')+
+  (allIn?'':row('clip','كل التسجيلات','البحث في تسجيلات اليوم والأيام السابقة','data-rc="list"'))+
   (sup?row('calok','المراجعة','التسجيلات بانتظار مراجعتك اليوم','data-bd="queue" data-k="pending"'):'')+
-  row('layers','تفاصيل اليوم','المناطق والرش وخطة الزراعة وصور النمو','data-bd="tab" data-t="legacy"')+
+  row('layers','تفاصيل اليوم','ملخص اليوم والمهام والقراءات والسجل','data-bd="tab" data-t="legacy"')+
   (sup?row('edit','تنبيهات التعديل','التعديلات والتسجيلات المتأخرة وطلبات التصحيح','data-farm="route" data-id="changes"',ch?String(ch):''):'')+
-  (sup?row('settings','الإعدادات','الحدود والجولات والمستخدمون وفحص النظام','data-bd="tab" data-t="sup"'):'')+'</section>';
+  (sup?row('settings','الإعدادات','الحدود والجولات والتنبيهات الموقوفة والمستخدمون','data-bd="tab" data-t="sup"'):'')+'</section>';
  return h;
 }
 
@@ -510,6 +588,12 @@ document.addEventListener('click',ev=>{
   case 'tab':if(inSheet&&NAV.sheet)closeSheet();setTab(b.dataset.t);break;
   case 'queue':if(inSheet&&NAV.sheet)closeSheet();if(b.dataset.k==='pending'&&isSup())setTab('review');else if(window.Rec)Rec.openList(b.dataset.k==='fix'?'fix':'all');else GSUI.reviewQueue(b.dataset.k);break;
   case 'alerts':openAlerts();break;
+  case 'al-menu':{const al=ALM.get(id);if(al)openMute(al);break;}
+  case 'am-mode':if(AM){AM.mode=b.dataset.m;$('sheetRoot').innerHTML=amHTML();}break;
+  case 'am-days':if(AM){AM.mode='snooze';AM.custom=false;AM.until=addDays(todayStr(),+b.dataset.n||1);$('sheetRoot').innerHTML=amHTML();}break;
+  case 'am-custom':if(AM){AM.mode='snooze';AM.custom=true;$('sheetRoot').innerHTML=amHTML();const d=$('am_until');if(d)d.focus();}break;
+  case 'am-save':saveMute();break;
+  case 'al-on':unmute(b.dataset.k);break;
   case 'customize':openCustomize();break;
   case 'cz-toggle':CZ.off=CZ.off.includes(id)?CZ.off.filter(x=>x!==id):CZ.off.concat([id]);$('sheetRoot').innerHTML=czHTML();break;
   case 'cz-up':case 'cz-down':{const i=CZ.order.indexOf(id),j=i+(a==='cz-up'?-1:1);if(i<0||j<0||j>=CZ.order.length)break;const o=CZ.order.slice();o[i]=o[j];o[j]=id;CZ.order=o;$('sheetRoot').innerHTML=czHTML();const nb=document.querySelector('#sheetRoot [data-bd="'+a+'"][data-id="'+id+'"]');if(nb&&!nb.disabled)nb.focus();break;}
@@ -518,9 +602,10 @@ document.addEventListener('click',ev=>{
   case 'theme':{const next=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=next;lsSet('gs_theme',next);render(true);if(NAV.sheet&&$('sheetRoot').querySelector('[data-bd="theme"]'))openAccount();break;}
  }
 });
+document.addEventListener('change',ev=>{const t=ev.target;if(t&&t.id==='am_until'&&AM){AM.until=t.value;AM.mode='snooze';AM.custom=true;$('sheetRoot').innerHTML=amHTML();}});
 /* لوحة المفاتيح: Enter أو المسافة على صف قابل للضغط */
 document.addEventListener('keydown',ev=>{const t=ev.target;if((ev.key==='Enter'||ev.key===' ')&&t&&t.matches&&t.matches('#view [role="button"][data-act]')){ev.preventDefault();t.click();}});
 /* الروابط الفارغة داخل الصفحات (أزرار مرسومة كروابط) لا تغيّر عنوان الصفحة */
 document.addEventListener('click',ev=>{const a=ev.target.closest&&ev.target.closest('a[href="#"]');if(a&&(a.closest('#view')||a.closest('#sheetRoot')))ev.preventDefault();},true);
-return {home,worker,hub,attention,dot,icon:I,openCustomize,slots,next,pl,dN,_test:{slots,dayItems,chores,brief,manualDli,layout,pl}};
+return {home,worker,hub,attention,dot,icon:I,openCustomize,slots,next,pl,dN,muted,mutedList,mutedPage,mutedLink,_test:{offOf,slots,dayItems,chores,brief,manualDli,layout,pl}};
 })();

@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.4.1 — تشغيل المزرعة (دورة الزراعة والتكاليف في cycle.js) */
+/* GREEN SIDE 3.7.0 — تشغيل المزرعة (دورة الزراعة والتكاليف في cycle.js) */
 var Farm=(()=>{
 'use strict';
 const pages=['equipment','deliveries','crop','batch','cropDone','finance','team','jobs','changes'];
@@ -88,7 +88,7 @@ const sowings=()=>rows('crop').filter(e=>e.type==='sow').sort(dates);
 /* اسم الدفعة: الصنف · التاريخ · الجهة. إن تكررت دفعتان بنفس اليوم والجهة يُضاف رقم ترتيبها بدل رمز تقني */
 const batchName=e=>{if(!e)return 'دفعة غير مرتبطة';const same=rows('crop').filter(x=>x.type==='sow'&&x.date===e.date&&(x.v.side||'')===(e.v.side||'')).sort((a,b)=>(a.ts||0)-(b.ts||0)||a.id.localeCompare(b.id));const i=same.findIndex(x=>x.id===e.id);return (e.v.crop||'صنف غير محدد')+' · '+D(e.date)+' · '+(e.v.side||'جهة غير محددة')+(same.length>1&&i>=0?' · الدفعة '+(i+1):'');};
 const batchList=()=>sowings().map(e=>[e.id,batchName(e)]);
-function movementError(message){return Object.assign(new Error(message),{code:'crop-balance'});}
+function movementError(message){return userError(message,{code:'crop-balance'});}
 const balanceOf=id=>rows('balances').find(x=>x.id===id);
 /* نقل 3.3.0 المتتبَّع برصيد cropBalances: تصحيح عدده فقط (النقل الجديد تسجيل عادي يُحفظ بدون إنترنت) */
 async function adjustMovement(tx,id,before,after,date){
@@ -143,7 +143,7 @@ function harvestWeeks(){
 }
 function exportBatch(id){
  const batch=sowings().find(e=>e.id===id);
- if(!batch||!data.crop)throw Error('تعذر تحميل الدفعة');
+ if(!batch||!data.crop)throw userError('لم يكتمل تحميل الدفعة بعد. انتظر لحظة ثم أعد التصدير.');
  const lines=[['رقم الدفعة','رقم السجل','العملية','التاريخ','الوقت','عدد البذور','صالح معدود','فاقد بعد العد','عدد منقول أو محصود','وزن الحصاد كغ','صالح للبيع','مستبعد','المنطقة','المشتل فارغ بعد النقل','آخر حصاد','بواسطة','مراجعة']];
  const events=rows('crop').filter(e=>e.id===id||e.v?.batch===id).slice().sort(dates).reverse();
  const yes=x=>x===true?'نعم':'';
@@ -220,7 +220,7 @@ function stockCard(){
 }
 function levelForm(){if(!isSup())return;
  form('جرد الخزان الرئيسي لمياه الري',info('أدخل الكمية الموجودة فعليًا الآن بالطن. يصبح وقت الحفظ نقطة البدء الجديدة؛ لا تُحتسب الحركات السابقة مرة أخرى.')+numField('tons','الكمية الحالية (٠ إلى ١٨ طن)')+field('memo','ملاحظة الجرد','text',false),v=>{
- if(+v.tons<0||+v.tons>CAPACITY)throw Error('السعة 18 طنًا');const observed=Date.now();
+ if(+v.tons<0||+v.tons>CAPACITY)throw userError('الكمية بين صفر و18 طنًا (سعة الخزان).');const observed=Date.now();
  return coll('farmLevels').add({tons:+v.tons,memo:v.memo,observed,date:todayStr(new Date(observed)),time:tsHM(observed),by:S.uid,created:stamp()});
  });
 }
@@ -246,15 +246,15 @@ function gaugeChoices(g,prior){
 function gaugeForm(){if(!isSup())return;
  const body=['gauge1','gauge2'].map((k,i)=>{const g=gaugeSpec(k);return '<h3 class="full">العداد '+(i+1)+'</h3>'+field(k+'Name','اسم العداد','text',true,g.name)+numField(k+'Min','أقل قراءة (بار)',true,g.min)+numField(k+'Max','أعلى قراءة (بار)',true,g.max)+numField(k+'Step','فرق التدريج (بار)',true,g.step)+numField(k+'Ideal','الضغط المثالي (بار)',true,g.ideal);}).join('');
  form('ضبط عدادات الضغط',body,v=>{const update={};
- for(const k of ['gauge1','gauge2']){const g={min:+v[k+'Min'],max:+v[k+'Max'],step:+v[k+'Step'],ideal:+v[k+'Ideal']};if(!validSpec(g))throw Error('راجع المدى والتدريج: يجب أن يقع الضغط المثالي على إحدى درجات العداد، وبحد أقصى 500 درجة.');update[k+'Spec']=g;update[k+'Name']=v[k+'Name'];}
+ for(const k of ['gauge1','gauge2']){const g={min:+v[k+'Min'],max:+v[k+'Max'],step:+v[k+'Step'],ideal:+v[k+'Ideal']};if(!validSpec(g))throw userError('راجع المدى والتدريج: يجب أن يقع الضغط المثالي على إحدى درجات العداد، وبحد أقصى 500 درجة.');update[k+'Spec']=g;update[k+'Name']=v[k+'Name'];}
  return coll('config').doc('settings').set(update,{merge:true});});
 }
 function waterForm(){
  const price=owner()?numField('price','إجمالي سعر الحمولة بالريال (اختياري)',false):'';
  form('استلام حمولة ماء',pick('tank','الخزان المستلم',tanks)+dateInput()+field('time','وقت الاستلام','time',true,nowTime())+numField('tons','وزن الحمولة بالطن (حتى 18)')+field('supplier','المورّد','text',false)+field('invoice','رقم الفاتورة','text',false)+price,async v=>{
- if(+v.tons<=0||+v.tons>CAPACITY)throw Error('أدخل الوزن المفرّغ في هذا الخزان بين صفر و18 طنًا، ويجب أن يزيد على صفر');
+ if(+v.tons<=0||+v.tons>CAPACITY)throw userError('أدخل الوزن المفرّغ في هذا الخزان بين صفر و18 طنًا، ويجب أن يزيد على صفر');
  const ref=coll('farmWater').doc(),batch=S.db.batch();batch.set(ref,{tank:v.tank,tons:+v.tons,time:v.time,occurred:eventTime(v.date,v.time),supplier:v.supplier.trim(),invoice:v.invoice.trim(),date:v.date,by:S.uid,created:stamp()});
- if(v.price!==undefined&&v.price!==''){if(!(+v.price>=0))throw Error('سعر الحمولة رقم غير سالب');const a=window.Cycle?Cycle.autoAlloc():[];batch.set(coll('farmLedger').doc('water_'+ref.id),{kind:'تكلفة',category:v.tank===tanks[0]?'ماء الخلايا':'ماء الري',amount:+v.price,date:v.date,by:S.uid,memo:'استلام حمولة ماء',source:ref.id,allocation:a,basis:a.length?'تلقائي بعدد النباتات':'غير موزع',created:stamp()});}await batch.commit();});
+ if(v.price!==undefined&&v.price!==''){if(!(+v.price>=0))throw userError('سعر الحمولة رقم غير سالب');const a=window.Cycle?Cycle.autoAlloc():[];batch.set(coll('farmLedger').doc('water_'+ref.id),{kind:'تكلفة',category:v.tank===tanks[0]?'ماء الخلايا':'ماء الري',amount:+v.price,date:v.date,by:S.uid,memo:'استلام حمولة ماء',source:ref.id,allocation:a,basis:a.length?'تلقائي بعدد النباتات':'غير موزع',created:stamp()});}await batch.commit();});
 }
 function waterPage(){
  const water=rows('water').filter(v=>(!deliveryFilter||v.tank===deliveryFilter)&&(!waterFrom||v.date>=waterFrom)&&(!waterTo||v.date<=waterTo));
@@ -272,7 +272,7 @@ function equipment(){
 function serviceForm(kind){
  const leak=kind===Object.keys(cycles)[0];
  form(kind,dateInput()+ (leak?pick('result','نتيجة الفحص',['لا يوجد تسريب','يوجد تسريب']):'')+field('memo','الموقع أو الملاحظة','text',false),async v=>{
- if(v.result==='يوجد تسريب'&&!v.memo.trim())throw Error('أدخل موقع التسريب لإنشاء مهمة إصلاح');
+ if(v.result==='يوجد تسريب'&&!v.memo.trim())throw userError('أدخل موقع التسريب لإنشاء مهمة إصلاح');
  const batch=S.db.batch(),ref=coll('farmService').doc();batch.set(ref,{kind,result:v.result||'تم التنظيف',date:v.date,memo:v.memo,by:S.uid,created:stamp()});
  if(v.result==='يوجد تسريب')batch.set(coll('farmJobs').doc(ref.id),{title:'إصلاح تسريب · '+v.memo,by:S.uid,assignee:S.uid,due:v.date,status:'معلقة',note:'من فحص خطوط الري',created:stamp()});await batch.commit();});
 }
@@ -282,7 +282,7 @@ function jobList(closed=false){
 }
 function jobChange(id,done){const j=rows('jobs').find(x=>x.id===id);if(!j||(!isSup()&&j.assignee!==S.uid))return;
  form(done?'إنجاز المهمة':'تأجيل المهمة',(done?'':field('due','الموعد الجديد','date',true,addDays(today(),1),'min="'+today()+'"'))+field('note',done?'ملاحظة التنفيذ':'سبب التأجيل','text',!done),
- async v=>{const ref=coll('farmJobs').doc(id);await S.db.runTransaction(async tx=>{const current=await tx.get(ref);if(!current.exists||current.data().status==='مكتملة')throw Error('المهمة مكتملة بالفعل');const event={status:done?'مكتملة':'مؤجلة',due:v.due||current.data().due,note:v.note,by:S.uid,day:today()};tx.update(ref,{status:event.status,due:event.due,note:event.note,changedBy:S.uid,changedAt:stamp(),history:[...(current.data().history||[]),event]});});
+ async v=>{const ref=coll('farmJobs').doc(id);await S.db.runTransaction(async tx=>{const current=await tx.get(ref);if(!current.exists||current.data().status==='مكتملة')throw userError('المهمة مكتملة بالفعل (أُنجزت من جهاز آخر).');const event={status:done?'مكتملة':'مؤجلة',due:v.due||current.data().due,note:v.note,by:S.uid,day:today()};tx.update(ref,{status:event.status,due:event.due,note:event.note,changedBy:S.uid,changedAt:stamp(),history:[...(current.data().history||[]),event]});});
   const other=S.uid===j.by?j.assignee:j.by;if(other&&other!==S.uid&&S.users[other])coll('farmMessages').add({by:S.uid,audience:other,task:id,body:(done?'نفّذت المهمة: ':'أجّلت المهمة إلى '+D(v.due)+': ')+j.title+(v.note?' · '+v.note:''),created:stamp()}).catch(()=>{});});}
 function messages(){const unique=new Map();['messages','sent','received'].forEach(k=>rows(k).forEach(x=>unique.set(x.id,x)));return [...unique.values()].sort((a,b)=>(b.created?.seconds||0)-(a.created?.seconds||0));}
 function compose(task=''){form('رسالة للفريق',pick('audience','المستلم',[['team','كل الفريق'],...members().filter(x=>x[0]!==S.uid)],true,room==='all'?'team':room)+field('body','الرسالة','text',true,'','maxlength="2000"'),v=>coll('farmMessages').add({...v,task,by:S.uid,created:stamp()}));}
@@ -295,7 +295,7 @@ function allocations(basis,weights){
  if(basis==='غير موزع')return [];
  if(basis==='تلقائي بعدد النباتات'&&window.Cycle)return Cycle.autoAlloc();
  const chosen=weights.filter(x=>x.weight>0);
- if(!chosen.length || (basis==='مباشر للدفعة'&&chosen.length!==1))throw Error('حدد وزنًا موجبًا للدفعة المستفيدة، أو اختر غير موزع.');
+ if(!chosen.length || (basis==='مباشر للدفعة'&&chosen.length!==1))throw userError('حدد وزنًا موجبًا للدفعة المستفيدة، أو اختر غير موزع.');
  return chosen;
 }
 function financeForm(waterID='',existingID=''){
@@ -309,10 +309,10 @@ function financeForm(waterID='',existingID=''){
  field('memo','وصف القيد أو مرجع الفاتورة','text',true,existing?.memo||'')+
  pick('basis','أساس تحميل التكلفة',bases,true,existing?.basis||'غير موزع')+'<details class="full"><summary>تحديد الدفعات وأوزان التوزيع</summary><p>اكتب 1 للدفعة المباشرة أو عدد الساعات / أيام إشغال الأبراج لكل دفعة مشتركة. يوزّع المبلغ بنسبة الأوزان.</p>'+choices+'</details>',async v=>{
  const selected=allocations(v.basis,sowings().map(s=>({batch:s.id,weight:Number(v['weight_'+s.id])||0})));
- if(!(Number(v.amount)>0))throw Error('المبلغ يجب أن يكون أكبر من صفر');
+ if(!(Number(v.amount)>0))throw userError('المبلغ يجب أن يكون أكبر من صفر');
  const ref=existing?coll('farmLedger').doc(existing.id):fixed?coll('farmLedger').doc('water_'+fixed):coll('farmLedger').doc();
  const record={kind:fixed?'تكلفة':v.kind,category:existing&&fixed?existing.category:fixed?(water.tank===tanks[0]?'ماء الخلايا':'ماء الري'):v.category,amount:+v.amount,date:v.date,by:S.uid,memo:v.memo,source:fixed||'',allocation:selected,basis:v.basis};
- await S.db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!existing&&snap.exists)throw Error('تم تسجيل هذه التكلفة بالفعل');if(existing&&!snap.exists)throw Error('القيد لم يعد موجودًا');tx.set(ref,{...record,created:existing?snap.data().created:stamp()});});});
+ await S.db.runTransaction(async tx=>{const snap=await tx.get(ref);if(!existing&&snap.exists)throw userError('تم تسجيل هذه التكلفة بالفعل');if(existing&&!snap.exists)throw userError('القيد لم يعد موجودًا (حُذف من جهاز آخر).');tx.set(ref,{...record,created:existing?snap.data().created:stamp()});});});
 }
 function measureCost(ledger,batch){
  const totals={cost:0,sales:0,unassigned:0};
@@ -330,21 +330,58 @@ function audit(batch,id,entry,next,reason){
 /* تنبيهات حساب «فحص النظام» لا تظهر: الحساب مؤقت ويُحذف بعد الفحص، فلا يبقى له اسم بين المستخدمين */
 function changeRows(){return rows('changes').filter(x=>S.users[x.by]&&!S.users[x.by].selftest);}
 function pendingChange(id){return changeRows().some(x=>x.entry===id && x.requested && !x.resolution);}
+/* 3.5.0: الحقول التي يطلب الطلب تغييرها، والتي تغيّرت في التسجيل بعد إرساله (تعارض) */
+const same=(x,y)=>JSON.stringify(comparable(x??null))===JSON.stringify(comparable(y??null));
+const changedKeys=(a,b)=>{a=a||{};b=b||{};return [...new Set([...Object.keys(a),...Object.keys(b)])].filter(k=>k!=='auditId'&&!same(a[k],b[k]));};
+const conflictsOf=(r,cur)=>changedKeys(r.before,r.after).filter(k=>!same((cur||{})[k],(r.before||{})[k]));
+const STALE='تغيّر التسجيل بعد إرسال هذا الطلب (اعتُمد له تصحيح آخر أو عُدّل مباشرة). ارفض الطلب ليُرسَل من جديد على القيم الحالية.';
+/* القيم الحالية للتسجيلات التي عليها طلب معلّق (تُقرأ عند فتح صفحة التنبيهات) */
+const current={},reading=new Set();
+function readCurrent(ids){ids.filter(id=>!(id in current)&&!reading.has(id)).forEach(id=>{reading.add(id);coll('entries').doc(id).get().then(s=>{current[id]=s.exists?{v:s.data().v||{}}:null;},()=>{}).finally(()=>{reading.delete(id);if(S.tab==='changes')render();});});}
+function fieldLabel(x,k){return (typeDef(x.type,x.sec||'t')?.fields||[]).find(fd=>fd.k===k)?.l||k;}
+const shown=v=>v==null||v===''?'—':typeof v==='object'?JSON.stringify(v):String(v);
 function notifyChanges(){
  const items=changeRows().slice().sort((a,b)=>(b.created?.seconds||0)-(a.created?.seconds||0));
+ const open=items.filter(x=>x.requested&&!x.resolution);if(isSup())readCurrent([...new Set(open.map(x=>x.entry))]);
  return box('تنبيهات التسجيل والتعديل',notice('changes')+items.map(x=>{
- const keys=Object.keys(x.after||{}).filter(k=>k!=='auditId'&&JSON.stringify(x.after[k])!==JSON.stringify((x.before||{})[k]));
- const fields=typeDef(x.type,x.sec||'t')?.fields||[];
- return card((x.requested?'طلب تصحيح':x.before?'تعديل':'إضافة بتاريخ سابق')+' · '+D(x.date),info(nameOf(x.by)+' · '+x.reason)+info([x.resolution,x.resolutionReason].filter(Boolean).join(' · '))+'<details><summary>ما تغيّر</summary>'+keys.map(k=>info((fields.find(fd=>fd.k===k)?.l||k)+' : '+(x.before?.[k]??'—')+' ← '+(typeof x.after[k]==='object'?JSON.stringify(x.after[k]):x.after[k]))).join('')+'</details>',isSup()&&x.requested&&!x.resolution?action('اعتماد التصحيح','accept',x.id)+action('رفض التصحيح','reject',x.id):'');
+ const keys=changedKeys(x.before,x.after),pend=x.requested&&!x.resolution,cur=pend?current[x.entry]:undefined;
+ const bad=cur?conflictsOf(x,cur.v):[];
+ const warn=!pend||cur===undefined?'':cur===null?'<p class="banner warn">حُذف هذا التسجيل بعد إرسال الطلب، فلا يمكن اعتماده. ارفض الطلب.</p>':bad.length?'<p class="banner warn">'+E('كُتب على قيم سابقة: تغيّر '+bad.map(k=>'«'+fieldLabel(x,k)+'»').join(' و')+' بعد إرسال الطلب. ستُعرض القيمتان للتأكيد عند الاعتماد.')+'</p>':'';
+ return card((x.requested?'طلب تصحيح':x.before?'تعديل':'إضافة بتاريخ سابق')+' · '+D(x.date),info(nameOf(x.by)+' · '+x.reason)+info([x.resolution,x.resolutionReason].filter(Boolean).join(' · '))+warn+'<details'+(bad.length?' open':'')+'><summary>ما تغيّر</summary>'+keys.map(k=>info(fieldLabel(x,k)+' : '+shown(x.before?.[k])+' ← '+shown(x.after?.[k])+(cur&&bad.includes(k)?' · القيمة الحالية: '+shown(cur.v[k]):''))).join('')+'</details>',isSup()&&pend?action('اعتماد التصحيح','accept',x.id)+action('رفض التصحيح','reject',x.id):'');
  }).join(''));}
 function comparable(obj){if(obj===null||typeof obj!=='object')return obj;if(Array.isArray(obj))return obj.map(comparable);return Object.fromEntries(Object.keys(obj).sort().map(k=>[k,comparable(obj[k])]));}
-async function decide(id,accept,reason){
- if(!isSup())return;
- await S.db.runTransaction(async tx=>{const req=coll('farmChanges').doc(id),r=(await tx.get(req)).data();if(!r?.requested||r.resolution)throw Error('سبق اتخاذ قرار');
- if(accept){const ref=coll('entries').doc(r.entry),old=(await tx.get(ref)).data();if(!old||JSON.stringify(comparable(old.v))!==JSON.stringify(comparable(r.before)))throw Error('تغيّر التسجيل منذ إرسال الطلب؛ راجع القيم قبل الاعتماد.');
- if(old.type==='xplant'&&old.v.stockTracked===true)await adjustMovement(tx,ref.id,old.v,r.after,old.date);
- tx.update(ref,{v:r.after,time:r.after.time,review:{s:'ok',by:S.uid,at:Date.now(),c:'اعتماد تصحيح'}});}
- tx.update(req,{...(accept?{}:{resolutionReason:reason}),resolution:accept?'معتمد':'مرفوض',reviewedBy:S.uid,reviewedAt:stamp()});});GSUI.invalidate();toast('تم حفظ قرار المراجعة');
+/* اعتماد طلب تصحيح: تُطبَّق الحقول التي غيّرها الطلب فقط فوق القيم الحالية، فلا يضيع تصحيح آخر اعتُمد قبله.
+   إن تغيّر أحد هذه الحقول بعد إرسال الطلب تُعاد قائمة التعارض ليؤكدها المشرف (seen = القيم الحالية التي رآها).
+   النقل المتتبَّع القديم (stockTracked) يبقى على الفحص الصارم لأن رصيده يُعدَّل بالفرق. */
+async function decide(id,accept,reason,seen){
+ if(!isSup())return null;
+ let conflict=null;
+ await S.db.runTransaction(async tx=>{conflict=null;
+ const req=coll('farmChanges').doc(id),r=(await tx.get(req)).data();
+ if(!r?.requested||r.resolution)throw userError('سبق اتخاذ قرار في هذا الطلب (ربما من جهاز آخر).');
+ if(accept){const ref=coll('entries').doc(r.entry),old=(await tx.get(ref)).data();
+ if(!old)throw userError('حُذف التسجيل بعد إرسال هذا الطلب، فلا يمكن اعتماده. ارفض الطلب.');
+ let next;
+ if(old.type==='xplant'&&old.v.stockTracked===true){if(!same(old.v,r.before))throw userError(STALE);await adjustMovement(tx,ref.id,old.v,r.after,old.date);next=r.after;}
+ else{
+  const keys=changedKeys(r.before,r.after),bad=conflictsOf(r,old.v),now=bad.map(k=>[k,old.v[k]??null]);
+  if(bad.length&&!(seen&&same(seen,now))){conflict={id,keys:bad,now,request:r};return;}
+  next={...old.v};keys.forEach(k=>{if(r.after&&k in r.after)next[k]=r.after[k];else delete next[k];});if(r.after?.auditId)next.auditId=r.after.auditId;
+ }
+ tx.update(ref,{v:next,time:next.time||old.time,review:{s:'ok',by:S.uid,at:Date.now(),c:'اعتماد تصحيح'}});}
+ tx.update(req,{...(accept?{}:{resolutionReason:reason}),resolution:accept?'معتمد':'مرفوض',reviewedBy:S.uid,reviewedAt:stamp()});});
+ if(conflict)return conflict;
+ delete current[(rows('changes').find(x=>x.id===id)||{}).entry];GSUI.invalidate();toast('تم حفظ قرار المراجعة');return null;
+}
+/* نافذة التعارض: القيمة الحالية مقابل ما يطلبه الطلب، ثم «اعتماد» أو «رفض» */
+const conflicts={};
+function conflictSheet(c){
+ conflicts[c.id]=c.now;const r=c.request;
+ openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">'+sheetHead('تعارض في طلب التصحيح',r.sec||S.sec,'note')+
+  '<p class="banner warn">'+E('تغيّر التسجيل بعد إرسال هذا الطلب. راجع القيم ثم قرّر.')+'</p>'+
+  c.keys.map(k=>card(fieldLabel(r,k),info('القيمة الحالية: '+shown(c.now.find(x=>x[0]===k)[1]))+info('الطلب يريد: '+shown(r.after?.[k]))+info('كُتب الطلب على: '+shown(r.before?.[k])))).join('')+
+  info(nameOf(r.by)+' · '+r.reason)+
+  bar(action(c.keys.length===1?'اعتماد '+shown(r.after?.[c.keys[0]]):'اعتماد القيم المطلوبة','accept-force',c.id),action('رفض الطلب','reject',c.id))+'</div></div>');
 }
 function home(current){
  const late=rows('jobs').filter(j=>j.status!=='مكتملة'&&(isSup()||j.assignee===S.uid)),due=Object.entries(cycles).filter(([name,n])=>{const last=doneService().find(x=>x.kind===name);return !last||addDays(last.date,n)<=today();});
@@ -382,7 +419,7 @@ async function click(b){
  const {farm:key,id}=b.dataset;
  switch(key){
  case 'route':setTab(id);if(id==='changes')changeRows().forEach(x=>lsSet('gs_change_'+S.uid+'_'+x.id,'1'));break;
- case 'water-period':form('فترة تعبئات الماء',field('from','من','date',false,waterFrom)+field('to','إلى','date',false,waterTo),v=>{if(v.from&&v.to&&v.from>v.to)throw Error('راجع ترتيب التاريخين');waterFrom=v.from;waterTo=v.to;render(true)});break;
+ case 'water-period':form('فترة تعبئات الماء',field('from','من','date',false,waterFrom)+field('to','إلى','date',false,waterTo),v=>{if(v.from&&v.to&&v.from>v.to)throw userError('تاريخ «من» بعد تاريخ «إلى». راجع ترتيب التاريخين.');waterFrom=v.from;waterTo=v.to;render(true)});break;
  case 'water':waterForm();break;case 'water-filter':deliveryFilter=id;render(true);break;
  case 'water-cost':Cycle.costForm({source:id});break;case 'cost':Cycle.costForm();break;case 'sale':Cycle.saleForm();break;case 'edit-cost':financeForm('',id);break;
  case 'export-batch':exportBatch(id);break;
@@ -395,8 +432,8 @@ async function click(b){
  case 'compose':case 'message-job':compose(key==='message-job'?id:'');break;
  case 'room':room=id;render(true);break;case 'read':lsSet('gs_read_'+S.uid+'_'+id,'1');render(true);break;
  case 'correct':{const e=findEntry(id);if(e&&e.by===S.uid)openForm(e.type,e);break;}
- case 'accept':await decide(id,true);break;
- case 'reject':form('سبب رفض التصحيح',field('reason','ما المطلوب من العامل؟','text',true,'','maxlength="300"'),v=>{const reason=v.reason.trim();if(!reason)throw Error('اكتب السبب');return decide(id,false,reason);});break;
+ case 'accept':case 'accept-force':{if(b.disabled)break;b.disabled=true;try{const c=await decide(id,true,'',key==='accept-force'?conflicts[id]:null);if(c)conflictSheet(c);else{delete conflicts[id];if(NAV.sheet)closeSheet();}}finally{if(b.isConnected)b.disabled=false;}break;}
+ case 'reject':form('سبب رفض التصحيح',field('reason','ما المطلوب من العامل؟','text',true,'','maxlength="300"'),v=>{const reason=v.reason.trim();if(!reason)throw userError('اكتب سبب الرفض');delete conflicts[id];return decide(id,false,reason);});break;
  case 'print':$('view').dataset.printTitle='GREEN SIDE · الشفا، الطائف · '+(S.tab==='finance'?'تكلفة الدورة':'تقرير التشغيل')+' · أُنشئ '+today()+' '+nowTime();window.print();break;
  case 'theme':document.documentElement.dataset.theme=document.documentElement.dataset.theme==='dark'?'light':'dark';lsSet('gs_theme',document.documentElement.dataset.theme);render(true);break;
  case 'gauges':gaugeForm();break;case 'level':levelForm();break;

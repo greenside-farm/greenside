@@ -1,4 +1,4 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 3.0.0)
+/* GREEN SIDE — صفحة الحساسات (الإصدار 3.0.0؛ مؤشرات التقارير 3.7.0)
    العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
@@ -122,7 +122,7 @@ var SENS = (function () {
     subscriptions.push(X.db.collection("sensorMeta").doc("status").onSnapshot(function (s) {
       X.statusError = ""; var old = X.status && ms(X.status.lastRun); X.status = s.exists ? s.data() : null;
       var nw = X.status && ms(X.status.lastRun);
-      if(old&&nw&&nw!==old){KH.docs=[];KH.have={};REPC.key="";NC.key="";kcPut({});X.key="";X.days=null;X.all=null;}
+      if(old&&nw&&nw!==old){KH.docs=[];KH.have={};RPC.key="";RPC.docs=null;NC.key="";kcPut({});X.key="";X.days=null;X.all=null;}
       if (old && nw && nw !== old && X.days && rangeOf().to >= dkey(old)) refreshToday(); // وصلت قراءات جديدة: نقرأ اليوم الحالي فقط بدل الفترة كلها
       rr();
     }, function(e){X.statusError = "حالة الجامع غير مؤكدة · " + readError(e); rr();}));
@@ -340,7 +340,8 @@ var SENS = (function () {
   /* ================= تحليل البيئة ================= */
   function vpdOf(T, RH) { return 0.6108 * Math.exp(17.27 * T / (T + 237.3)) * (1 - RH / 100); } // kPa
   function dewOf(T, RH) { var a = 17.27, b = 237.7, g = a * T / (b + T) + Math.log(Math.max(1, RH) / 100); return b * g / (a - g); }
-  var STEP = 300, HOLD = 1800; // نأخذ عينة كل 5 دقائق، وتبقى آخر قراءة صالحة حتى 30 دقيقة دون عبور الصيانة
+  /* 3.7.0: تبقى آخر قراءة صالحة حتى ساعتين (كانت 30 دقيقة): الحساس يرسل عند تغيّر القراءة، فليل ثابت كان يُعدّ «بلا بيانات» ويرفع المتوسط */
+  var STEP = 300, HOLD = 7200; // نأخذ عينة كل 5 دقائق، ولا تعبر القراءة فترات الصيانة
   function ptsOf(doc, s, k) {
     doc=operationalDoc(doc);
     if (k === "dew" || k === "vpd") {
@@ -718,7 +719,6 @@ var SENS = (function () {
   var HM = { key: "", rows: null, loading: false };
   function manRows() { // تسجيلات القياس اليدوي لآخر 8 أيام (تُقرأ مرة لكل يوم، أو تؤخذ من التقارير إن غطّتها)
     var to = dkey(Date.now()), from = addDays(to, -7), key = from + "|" + to;
-    if (window.S && S.rep && S.rep.all && S.rep.start <= from && S.rep.end >= to) return S.rep.all;
     if (HM.key === key) return HM.rows;
     if (!HM.loading && window.S && S.db) {
       HM.loading = true;
@@ -1353,56 +1353,6 @@ var SENS = (function () {
   /* ================= ملخص الحساسات لقسم التقارير ================= */
   /* يقرأ أيام الفترة كاملة (منفصلة عن صفحة الحساسات) ويحسب لكل حساس في القسم الحالي:
      المؤشرات على الفترة، والملخص اليومي، والفرق بين الحساس والقياس اليدوي في نفس الوقت والموقع. */
-  var REPC = { key: "", docs: null }; // آخر فترة قُرئت للتقارير: تبديل القسم لا يعيد القراءة
-  function report(from, to, rows, force) {
-    start();
-    if(!careReady())return Promise.reject(new Error("لم يكتمل تحميل سجل الصيانة"));
-    var ck = from + "|" + to;
-    var wait = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
-    var ready = function (i) { return X.user ? Promise.resolve() : X.err || i > 40 ? Promise.reject(new Error(X.err || "تعذّر الاتصال بقاعدة الحساسات")) : wait(250).then(function () { return ready(i + 1); }); };
-    return ready(0).then(function () {
-      if (!force && REPC.key === ck && REPC.docs) return REPC.docs;
-      return X.db.collection("sensorDays").where("date", ">=", from).where("date", "<=", to).get().then(function (q) {
-        REPC = { key: ck, docs: archiveDays(q) }; return REPC.docs;
-      });
-    }).then(function (docs) {
-      var list = sensorList().filter(function (s) { return codesFor(s, "temp").length || codesFor(s, "hum").length; });
-      return { from: from, to: to, sensors: list.map(function (s) { return repSensor(s, docs, rows || []); }).filter(function (r) { return r.days.length; }) };
-    });
-  }
-  function repSensor(s, docs, rows) {
-    var mine = docs.filter(function (d) { return d.deviceId === s.id && secOk(d.sec != null && d.sec !== "" ? d.sec : s.sec); }).sort(function (a, b) { return a.date < b.date ? -1 : 1; });
-    var tot = { cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, risk: 0, vCov: 0, inV: 0, cond: 0 }, tD = [], tN = [], vD = [], dMax = null, nMin = null, minMg = null, dewS = 0, dewN = 0;
-    var stat = function (doc, k) {
-      var mn = null, mx = null, sm = 0, n = 0;
-      codesFor(s, k).forEach(function (c) { var q = (doc.s || {})[c]; if (!q || !q.n) return; q = statOf(s, c, q); mn = mn == null ? q.min : Math.min(mn, q.min); mx = mx == null ? q.max : Math.max(mx, q.max); sm += q.sum || 0; n += q.n; });
-      return n ? { mn: mn, mx: mx, av: sm / n } : null;
-    };
-    var days = mine.map(function (doc) {
-      doc=operationalDoc(doc);
-      var m = dayMetrics(doc, s);
-      Object.keys(tot).forEach(function (k) { tot[k] += m[k] || 0; });
-      if (m.tDay != null) tD.push(m.tDay); if (m.tNight != null) tN.push(m.tNight); if (m.vDay != null) vD.push(m.vDay);
-      if (m.dMax != null) dMax = dMax == null ? m.dMax : Math.max(dMax, m.dMax);
-      if (m.nMin != null) nMin = nMin == null ? m.nMin : Math.min(nMin, m.nMin);
-      // نقطة الندى: متوسطها، وأقل هامش (الحرارة ناقص نقطة الندى) ووقته
-      // موزونة بالوقت: عيّنة كل 5 دقائق (مثل باقي ساعات التقرير)، فلا تطغى ساعات النهار التي يرسل فيها الحساس قراءات أكثر
-      // ونقرن الحرارة بالرطوبة فقط إذا كانت القراءتان متقاربتين (30 دقيقة)، كي لا تُحسب حرارة جديدة مع رطوبة قديمة عند تشغيل التبريد مثلاً
-      var fT = samplerP(ptsOf(doc, s, "temp")), fH = samplerP(ptsOf(doc, s, "hum")), dSum = 0, dN = 0, mg = null, cH = 0, cGap = scn("condGap");
-      for (var tt = 0, te = dayEnd(doc.date); tt < te; tt += STEP) {
-        var qT = fT(tt), qH = fH(tt); if (!qT || !qH || Math.abs(qT.t - qH.t) > 1800) continue;
-        var tv = qT.v, hv = qH.v;
-        var dv = dewOf(tv, hv), g = tv - dv; dSum += dv; dN++; if (g <= cGap) cH += STEP / 3600;
-        if (!mg || g < mg.v) mg = { v: g, t: dayStart(doc.date) + tt * 1000 };
-      }
-      if (mg && (!minMg || mg.v < minMg.v)) minMg = { v: mg.v, t: mg.t };
-      dewS += dSum; dewN += dN; tot.cond += cH;
-      return { date: doc.date, cond: cH, dewAvg: dN ? dSum / dN : null, mgMin: mg ? mg.v : null, t: stat(doc, "temp"), h: stat(doc, "hum"), cov: m.cov, inT: m.inT, heat: m.heat, hCov: m.hCov, inH: m.inH, risk: m.risk, vDay: m.vDay, vCov: m.vCov, inV: m.inV };
-    });
-    var mean = function (a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : null; };
-    return { id: s.id, name: nm(s), col: colorOf(s), days: days, tot: tot, tDay: mean(tD), tNight: mean(tN), vDay: mean(vD), vMin: scn("vpdMin"), vMax: scn("vpdMax"), dewAvg: dewN ? dewS / dewN : null, minMg: minMg, dewGap: scn("dewGap"), condGap: scn("condGap"), hasDew: codesFor(s, "dew").length > 0, dMax: dMax, nMin: nMin,
-      diffT: manualDiff(s, mine, rows, "temp"), diffH: manualDiff(s, mine, rows, "hum") };
-  }
   /* الحساس ناقص القياس اليدوي لنفس الموقع والوقت (القراءة اليدوية مقابل آخر قراءة للحساس خلال ساعة) */
   function manualDiff(s, docs, rows, k) {
     var keys = manualKeys(s, k), by = {}, out = [];
@@ -1419,6 +1369,110 @@ var SENS = (function () {
     if (!out.length) return null;
     var a = out.reduce(function (x, y) { return x + y; }, 0) / out.length, ab = out.reduce(function (x, y) { return x + Math.abs(y); }, 0) / out.length;
     return { n: out.length, avg: a, abs: ab };
+  }
+
+  /* ================= 3.7.0: التقارير · مؤشرات الحساسات لفترة =================
+     خط زمني واحد عبر الأيام (لا ينقطع عند منتصف الليل)، عيّنة كل 5 دقائق، وآخر قراءة صالحة حتى ساعتين (HOLD) دون عبور الصيانة.
+     المقام دائماً ساعات الفترة التي مضت (لا الأيام التي وصلت فيها قراءات). القيم مصحَّحة بتعويض المعايرة مثل صفحة المراقبة.
+     الأدنى والأعلى من القراءات الفعلية مع وقتيهما، ويُحكم عليهما بحد الوقت الذي وقعتا فيه. VPD «ضمن المثالي» على ساعات النهار فقط. */
+  var RPC = { key: "", docs: null, p: null };
+  function rptLoad(from, to, force) {
+    start();
+    if (!careReady()) return Promise.reject(new Error("لم يكتمل تحميل سجل الصيانة"));
+    var key = from + "|" + to;
+    if (!force && RPC.key === key && (RPC.docs || RPC.p)) return RPC.docs ? Promise.resolve(RPC.docs) : RPC.p;
+    var wait = function (n) { return new Promise(function (r) { setTimeout(r, n); }); };
+    var ready = function (i) { return X.user ? Promise.resolve() : X.err || i > 40 ? Promise.reject(new Error(X.err || "تعذّر الاتصال بقاعدة الحساسات")) : wait(250).then(function () { return ready(i + 1); }); };
+    RPC = { key: key, docs: null, p: null };
+    var p = ready(0).then(function () { return X.db.collection("sensorDays").where("date", ">=", from).where("date", "<=", to).get(); })
+      .then(function (q) { var d = archiveDays(q); if (RPC.key === key) { RPC.docs = d; RPC.p = null; } return d; })
+      .catch(function (e) { if (RPC.key === key) RPC = { key: "", docs: null, p: null }; throw e; });
+    RPC.p = p; return p;
+  }
+  function rptLim(o) {
+    o = o || {}; var d = o.dh || DH(), mid = function (h) { return p2(Math.floor(((h % 24) + 24) % 24)) + ":00"; };
+    var dayHM = mid((d[0] + d[1]) / 2), nightHM = mid((d[1] + 24 + d[0]) / 2);
+    return Object.assign({ dh: d, tD: limAt("temp", dayHM), tN: limAt("temp", nightHM), hD: limAt("hum", dayHM), hN: limAt("hum", nightHM),
+      vmin: scn("vpdMin"), vmax: scn("vpdMax"), heat: scn("heat"), risk: scn("rhRisk"), gap: scn("dewGap"), cond: scn("condGap"), luxK: scn("luxPpfd") }, o);
+  }
+  function inLim(L, v) { return (L[0] == null || v >= L[0]) && (L[1] == null || v <= L[1]); }
+  function hourOf(sec) { return (((sec + TZ_MS / 1000) % 86400) + 86400) % 86400 / 3600; }
+  /* s: الحساس، docs: وثائق الفترة (كل الحساسات)، a/b: بداية ونهاية الفترة بالمللي ثانية، now: الآن. L: الحدود (افتراضياً من الإعدادات) */
+  function rptSensor(s, docs, a, b, now, L) {
+    L = L || rptLim(); now = now == null ? Date.now() : now;
+    var mine = myDocs(s, docs), end = Math.min(b, now), H0 = 3600;
+    var kinds = kindsAvail([s]).filter(function (k) { return k !== "batt" && k !== "dew" && k !== "vpd"; });
+    var out = { id: s.id, name: nm(s), col: colorOf(s), group: sensorGroup(s), kinds: {}, hours: Math.max(0, (end - a) / 3600e3), days: {}, outSteps: [] };
+    if (end <= a) return out;
+    var pts = {}; kinds.forEach(function (k) { pts[k] = absPts(s, k, mine); });
+    var hasT = !!(pts.temp && pts.temp.length), hasH = !!(pts.hum && pts.hum.length), hasTH = codesFor(s, "temp").length > 0 || codesFor(s, "hum").length > 0;
+    var T = hasT ? samplerP(pts.temp) : function () { return null; }, Hh = hasH ? samplerP(pts.hum) : function () { return null; };
+    var h = STEP / H0, m = { cov: 0, hCov: 0, inT: 0, inH: 0, heat: 0, sum: 0, n: 0, dS: 0, dN: 0, nS: 0, nN: 0, vDCov: 0, vDIn: 0, vDS: 0, risk: 0, cond: 0, dewS: 0, dewN: 0, mg: null };
+    var dayOf = function (t) { return dkey(t * 1000); };
+    var D = function (t) { var k = dayOf(t); return out.days[k] || (out.days[k] = { date: k, cov: 0, inT: 0, heat: 0, hCov: 0, inH: 0, vDCov: 0, vDIn: 0, vDS: 0, risk: 0, cond: 0, tS: 0, tN: 0, hS: 0, hN: 0, dewS: 0, dewN: 0, mg: null }); };
+    for (var t = Math.ceil(a / 1000 / STEP) * STEP, te = end / 1000, i = 0; t < te; t += STEP, i++) {
+      var hr = hourOf(t), day = hr >= L.dh[0] && hr < L.dh[1], qT = T(t), qH = Hh(t), tv = qT ? qT.v : null, hv = qH ? qH.v : null, dd = hasTH ? D(t) : null, bad = false;
+      if (tv != null) {
+        var tl = day ? L.tD : L.tN, okT = inLim(tl, tv);
+        m.cov += h; m.sum += tv; m.n++; dd.cov += h; dd.tS += tv; dd.tN++;
+        if (okT) { m.inT += h; dd.inT += h; } else bad = true;
+        if (L.heat != null && tv > L.heat) { m.heat += h; dd.heat += h; }
+        if (day) { m.dS += tv; m.dN++; } else { m.nS += tv; m.nN++; }
+      }
+      if (hv != null) { var okH = inLim(day ? L.hD : L.hN, hv); m.hCov += h; dd.hCov += h; dd.hS += hv; dd.hN++; if (okH) { m.inH += h; dd.inH += h; } else bad = true; }
+      if (tv != null && hv != null && Math.abs(qT.t - qH.t) <= 1800) {
+        var vp = vpdOf(tv, hv), dw = dewOf(tv, hv), g = tv - dw;
+        if (day) { m.vDCov += h; m.vDS += vp; dd.vDCov += h; dd.vDS += vp; if (vp >= L.vmin && vp <= L.vmax) { m.vDIn += h; dd.vDIn += h; } }
+        if (hv >= L.risk || g <= L.gap) { m.risk += h; dd.risk += h; }
+        if (g <= L.cond) { m.cond += h; dd.cond += h; }
+        m.dewS += dw; m.dewN++; dd.dewS += dw; dd.dewN++;
+        if (!m.mg || g < m.mg.v) m.mg = { v: g, t: t * 1000 }; if (!dd.mg || g < dd.mg) dd.mg = g;
+      } else if (hv != null && hv >= L.risk) { m.risk += h; dd.risk += h; }
+      out.outSteps[i] = bad ? 1 : 0;
+    }
+    /* الأدنى والأعلى الفعليان من القراءات نفسها، مع حكم بحد وقتهما */
+    var ext = function (k) {
+      var p = pts[k], lo = null, hi = null; if (!p) return null;
+      p.forEach(function (q) { var at = q.t * 1000; if (at < a || at >= end) return; if (!lo || q.v < lo.v) lo = { v: q.v, t: at }; if (!hi || q.v > hi.v) hi = { v: q.v, t: at }; });
+      if (!lo) return null;
+      if (k === "temp" || k === "hum") [lo, hi].forEach(function (x) { var hr2 = hourOf(x.t / 1000), dy = hr2 >= L.dh[0] && hr2 < L.dh[1], lm = k === "temp" ? (dy ? L.tD : L.tN) : (dy ? L.hD : L.hN); x.st = x.v < (lm[0] == null ? -1e9 : lm[0]) ? "lo" : x.v > (lm[1] == null ? 1e9 : lm[1]) ? "hi" : "ok"; x.lim = lm; });
+      return { min: lo, max: hi };
+    };
+    /* أي قياس آخر (حرارة الماء، pH، البلل، الضوء…): متوسط موزون بالزمن وتغطية */
+    kinds.forEach(function (k) {
+      var f = samplerP(pts[k]), cov = 0, sum = 0, n = 0, dli = 0;
+      for (var t2 = Math.ceil(a / 1000 / STEP) * STEP, te2 = end / 1000; t2 < te2; t2 += STEP) { var q = f(t2); if (q) { cov += h; sum += q.v; n++; if (k === "lux") dli += q.v * L.luxK * STEP / 1e6; } }
+      var ki = kindInfo(k, s), x = ext(k);
+      out.kinds[k] = { k: k, l: ki.l, u: ki.u, d: ki.d, cov: cov, pct: out.hours ? cov / out.hours : 0, avg: n ? sum / n : null, min: x && x.min, max: x && x.max, n: (pts[k] || []).filter(function (q) { return q.t * 1000 >= a && q.t * 1000 < end; }).length, dli: k === "lux" && out.hours ? dli / Math.max(1, out.hours / 24) : null };
+    });
+    if (hasTH) {
+      var nd = Math.max(out.hours / 24, 1 / 24);
+      Object.assign(out, { th: true, cov: Math.max(m.cov, m.hCov), pct: out.hours ? Math.max(m.cov, m.hCov) / out.hours : 0, tAvg: m.n ? m.sum / m.n : null, tDay: m.dN ? m.dS / m.dN : null, tNight: m.nN ? m.nS / m.nN : null,
+        inT: m.cov ? m.inT / m.cov : null, inH: m.hCov ? m.inH / m.hCov : null, vDay: m.vDCov ? m.vDS / (m.vDCov / h) : null, vIn: m.vDCov ? m.vDIn / m.vDCov : null, vMin: L.vmin, vMax: L.vmax,
+        heat: m.heat, heatDay: m.heat / nd, risk: m.risk, riskDay: m.risk / nd, cond: m.cond, condDays: Object.keys(out.days).filter(function (k) { return out.days[k].cond > 0; }).length,
+        dewAvg: m.dewN ? m.dewS / m.dewN : null, minMg: m.mg, heatAt: L.heat, condGap: L.cond, hasDew: codesFor(s, "dew").length > 0, t: ext("temp"), h: ext("hum"), tLim: [L.tD, L.tN] });
+    } else { var k0 = kinds[0]; out.cov = k0 ? out.kinds[k0].cov : 0; out.pct = out.hours && k0 ? out.kinds[k0].cov / out.hours : 0; }
+    /* الانقطاعات: فترات بلا أي قراءة صالحة (بعد احتساب مهلة الساعتين) */
+    var main = hasT ? "temp" : hasH ? "hum" : kinds[0], gaps = [], run = 0, f2 = main ? samplerP(pts[main]) : null;
+    if (f2) { for (var t3 = Math.ceil(a / 1000 / STEP) * STEP, te3 = end / 1000; t3 < te3; t3 += STEP) { if (f2(t3)) { if (run) gaps.push(run); run = 0; } else run += h; } if (run) gaps.push(run); }
+    out.gaps = { n: gaps.length, longest: gaps.length ? Math.max.apply(null, gaps) : 0 };
+    out.batt = lastOfKind(s, "batt");
+    return out;
+  }
+  function rptSensors(docs, a, b, now, L) {
+    L = L || rptLim();
+    return sensorList().map(function (s) { return rptSensor(s, docs, a, b, now, L); }).filter(function (r) { return Object.keys(r.kinds).length || r.th; });
+  }
+  /* قراءات الفترة كما تُحسب (مصحَّحة وبلا الصيانة) لملف CSV */
+  function rptPoints(docs, a, b) {
+    var rows = [];
+    sensorList().forEach(function (s) {
+      var mine = myDocs(s, docs);
+      kindsAvail([s]).filter(function (k) { return k !== "dew" && k !== "vpd"; }).forEach(function (k) {
+        var ki = kindInfo(k, s); absPts(s, k, mine).forEach(function (q) { var at = q.t * 1000; if (at >= a && at < b) rows.push([nm(s), ki.l, at, q.v, ki.u]); });
+      });
+    });
+    return rows;
   }
 
   /* ================= الأزرار ================= */
@@ -1440,5 +1494,5 @@ var SENS = (function () {
     if (typeof render === "function") render(true);
   });
 
-  return { view: view, bind: bind, start: start, selfTest: selfTest, report: report, strip: strip, dashboard: dashboard, api:{age:ago,access:access,retry:retry,list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms,dash:dash,name:nm,scn:scn}, _x: X };
+  return { rpt: { load: rptLoad, lim: rptLim, sensor: rptSensor, sensors: rptSensors, points: rptPoints, diff: function (s, docs, rows, k) { return manualDiff(s, myDocs(s, docs), rows, k); }, hold: HOLD, step: STEP }, view: view, bind: bind, start: start, selfTest: selfTest, strip: strip, dashboard: dashboard, api:{age:ago,access:access,retry:retry,list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms,dash:dash,name:nm,scn:scn}, _x: X };
 })();

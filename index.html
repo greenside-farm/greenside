@@ -14,7 +14,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png?v=211">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&family=Readex+Pro:wght@500;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
-<link rel="stylesheet" href="styles.css?v=3.4.1">
+<link rel="stylesheet" href="styles.css?v=3.7.0">
 <script>try{document.documentElement.dataset.theme=localStorage.getItem("gs_theme")==="dark"?"dark":"light";}catch(e){document.documentElement.dataset.theme="light";}</script>
 </head>
 <body class="sec-n">
@@ -39,11 +39,7 @@
 
 <nav class="tabs" id="tabsNav" aria-label="الأقسام" hidden><div class="tabs-in" id="tabs"></div></nav>
 <div id="sheetRoot"></div>
-<div class="exitbar" id="exitbar" hidden>
-  <span>اضغط رجوع مرة أخرى للخروج من التطبيق</span>
-  <button class="btn sm" type="button" data-act="stay">البقاء</button>
-  <button class="btn sm danger" type="button" data-act="exitApp">خروج</button>
-</div>
+<div class="backhint" id="backhint" role="status" aria-live="polite" hidden></div>
 
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
@@ -51,14 +47,14 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-check-compat.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
 <script src="config.js"></script>
-<script src="sensors.js?v=3.4.1"></script>
-<script src="workspace.js?v=3.4.1"></script>
-<script src="farm.js?v=3.4.1"></script>
-<script src="cycle.js?v=3.4.1"></script>
-<script src="shift.js?v=3.4.1"></script>
-<script src="board.js?v=3.4.1"></script>
-<script src="record.js?v=3.4.1"></script>
-<script src="team.js?v=3.4.1"></script>
-<script src="app.js?v=3.4.1"></script>
+<script src="sensors.js?v=3.7.0"></script>
+<script src="workspace.js?v=3.7.0"></script>
+<script src="farm.js?v=3.7.0"></script>
+<script src="cycle.js?v=3.7.0"></script>
+<script src="shift.js?v=3.7.0"></script>
+<script src="board.js?v=3.7.0"></script>
+<script src="record.js?v=3.7.0"></script>
+<script src="team.js?v=3.7.0"></script>
+<script src="app.js?v=3.7.0"></script>
 </body>
 </html>

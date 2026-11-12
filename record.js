@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.4.1 — تبويب «سجّل»: بطاقات الأنواع (الضغط يفتح النموذج)، كل التسجيلات، سجل النوع، تفاصيل التسجيل،
+/* GREEN SIDE 3.7.0 — تبويب «سجّل»: بطاقات الأنواع (الضغط يفتح النموذج)، كل التسجيلات، سجل النوع، تفاصيل التسجيل،
    وقائمة المراجعة السريعة للمشرف (خارج الحدود أولاً ثم «اعتماد الباقي»).
    يقرأ: تسجيلات اليوم المختار (محمّلة)، ويوماً سابقاً عند الطلب، وسجل نوع واحد لآخر 7 أيام. */
 var Rec=(()=>{
@@ -18,7 +18,7 @@ const byT=(a,b)=>String(a.date||'').localeCompare(String(b.date||''))||String(a.
 const TS={mix:['flask','purple'],refill:['flask','purple'],ecph:['flask','purple'],waterOnly:['drop','info'],irr:['drop','info'],temp:['therm','warn'],light:['sun','gold'],spray:['spray','teal'],note:['leaf','green'],photo:['camera','gray'],sow:['sprout','green'],count:['check','green'],xplant:['moveup','info'],harvest:['basket','green'],pump:['gauge','gray'],cal:['target','gray'],batt:['batt','gray'],svc:['wrench','gray']};
 const CAT={mix:'sol',refill:'sol',ecph:'sol',waterOnly:'sol',irr:'irr',temp:'air',light:'air',spray:'spray',note:'note',photo:'note',sow:'crop',count:'crop',xplant:'crop',harvest:'crop',pump:'eq',cal:'eq',batt:'eq',svc:'eq'};
 const CATS=[['all','الكل'],['sol','المحلول'],['irr','الري'],['air','الجو والضوء'],['spray','الرش'],['note','الملاحظات والصور'],['crop','الزراعة والحصاد'],['eq','المعدات والصيانة']];
-const style=t=>TS[t]||['list','gray'];
+const style=t=>Object.prototype.hasOwnProperty.call(TS,t)?TS[t]:['list','gray'];
 function label(e){if(e.type==='svc')return e.kind||'صيانة';if(e.type==='cal'&&e.v&&e.v.careKind)return e.v.what||'صيانة حساس';const T=typeDef(e.type,secView(e));return T?T.label:'تسجيل';}
 function dayTitle(d){const t=todayStr(),rel=d===t?'اليوم':d===addDays(t,-1)?'أمس':'';return (rel?rel+' · ':'')+DW(d);}
 const cnt=n=>Board.pl(n,'تسجيل واحد','تسجيلان','تسجيلات','تسجيلاً');
@@ -114,7 +114,7 @@ function pageHead(title,extra){return '<header class="rc-head"><div class="rc-he
 /* ---------- «سجّل»: حسب النوع ---------- */
 function typeCard(type,sec){
  const T=typeDef(type,sec);if(!T)return '';
- const [ic,tone]=style(type),rows=secEntries(S.entries,sec).filter(e=>e.type===type),x=TASKS[sec].find(t=>t[0]===type),need=x?needOf(sec,x):0,done=doneOf(rows,type);
+ const [ic,tone]=style(type),rows=secEntries(S.entries,sec).filter(e=>e.type===type),x=TASKS[sec].find(t=>t[0]===type),need=x?needOf(sec,x):0,done=doneOf(x?secEntries(S.entries,sec):rows,type);
  const sl=need?Board.slots(sec).filter(s=>s.type===type):[],late=sl.filter(s=>s.state==='late'),last=lastOfType(type,sec);
  const count=need?done+' / '+need:rows.length?String(rows.length):'—',cls=need?(done>=need?'ok':late.length?'bad':''):'';
  let sub;
@@ -122,17 +122,22 @@ function typeCard(type,sec){
  else if(last&&last.date===S.date)sub='آخرها '+fmtTime(last.time)+' · '+first(last.by);
  else if(last){const d=daysBetween(last.date,S.date);sub=(d===1?'أمس':d<=10?'قبل '+Board.dN(d):DT(last.date))+' · '+first(last.by);}
  else sub=live()?'لم يُسجَّل اليوم':'لا تسجيل في هذا اليوم';
+ if(x&&taskOff(sec,type)&&!(last&&last.date===S.date))sub='المهمة موقوفة من الإعدادات';
  return '<div class="rc-card"><a href="#" class="rc-main" data-act="new" data-type="'+type+'" aria-label="'+E('تسجيل '+T.label)+'"><span class="rc-top"><span class="bd-hic '+tone+' md">'+I(ic,20)+'</span><span class="rc-cnt '+cls+'">'+E(count)+'</span></span><b>'+E(T.label)+'</b><small class="'+(late.length&&live()?'bad':'')+'">'+E(sub)+'</small><span class="rc-vals">'+(last?chipsHTML(vals(last),2):'')+'</span></a>'+
   '<div class="rc-acts"><a href="#" class="pri" data-act="new" data-type="'+type+'">'+I('plus',14,2.6)+'سجّل</a><a href="#" data-rc="type" data-type="'+type+'">'+I('history',14,2)+'السجل</a></div></div>';
 }
 function typesView(){
  const sec=S.sec;let h='';
  if(live()&&canAdd()&&S.dayLoaded){const nx=Board.next(sec);if(nx)h+='<a href="#" class="rc-next" '+(nx.act||'data-act="new" data-type="'+nx.type+'"')+'><span class="rc-next-ic">'+I(nx.icon||style(nx.type||'svc')[0],22)+'</span><span class="rc-next-t"><small>'+(nx.state==='late'?'متأخر · سجّله الآن':'المقترح الآن')+'</small><b>'+E(nx.label+(nx.time?' · '+fmtTime(nx.time):''))+'</b></span><span class="rc-next-b">ابدأ</span></a>';}
- h+='<a href="#" class="rc-calc" data-act="calc"><span class="bd-hic purple md">'+I('flask',20)+'</span><span><b>حاسبة المحلول</b><small>'+(sec==='t'?'تعويض الخزان أو تجهيز خزان جديد':'خلطة جديدة حسب الجرعة أو الأملاح المستهدفة')+'</small></span>'+I('chev',16,2)+'</a>';
- h+='<div class="rc-grid">'+ORDER[sec].map(t=>typeCard(t,sec)).join('')+'</div>';
+ /* 3.5.0: «حاسبة المحلول» بطاقة بحجم بقية البطاقات أول الشبكة، فيصير العدد زوجياً في القسمين (لا فراغ ولا بطاقة عريضة) */
+ h+='<div class="rc-grid">'+calcCard(sec)+ORDER[sec].map(t=>typeCard(t,sec)).join('')+'</div>';
  h+='<h2 class="rc-sub">المعدات</h2><div class="rc-grid">'+typeCard('cal',sec)+battCard()+'</div>';
  h+='<p class="rc-limits">'+E('المستهدف في '+SECS[sec].name+': الأملاح '+rangeTxt('ec')+' µS/cm · pH '+rangeTxt('ph')+' · حرارة الماء '+rangeTxt('wt')+'° · حرارة الجو '+dnTxt('air',sec,'°'))+'</p>';
  return h;
+}
+function calcCard(sec){
+ return '<div class="rc-card"><a href="#" class="rc-main" data-act="calc" aria-label="حاسبة المحلول"><span class="rc-top"><span class="bd-hic purple md">'+I('flask',20)+'</span></span><b>حاسبة المحلول</b><small>'+(sec==='t'?'تعويض الخزان أو تجهيز خزان جديد':'خلطة جديدة حسب الجرعة أو الأملاح المستهدفة')+'</small></a>'+
+  '<div class="rc-acts"><a href="#" class="pri" data-act="calc">'+I('flask',14,2.2)+'افتح الحاسبة</a></div></div>';
 }
 function battCard(){
  const bi=battInfo(),[ic,tone]=style('batt'),T=typeDef('batt','n');
@@ -141,6 +146,80 @@ function battCard(){
  return '<div class="rc-card"><a href="#" class="rc-main" '+main+'><span class="rc-top"><span class="bd-hic '+tone+' md">'+I(ic,20)+'</span><span class="rc-cnt '+(bi.state==='charging'?'warn':'')+'">'+(bi.state==='charging'?'يشحن':'—')+'</span></span><b>'+E(T.label)+'</b><small>'+E(sub)+'</small></a>'+
   '<div class="rc-acts"><a href="#" class="pri" '+main+'>'+I(bi.state==='charging'?'check':'plus',14,2.6)+(bi.state==='charging'?'انتهى الشحن':'بدء الشحن')+'</a><a href="#" data-rc="type" data-type="batt">'+I('history',14,2)+'السجل</a></div></div>';
 }
+
+/* ---------- 3.6.0: معرض صور النمو ----------
+   صفحة مستقلة (من «المزرعة» ← صور النمو): كل صور القسم خلال آخر 120 يوماً مرتبة حسب التاريخ، مع تصفية بالجهة (المشتل)
+   أو المنطقة (الأبراج) وبالدفعة، وعرض الصورة مع «الأقدم/الأحدث» للمقارنة. القراءة مرة عند الفتح، وتُدمج معها صور اليوم المحمّلة */
+const G={list:null,err:false,loading:false,at:0,side:'all',batch:'all',asc:false,id:null};
+function galLoad(force){
+ if(G.loading||(!force&&(G.list||G.err)&&Date.now()-G.at<120000))return;
+ G.loading=true;G.err=false;
+ photoQuery().then(q=>{G.list=entriesOf(q).filter(e=>e.type==='photo');G.err=false;}).catch(e=>{console.warn(e);G.err=true;}).then(()=>{G.loading=false;G.at=Date.now();if(S.tab==='gallery')render(true);});
+}
+function galPool(){
+ const m=new Map();(G.list||[]).forEach(e=>m.set(e.id,e));
+ S.entries.forEach(e=>{if(e.type==='photo')m.set(e.id,e);});
+ return [...m.values()].filter(e=>secOf(e)===S.sec&&(e.thumb||e.photo));
+}
+const galPlace=e=>{const v=e.v||{};return txt(S.sec==='n'?v.side:v.loc,60);};
+function galSow(id){return id?sowBatches().find(x=>x.id===id)||null:null;}
+function galBatchName(id){if(!id)return 'بدون دفعة';const b=galSow(id);return b?((b.v&&b.v.crop)||'دفعة')+' · '+DT(b.date)+(S.sec==='n'&&b.v&&b.v.side?' · '+b.v.side:''):'دفعة غير معروفة';}
+function galOpts(pool){
+ const places=[...new Set(pool.map(galPlace).filter(Boolean))],order=S.sec==='n'?SIDES:ZONE_T;
+ places.sort((a,b)=>(order.indexOf(a)<0?99:order.indexOf(a))-(order.indexOf(b)<0?99:order.indexOf(b))||a.localeCompare(b));
+ const bids=[...new Set(pool.map(e=>txt(e.v&&e.v.batch,60)))];
+ bids.sort((a,b)=>{if(!a)return 1;if(!b)return -1;const x=galSow(a),y=galSow(b);return String(y?y.date:'').localeCompare(String(x?x.date:''));});
+ return {places,bids};
+}
+function galRows(){
+ const pool=galPool(),O=galOpts(pool);
+ if(G.side!=='all'&&!O.places.includes(G.side))G.side='all';
+ if(G.batch!=='all'&&!O.bids.includes(G.batch))G.batch='all';
+ const rows=pool.filter(e=>(G.side==='all'||galPlace(e)===G.side)&&(G.batch==='all'||txt(e.v&&e.v.batch,60)===G.batch)).sort(byT);
+ if(!G.asc)rows.reverse();
+ return {pool,O,rows};
+}
+function galCap(e){const v=e.v||{},h=num(v.height);return (e.time?fmtTime(e.time):'')+(h!=null?' · '+f(h,1)+' سم':'');}
+function gallery(){
+ if(!G.list&&!G.loading&&!G.err)galLoad();
+ const {pool,O,rows}=galRows();
+ let h='<header class="rc-head"><div class="rc-head-r"><h1>صور النمو</h1><span class="rc-sec s-'+S.sec+'"><i></i>'+E(SECS[S.sec].name)+'</span></div></header>';
+ const chip=(k,v,l)=>'<button type="button" data-rc="gf" data-k="'+k+'" data-v="'+E(v)+'" aria-pressed="'+(G[k]===v)+'">'+E(l)+'</button>';
+ if(O.places.length>1||G.side!=='all')h+='<div class="gal-fl">'+(S.sec==='n'?'الجهة':'المنطقة')+'</div><div class="gal-f" role="group" aria-label="'+(S.sec==='n'?'تصفية بالجهة':'تصفية بالمنطقة')+'">'+chip('side','all','الكل')+O.places.map(p=>chip('side',p,p)).join('')+'</div>';
+ if(O.bids.length>1||G.batch!=='all')h+='<div class="gal-fl">الدفعة</div><div class="gal-f" role="group" aria-label="تصفية بالدفعة">'+chip('batch','all','كل الدفعات')+O.bids.map(b=>chip('batch',b,galBatchName(b))).join('')+'</div>';
+ if(!G.list&&G.loading&&!pool.length)return h+'<div class="bd-skel"></div><p class="bd-empty">جارٍ تحميل الصور…</p>';
+ if(G.err&&!pool.length)return h+'<section class="bd-card"><p class="bd-empty">تعذّر تحميل الصور.</p><button type="button" class="btn block" data-rc="greload">إعادة المحاولة</button></section>';
+ if(!rows.length)return h+'<section class="bd-card"><p class="bd-empty">'+(pool.length?'لا صور بهذه التصفية.':'لا توجد صور بعد في '+E(SECS[S.sec].name)+'. سجّل «التصوير اليومي» من تبويب «سجّل».')+'</p>'+(canAdd()&&live()?'<button type="button" class="btn pri block" data-act="new" data-type="photo">'+I('camera',18)+' تصوير الآن</button>':'')+'</section>';
+ const ds=rows.map(e=>e.date).filter(okDay).sort(),sow=G.batch!=='all'?galSow(G.batch):null;
+ if(G.loading)h+='<p class="help" style="margin:0 2px 6px">جارٍ تحميل الصور السابقة…</p>';
+ h+='<div class="gal-bar"><span>'+E(Board.pl(rows.length,'صورة واحدة','صورتان','صور','صورة')+(ds.length&&ds[0]!==ds[ds.length-1]?' · من '+DT(ds[0])+' إلى '+DT(ds[ds.length-1]):ds.length?' · '+DT(ds[0]):'')+' · آخر 120 يوماً')+'</span><button type="button" data-rc="gsort">'+I('sort',15,2)+(G.asc?'الأقدم أولاً':'الأحدث أولاً')+'</button></div>';
+ const days=[];rows.forEach(e=>{const d=days[days.length-1];if(d&&d.date===e.date)d.items.push(e);else days.push({date:e.date,items:[e]});});
+ h+=days.map(d=>{
+  const age=sow&&okDay(d.date)?daysBetween(sow.date,d.date):null;
+  return '<div class="gal-day"><h3>'+E(dayTitle(d.date))+'<span>'+E(age!=null&&age>=0?'يوم '+age:Board.pl(d.items.length,'صورة واحدة','صورتان','صور','صورة'))+'</span></h3><div class="gal-g">'+d.items.map(e=>{
+   const im=e.thumb&&safeImg(e.thumb)?'src="'+safeImg(e.thumb)+'"':'data-photo="'+E(e.photo||'')+'"',pl=galPlace(e);
+   return '<button type="button" class="gal-ph" data-rc="gph" data-id="'+E(e.id)+'" aria-label="'+E('صورة '+(pl?pl+' · ':'')+DT(e.date)+' '+galCap(e))+'"><img alt="" '+im+'>'+(pl?'<i>'+E(pl)+'</i>':'')+'<span class="cap">'+E(galCap(e))+'</span></button>';}).join('')+'</div></div>';
+ }).join('');
+ return h;
+}
+function galPhotoHTML(id){
+ const {rows}=galRows(),i=rows.findIndex(e=>e.id===id),e=rows[i];if(!e)return '';
+ const v=e.v||{},sow=galSow(txt(v.batch,60)),age=sow&&okDay(e.date)?daysBetween(sow.date,e.date):null,pl=galPlace(e),h=num(v.height);
+ const older=G.asc?rows[i-1]:rows[i+1],newer=G.asc?rows[i+1]:rows[i-1];
+ const title=(pl?pl:'صورة')+(age!=null&&age>=0?' · يوم '+age+' من البذر':' · '+DT(e.date));
+ const tiles=[['التاريخ',DW(e.date)+(e.time?' · '+fmtTime(e.time):'')],['الدفعة',v.batch?galBatchName(txt(v.batch,60)):'بدون دفعة']];
+ if(h!=null)tiles.push(['الارتفاع',f(h,1)+' سم']);
+ if(S.sec==='t'&&v.lvl)tiles.push(['المستوى في البرج',txt(v.lvl,60)]);
+ tiles.push(['صوّرها',first(e.by)||'—']);
+ if(v.memo)tiles.push(['ملاحظة',txt(v.memo,500)]);
+ const img=e.photo?(S.photos[e.photo]&&safeImg(S.photos[e.photo])?'src="'+safeImg(S.photos[e.photo])+'"':(e.thumb&&safeImg(e.thumb)?'src="'+safeImg(e.thumb)+'" ':'')+'data-photo="'+E(e.photo)+'"'):'src="'+safeImg(e.thumb)+'"';
+ return '<div class="sheet-bg" data-close><div class="sheet gal-lb" role="dialog" aria-modal="true" aria-label="'+E(title)+'">'+sheetHead(title,null,'photo')+'<img alt="" '+img+'>'+
+  '<div class="gal-nav"><button class="btn" type="button" data-rc="gph" data-id="'+E(older?older.id:'')+'"'+(older?'':' disabled')+'>'+I('chev',16,2.2)+' الأقدم</button><button class="btn" type="button" data-rc="gph" data-id="'+E(newer?newer.id:'')+'"'+(newer?'':' disabled')+'>الأحدث '+I('back',16,2.2)+'</button></div>'+
+  '<div class="rc-tiles" style="margin-top:10px">'+tiles.map(t=>'<div><span>'+E(t[0])+'</span><b>'+E(t[1])+'</b></div>').join('')+'</div>'+
+  '<div class="sheet-actions"><button class="btn" type="button" data-rc="gdetail" data-id="'+E(e.id)+'">فتح التسجيل</button></div></div></div>';
+}
+function openGalPhoto(id){const h=galPhotoHTML(id);if(!h)return;G.id=id;R.reg[id]=galPool().find(e=>e.id===id);openSheet(h);loadPhotos($('sheetRoot'));}
+function openGallery(){if(S.tab!=='gallery'){galLoad(true);setTab('gallery');}else render(true);}
 
 /* ---------- «سجّل»: كل التسجيلات ---------- */
 function listDays(){const d=[S.date];for(let i=1;i<=R.more;i++)d.push(addDays(S.date,-i));return d;}
@@ -201,9 +280,10 @@ function typeLog(){
  const type=R.type,sec=TYPES_G[type]?S.sec:S.sec,T=typeDef(type,sec);
  if(!T){S.tab='add';return view();}
  const [ic,tone]=style(type),to=S.date,from=addDays(to,-6),D=typeData(type,sec,from,to),key=KEY[type];
- const x=TASKS[sec].find(t=>t[0]===type),need=x?needOf(sec,x):0,times=schedOf(sec,type);
+ const x=TASKS[sec].find(t=>t[0]===type),need=x?needOf(sec,x):0,times=activeTimes(sec,type);
  const sub=(TYPES_G[type]?'المعدات':SECS[sec].name)+(need?' · '+(type==='irr'?Board.pl(need,'ريّة واحدة','ريّتان','ريّات','ريّة'):Board.pl(need,'مرة واحدة','مرتان','مرات','مرة'))+' يومياً'+(times.length?' · '+times.map(fmtTime).join('، '):''):T.desc?' · '+T.desc:'');
  let h='<header class="rc-th"><span class="bd-hic '+tone+' xl">'+I(ic,26)+'</span><div><h1>'+E(T.label)+'</h1><p>'+E(sub)+'</p></div></header>';
+ if(type==='photo')h+='<a href="#" class="rc-big ghost" data-rc="gallery">'+I('image',18)+'معرض صور النمو</a>';
  const rows=D.rows?D.rows.slice().sort((a,b)=>byT(b,a)):null,today=rows?rows.filter(e=>e.date===S.date):[];
  if(rows){
   const tiles=[];
@@ -236,7 +316,7 @@ function watch(id){
 function leave(tab){if(tab!=='recDetail'&&R.sub){R.sub();R.sub=null;R.subId=null;}}
 function readingsHTML(e,T,sec){
  const v=e.v||{};let rows='',grids='';
- T.fields.forEach(fd=>{
+ (T.fields||[]).forEach(fd=>{
   if(fd.show&&!fd.show(v))return;
   if(fd.t==='grid'&&fd.c){
    const D=dimOf(fd),dec=fd.c==='lux'?0:1,keys=gridKeysD(fd.k,D),has=keys.some(k=>num(v[k])!=null),old=(NK[fd.k]||[]).some(k=>num(v[k])!=null);
@@ -257,7 +337,7 @@ function readingsHTML(e,T,sec){
 }
 function detailsHTML(e,T,sec){
  const v=e.v||{},skip=['time','memo','text','action','catX'],tiles=[];
- T.fields.forEach(fd=>{
+ (T.fields||[]).forEach(fd=>{
   if(skip.includes(fd.k)||fd.t==='grid'||fd.t==='photo'||(fd.c&&fd.t==='n'))return;
   if(fd.show&&!fd.show(v))return;
   let val=v[fd.k];if(val==null||val==='')return;
@@ -389,11 +469,17 @@ document.addEventListener('click',ev=>{
   case 'detail':go(()=>openDetail(b.dataset.id));break;
   case 'list':go(()=>openList(b.dataset.f));break;
   case 'approveRest':approveRest(b);break;
+  case 'gallery':go(openGallery);break;
+  case 'gf':G[b.dataset.k==='batch'?'batch':'side']=b.dataset.v||'all';render(true);break;
+  case 'gsort':G.asc=!G.asc;render(true);break;
+  case 'greload':galLoad(true);render(true);break;
+  case 'gph':if(b.dataset.id)openGalPhoto(b.dataset.id);break;
+  case 'gdetail':go(()=>openDetail(b.dataset.id));break;
  }
 });
 document.addEventListener('input',ev=>{
  if(ev.target&&ev.target.id==='rcSearch'){R.q=ev.target.value;const l=$('rcList');if(l){l.innerHTML=listBody();}}
 });
 document.addEventListener('keydown',ev=>{if(ev.target&&ev.target.id==='rcSearch'&&ev.key==='Enter'){ev.preventDefault();ev.target.blur();}});
-return {view,typeLog,detail,review,formHead,start,stop,leave,openList,openType,openDetail,find:findAny,flags:()=>R.flags,vals,outOfRange,_test:{R,listBody,typeData,lastOfType,series}};
+return {gallery,galleryAfter:()=>{},openGallery,style,view,typeLog,detail,review,formHead,start,stop,leave,openList,openType,openDetail,find:findAny,flags:()=>R.flags,vals,outOfRange,_test:{R,listBody,typeData,lastOfType,series}};
 })();

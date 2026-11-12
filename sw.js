@@ -1,8 +1,8 @@
 /* GREEN SIDE service worker: يجعل التطبيق يفتح بدون إنترنت.
    ملفات التطبيق: الشبكة أولاً (لتصل التحديثات فوراً) ثم النسخة المحفوظة.
    المكتبات والخطوط: النسخة المحفوظة أولاً. بيانات Firestore لا تمر من هنا. */
-var CACHE = "greenside-v3-401";
-var SHELL = ["./", "index.html", "styles.css?v=3.4.1", "sensors.js?v=3.4.1", "workspace.js?v=3.4.1", "shift.js?v=3.4.1", "board.js?v=3.4.1", "record.js?v=3.4.1", "team.js?v=3.4.1", "app.js?v=3.4.1", "farm.js?v=3.4.1", "cycle.js?v=3.4.1", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
+var CACHE = "greenside-v3-700";
+var SHELL = ["./", "index.html", "styles.css?v=3.7.0", "sensors.js?v=3.7.0", "workspace.js?v=3.7.0", "shift.js?v=3.7.0", "board.js?v=3.7.0", "record.js?v=3.7.0", "team.js?v=3.7.0", "app.js?v=3.7.0", "farm.js?v=3.7.0", "cycle.js?v=3.7.0", "config.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", function (e) {
   e.waitUntil(caches.open(CACHE).then(function (c) { return c.addAll(SHELL); }).then(function () { return self.skipWaiting(); }));
 });

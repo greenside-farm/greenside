@@ -1,9 +1,9 @@
-/* GREEN SIDE 3.4.1 — متابعة المشتل والأبراج في البيت المحمي
+/* GREEN SIDE 3.7.0 — متابعة المشتل والأبراج في البيت المحمي
    البيانات في Firebase Firestore، والدخول عبر Firebase Authentication.
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "3.4.1";
+var APP_VERSION = "3.7.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -101,7 +101,7 @@ var ECPH_FIELDS = [
 ];
 var NOTE_CATS = ["تعب / ذبول", "إصابة حشرية", "مرض فطري أو بكتيري", "اصفرار / نقص عناصر", "حروق أو إجهاد حراري", "رش / علاج", "صيانة / عطل", "أخرى"];
 var NOTE_NONE = "لا يوجد ملاحظات", NOTE_OTHER = "نوع آخر";
-function noteCats() { var c = (S.settings.noteCats || []).filter(function (x) { return x && NOTE_CATS.indexOf(x) < 0; }); return [NOTE_NONE].concat(NOTE_CATS.slice(0, -1), c, [NOTE_OTHER]); }
+function noteCats() { var c = (Array.isArray(S.settings.noteCats) ? S.settings.noteCats : []).filter(function (x) { return x && NOTE_CATS.indexOf(x) < 0; }); return [NOTE_NONE].concat(NOTE_CATS.slice(0, -1), c, [NOTE_OTHER]); }
 function noteHas(v) { return v.cat !== NOTE_NONE; }
 function noteOther(v) { return v.cat === NOTE_OTHER; }
 var NSIDE_LOC = ["كل المشتل"].concat(SIDES);
@@ -177,7 +177,7 @@ var TYPES_T = {
     { k: "wt", l: "حرارة الماء", t: "n", u: "°C", req: 1, c: "wt", grp: "1. قبل التعويض" },
     { k: "level0", l: "مستوى الماء قبل التعويض (اختياري)", t: "n", u: lvlUnit },
     { k: "ec0", l: "الأملاح قبل التعويض", t: "n", u: "µS/cm", req: 1, c: "ec", comp: "ec" },
-    { k: "ph0", l: "pH قبل التعويض", t: "n", u: "pH", comp: "ph" },
+    { k: "ph0", l: "pH قبل التعويض", t: "n", u: "pH", c: "ph", comp: "ph" },
     { k: "mode", l: "نوع التعويض", t: "s", o: REFILL_MODES, req: 1, w: "full", grp: "2. التعويض" },
     { k: "drained", l: "كمية مصرّفة", t: "n", u: "لتر" },
     { k: "waterAdd", l: "الماء المضاف", t: "n", u: "لتر", req: 1 },
@@ -291,7 +291,8 @@ TYPES_T.harvest.fields = [
   { k: "time", l: "وقت الحصاد", t: "t", req: 1, w: "full" },
   { k: "final", l: "هذا آخر حصاد للدفعة", t: "chk", hint: "تُقفل الدفعة وتُحسب نتيجتها النهائية", w: "full" },
   MEMO];
-var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "count", "note", "spray", "photo"], t: ["waterOnly", "refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
+/* 3.5.0: أُزيلت بطاقة «ماء فقط» من «سجّل»؛ النوع باقٍ لعرض التسجيلات القديمة */
+var ORDER = { n: ["mix", "temp", "irr", "light", "sow", "count", "note", "spray", "photo"], t: ["refill", "ecph", "temp", "light", "pump", "photo", "note", "spray", "xplant", "harvest", "mix"] };
 var TASKS = { n: [["mix", "nMix"], ["temp", "nTemp"], ["irr", "nIrr"], ["light", "nLight"], ["note", "nNote"], ["photo", "nPhoto"]],
   t: [["refill", "nRefill"], ["ecph", "nEcph"], ["temp", "nTemp"], ["light", "nLight"], ["pump", "nPump"], ["photo", "nPhoto"]] };
 var SHARED = ["mix", "ecph", "note", "photo"];
@@ -301,7 +302,7 @@ var FERTS = ["ULTRASOL CALCIUM", "AGRIFER EDDHA", "ULTRASOLINE KNO3", "MGSO4", "
 var S = {
   auth: null, db: null, user: null, uid: null, me: null, ownerUid: null, role: null,
   settings: clone(DEF), users: {}, date: todayStr(), entries: [], signoff: {}, openNotes: [], recipes: [], hist: [], meta: [],
-  tab: "today", sec: lsGet("gs_sec") === "t" ? "t" : "n", repDays: 7, rep: null, photos: {}, dirty: false, installEvt: null
+  tab: "today", sec: lsGet("gs_sec") === "t" ? "t" : "n", photos: {}, dirty: false, installEvt: null
 };
 var unsubDay = [], unsubAll = [], unsubMe = [], memberSubs = false;
 
@@ -395,15 +396,27 @@ function secOf(e) { return e.sec || "n"; }
 function secTag(s) { return '<span class="sectag s-' + s + '"><i></i>' + (s === "g" ? "المعدات" : SECS[s].name) + "</span>"; }
 function toEmail(id) { id = id.trim().toLowerCase(); return id.indexOf("@") >= 0 ? id : id.replace(/\s+/g, "") + "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"); }
 function showLogin(id) { if (!id) return ""; var d = "@" + (window.GS_CONFIG.usernameDomain || "greenside.local"); return id.slice(-d.length) === d ? id.slice(0, -d.length) : id; }
+/* 3.5.0: خطأ يحمل رسالة عربية موجّهة للمستخدم؛ errMsg تعرض نصه كما هو بدل الرسالة العامة */
+function userError(message, extra) { return Object.assign(new Error(message), { userMsg: true }, extra || {}); }
 function errMsg(e) {
-  if(e?.code==="crop-balance")return e.message;
+  if (e && (e.userMsg || e.code === "crop-balance") && e.message) return e.message;
   var c = e && e.code || "";
-  return {
+  /* احتياط: خطأ بلا رمز ونصه عربي كُتب في التطبيق نفسه (أخطاء Firebase تحمل رمزاً دائماً) */
+  if (!c && e && typeof e.message === "string" && /[؀-ۿ]/.test(e.message)) return e.message;
+  var known = {
     "auth/invalid-credential": "اسم المستخدم أو كلمة المرور غير صحيحة.", "auth/wrong-password": "كلمة المرور غير صحيحة.", "auth/user-not-found": "لا يوجد حساب بهذا الاسم.",
     "auth/invalid-email": "اكتب اسم مستخدم أو بريداً صحيحاً.", "auth/too-many-requests": "محاولات كثيرة. انتظر قليلاً ثم حاول.", "auth/network-request-failed": "لا يوجد اتصال بالإنترنت.",
     "auth/email-already-in-use": "اسم المستخدم مستخدم من قبل.", "auth/weak-password": "كلمة المرور قصيرة. استخدم 6 أحرف أو أكثر.", "auth/requires-recent-login": "سجّل الخروج ثم الدخول من جديد، ثم أعد المحاولة.", "auth/email-already-exists": "هذا البريد مستخدم في حساب آخر.",
-    "permission-denied": "ليس لديك صلاحية لهذا الإجراء.", "unavailable": "لا يوجد اتصال بالخادم حالياً."
-  }[c] || "حدث خطأ. حاول مرة أخرى.";
+    "permission-denied": "ليس لديك صلاحية لهذا الإجراء.", "unavailable": "لا يوجد اتصال بالخادم حالياً.",
+    "not-found": "لم يعد هذا السجل موجوداً. ربما حُذف من جهاز آخر.", "resource-exhausted": "تجاوز التطبيق حد الاستخدام اليومي. حاول لاحقاً.",
+    "unauthenticated": "انتهت الجلسة. سجّل الدخول من جديد.", "failed-precondition": "تعذّر تنفيذ الطلب الآن. أعد المحاولة بعد قليل، وإن تكرر فأبلغ المالك.",
+    "aborted": "تعارض الحفظ مع تعديل آخر في اللحظة نفسها. أعد المحاولة.", "deadline-exceeded": "الاتصال بطيء ولم يكتمل الطلب. أعد المحاولة.",
+    "invalid-argument": "البيانات أكبر من المسموح أو غير صالحة (مثل صورة كبيرة).", "already-exists": "هذا السجل محفوظ من قبل.",
+    "auth/user-disabled": "هذا الحساب موقوف. راجع المالك.", "auth/invalid-login-credentials": "اسم المستخدم أو كلمة المرور غير صحيحة.", "cancelled": "أُلغي الطلب قبل اكتماله. أعد المحاولة.", "internal": "خطأ مؤقت في الخادم. أعد المحاولة بعد قليل.", "auth/missing-password": "اكتب كلمة المرور.", "auth/operation-not-allowed": "طريقة الدخول هذه غير مفعّلة. راجع المالك."
+  };
+  if (known[c]) return known[c];
+  try { console.warn("خطأ غير متوقع", e); } catch (x) {}
+  return "حدث خطأ. حاول مرة أخرى.";
 }
 
 /* ================= settings ================= */
@@ -422,7 +435,12 @@ function isDayAt(ts) {
   var r = typeof ts === "number" ? new Date(ts + 3 * 3600e3) : null, h = r ? r.getUTCHours() + r.getUTCMinutes() / 60 : tMin(ts) / 60, d = dayHours();
   return h >= d[0] && h < d[1];
 }
+/* 3.7.0: حد الضوء اليدوي يُطبَّق بين 9 ص و3 م فقط؛ قراءة يدوية خارجها تُعرض بلا حكم (ضوء أول النهار وآخره منخفض طبيعياً) */
+var LUX_WIN = [9 * 60, 15 * 60];
+function luxJudged(ts) { if (typeof ts !== "string" || !okHM(ts)) return true; var m = tMin(ts); return m >= LUX_WIN[0] && m <= LUX_WIN[1]; }
+function judged(c, ts) { return c !== "lux" || luxJudged(ts); }
 function lim(c, sec, ts) {
+  if (c === "lux" && !luxJudged(ts)) return [null, null];
   if (c === "air" || c === "rh") { var p = c + (isDayAt(ts) ? "Day" : "Night"); return [num(cfg(p + "Min", sec)), num(cfg(p + "Max", sec))]; }
   return CHECK[c] ? [num(cfg(CHECK[c][0], sec)), num(cfg(CHECK[c][1], sec))] : [null, null];
 }
@@ -462,8 +480,37 @@ function secEntries(list, sec) { return list.filter(function (e) { return secOf(
 function viewEntries() { return S.entries.filter(function (e) { return e.type !== "selftest" && (secOf(e) === S.sec || e.sec === "g"); }); }
 /* task times: settings.sched[sec][type] = ["08:00", …]. A task with times needs one record per time; without times it uses the daily count. */
 function schedOf(sec, type) { var s = S.settings.sched, x = s && s[sec] && s[sec][type]; if (!Array.isArray(x)) x = (DEF.sched[sec] && DEF.sched[sec][type]) || []; return x.slice().sort(); }
-function needOf(sec, x) { var t = schedOf(sec, x[0]); return t.length ? t.length : (num(cfg(x[1], sec)) || 0); }
-function doneOf(E, type) { var seen = {}, n = 0; E.forEach(function (e) { if (e.type !== type) return; var g = e.grp || e.id; if (!seen[g]) { seen[g] = 1; n++; } }); return n; }
+/* 3.6.0: التحكم في المهام. settings.taskOff[sec][type] = {from} يوقف المهمة كلياً من ذلك اليوم،
+   و settings.slotOff[sec][type]["HH:MM"] = {from, until} يوقف موعداً واحداً مؤقتاً (until فارغ = حتى يُفعَّل). الأيام قبل from لا تتأثر */
+function objAt(o) { for (var i = 1; i < arguments.length; i++) { o = o && typeof o === "object" && !Array.isArray(o) ? o[arguments[i]] : null; } return o && typeof o === "object" && !Array.isArray(o) ? o : null; }
+function pauseOn(o, day) { if (!o) return false; if (o === true) return true; var fr = okDay(o.from) ? o.from : "", un = okDay(o.until) ? o.until : ""; if (o.until && !un) return false; day = day || S.date; return (!fr || fr <= day) && (!un || day < un); }
+function taskOff(sec, type, day) { return pauseOn(objAt(S.settings.taskOff, sec, type) || (objAt(S.settings.taskOff, sec) && objAt(S.settings.taskOff, sec)[type] === true ? true : null), day); }
+function taskOn(sec, type, day) { return !taskOff(sec, type, day); }
+function slotPause(sec, type, t) { return objAt(S.settings.slotOff, sec, type, t); }
+function slotPaused(sec, type, t, day) { return pauseOn(slotPause(sec, type, t), day); }
+function activeTimes(sec, type, day) { if (taskOff(sec, type, day)) return []; return schedOf(sec, type).filter(function (t) { return !slotPaused(sec, type, t, day); }); }
+/* 3.7.0: الجدول الساري في يوم سابق. settings.schedHist[sec][type] = [{until, times, n}]: الجدول الذي كان سارياً قبل until.
+   يُحفظ عند كل تغيير في المواعيد أو العدد؛ الأيام قبل أول تغيير محفوظ تُحسب بالجدول الحالي (hist:false) */
+function schedAt(sec, type, day) {
+  var h = objAt(S.settings.schedHist, sec), list = h && Array.isArray(h[type]) ? h[type] : [], snap = schedPick(list, day), x = TASKS[sec].filter(function (y) { return y[0] === type; })[0];
+  var all = snap ? (Array.isArray(snap.times) ? snap.times.filter(okHM).sort() : []) : schedOf(sec, type), n = snap ? (num(snap.n) || 0) : (x ? num(cfg(x[1], sec)) || 0 : 0);
+  var known = !!snap || list.some(function (q) { return q && okDay(q.until) && q.until <= day; });
+  if (taskOff(sec, type, day)) return { times: [], n: 0, off: true, known: known };
+  var times = all.filter(function (t) { return !slotPaused(sec, type, t, day); });
+  return { times: times, n: all.length ? times.length : n, known: known };
+}
+function schedPick(list, day) { var snap = null; (list || []).forEach(function (q) { if (q && okDay(q.until) && q.until > day && (!snap || q.until < snap.until)) snap = q; }); return snap; }
+function schedSnap(sec, type) {
+  var t = todayStr(), h = clone(S.settings.schedHist && typeof S.settings.schedHist === "object" ? S.settings.schedHist : {}), x = TASKS[sec].filter(function (y) { return y[0] === type; })[0];
+  if (!h[sec] || typeof h[sec] !== "object" || Array.isArray(h[sec])) h[sec] = {};
+  var list = (Array.isArray(h[sec][type]) ? h[sec][type] : []).filter(function (q) { return q && okDay(q.until) && daysBetween(q.until, t) <= 400; });
+  if (!list.some(function (q) { return q.until === t; })) list.push({ until: t, times: schedOf(sec, type), n: x ? num(cfg(x[1], sec)) || 0 : 0 });
+  h[sec][type] = list; return { schedHist: h };
+}
+function needOf(sec, x) { if (taskOff(sec, x[0])) return 0; var t = schedOf(sec, x[0]); return t.length ? activeTimes(sec, x[0]).length : (num(cfg(x[1], sec)) || 0); }
+/* 3.7.0: «تجهيز خزان جديد» يُحتسب عن جولة «تعويض الخزان» في يومه (فيه قياس بعد الخلط). «ماء فقط» لا يُحتسب */
+function taskTypes(type) { return type === "refill" ? ["refill", "mix"] : [type]; }
+function doneOf(E, type) { var seen = {}, n = 0, ks = taskTypes(type); E.forEach(function (e) { if (ks.indexOf(e.type) < 0) return; var g = e.grp || e.id; if (!seen[g]) { seen[g] = 1; n++; } }); return n; }
 function tasksFor(sec, entries) {
   var E = secEntries(entries, sec), need = 0, done = 0;
   TASKS[sec].forEach(function (x) { var n = needOf(sec, x); need += n; done += Math.min(n, doneOf(E, x[0])); });
@@ -473,28 +520,59 @@ function nowMin() { return tMin(nowTime()); }
 function tMin(t) { var p = String(t).split(":"); return (+p[0]) * 60 + (+p[1] || 0); }
 
 /* ================= navigation (Android back button) ================= */
-var NAV = { kp: false, sheet: false, ignore: 0, tabs: [], lastBack: 0, armed: false, exitTimer: null };
+var NAV = { kp: false, sheet: false, ignore: 0, tabs: [], lastBack: 0, backs: 0, armed: false, hintTimer: null, rearmTimer: null, disarmed: false, restore: null };
 function navInit() {
   if (NAV.armed) return; NAV.armed = true;
+  try { if ("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch (e) {}
   try { history.replaceState({ gs: "base" }, ""); history.pushState({ gs: "app" }, ""); } catch (e) {}
   window.addEventListener("popstate", onPop);
+  /* أي لمس أو تمرير من المستخدم يلغي استعادة موضع التمرير المعلّقة، ويعيد تجهيز زر الرجوع إن كان في خطوة الخروج الأخيرة */
+  ["touchstart", "wheel", "keydown", "pointerdown"].forEach(function (k) { window.addEventListener(k, function () { NAV.restore = null; if (NAV.disarmed) rearm(); }, { passive: true, capture: true }); });
 }
+/* 3.5.0: الخروج بثلاث ضغطات رجوع متتالية من الصفحة الأولى (بدل شريط الخروج).
+   الضغطة الأولى والثانية تُظهران تلميحاً صغيراً. بعد الثانية لا نضيف خطوة في السجل، فتصل الثالثة إلى النظام فيُغلق التطبيق.
+   إن لم تأتِ الثالثة خلال المهلة تعود الخطوة ويبدأ العدّ من جديد. */
+var BACK_WINDOW = 2500;
 function onPop() {
   if (NAV.ignore > 0) { NAV.ignore--; return; }
   if (NAV.kp) { var ai = document.activeElement; kpHide(true); if (ai && ai.blur) ai.blur(); return; }
   if (NAV.sheet) { closeSheet(true); return; }
-  if (NAV.tabs.length) { setTab(NAV.tabs.pop(), true); return; }
+  if (NAV.tabs.length) { var p = NAV.tabs.pop(); NAV.backs = 0; hideBackHint(); setTab(p.t, true, p.y); return; }
   var now = Date.now();
-  if (now - NAV.lastBack < 2500) { hideExit(); history.back(); return; }
-  NAV.lastBack = now; showExit();
-  try { history.pushState({ gs: "app" }, ""); } catch (e) {}
+  NAV.backs = now - NAV.lastBack < BACK_WINDOW ? NAV.backs + 1 : 1; NAV.lastBack = now;
+  if (NAV.backs >= 3) { NAV.backs = 0; hideBackHint(); try { history.back(); } catch (e) {} return; }
+  showBackHint(NAV.backs === 1 ? "اضغط «رجوع» مرتين أخريين للخروج" : "اضغط «رجوع» مرة أخرى للخروج");
+  clearTimeout(NAV.rearmTimer);
+  if (NAV.backs === 1) { try { history.pushState({ gs: "app" }, ""); } catch (e) {} }
+  else { NAV.disarmed = true; NAV.rearmTimer = setTimeout(rearm, BACK_WINDOW); }
 }
-function showExit() { var b = $("exitbar"); b.hidden = false; clearTimeout(NAV.exitTimer); NAV.exitTimer = setTimeout(hideExit, 2500); }
-function hideExit() { $("exitbar").hidden = true; }
-function setTab(t, fromPop) {
-  if(S.tab==='rep'&&t!=='rep')GSUI.endReport();
-  if (!fromPop && t !== S.tab) { NAV.tabs.push(S.tab); try { history.pushState({ gs: "tab" }, ""); } catch (e) {} }
-  S.tab = t; if (t === "repLegacy") loadReport(); render(true); window.scrollTo(0, 0);
+function rearm() {
+  clearTimeout(NAV.rearmTimer); NAV.disarmed = false; NAV.backs = 0; hideBackHint();
+  try { if (history.state && history.state.gs === "base") history.pushState({ gs: "app" }, ""); } catch (e) {}
+}
+function showBackHint(m) { var b = $("backhint"); if (!b) return; b.textContent = m; b.hidden = false; clearTimeout(NAV.hintTimer); NAV.hintTimer = setTimeout(hideBackHint, BACK_WINDOW); }
+function hideBackHint() { var b = $("backhint"); if (b) b.hidden = true; }
+/* 3.5.0: الرجوع يعيد موضع التمرير في الصفحة السابقة. المحتوى قد يكتمل بعد الرسم الأول (تحميل البيانات)،
+   فتبقى الاستعادة معلّقة لثوانٍ قليلة وتُطبَّق بعد كل رسم حتى يصبح طول الصفحة كافياً، ما لم يلمس المستخدم الشاشة */
+function applyRestore() {
+  var r = NAV.restore; if (!r) return;
+  if (Date.now() > r.until || S.tab !== r.tab) { NAV.restore = null; return; }
+  var max = document.documentElement.scrollHeight - window.innerHeight;
+  window.scrollTo(0, Math.min(r.y, Math.max(0, max)));
+  if (max >= r.y) NAV.restore = null;
+}
+function restoreScroll(t, y) {
+  NAV.restore = y > 0 ? { tab: t, y: y, until: Date.now() + 3000 } : null;
+  if (!NAV.restore) { window.scrollTo(0, 0); return; }
+  applyRestore(); requestAnimationFrame(applyRestore); setTimeout(applyRestore, 120); setTimeout(applyRestore, 400);
+}
+function setTab(t, fromPop, y) {
+  if (t === "repLegacy") t = "rep"; /* 3.7.0: صفحة تقارير واحدة */
+  if (NAV.disarmed) rearm();
+  if (!fromPop && t !== S.tab) { NAV.tabs.push({ t: S.tab, y: window.scrollY || 0 }); try { history.pushState({ gs: "tab" }, ""); } catch (e) {} }
+  NAV.restore = null;
+  S.tab = t; render(true);
+  if (fromPop) restoreScroll(t, y || 0); else window.scrollTo(0, 0);
 }
 function openSheet(html) {
   if (NAV.kp) kpHide();
@@ -733,7 +811,7 @@ function signoffOf(sec) { return S.signoff[sec] || (sec === "n" ? S.signoff.n0 :
 /* ================= top bar & tabs ================= */
 function bindTop() {
   var dp = $("datePick"); dp.value = S.date;
-  function go(d) { if (!d || d === S.date) return; S.date = d; dp.value = d; subDay(); if (S.tab === "repLegacy") loadReport(); render(true); window.scrollTo(0, 0); }
+  function go(d) { if (!d || d === S.date) return; S.date = d; dp.value = d; subDay(); render(true); window.scrollTo(0, 0); }
   dp.addEventListener("change", function () { go(dp.value); });
   /* على الحاسوب: فتح التقويم بالضغط على أي مكان في شريحة التاريخ */
   dp.addEventListener("click", function () { try { if (dp.showPicker && window.matchMedia && matchMedia("(pointer:fine)").matches) dp.showPicker(); } catch (e) {} });
@@ -750,13 +828,13 @@ function dayTick() {
   if (NAV.sheet) return;                       /* نافذة مفتوحة: ننتظر إغلاقها حتى لا يتغيّر تاريخ تسجيل قيد الكتابة */
   var was = LIVE_DAY; LIVE_DAY = t;
   if (!S.role) return;
-  if (S.date === was) { S.date = t; var dp = $("datePick"); if (dp) dp.value = t; subDay(); if (S.tab === "repLegacy") loadReport(); render(true); toast("بدأ يوم جديد · " + fmtDate(t, { weekday: "long", day: "numeric", month: "long" })); }
+  if (S.date === was) { S.date = t; var dp = $("datePick"); if (dp) dp.value = t; subDay(); render(true); toast("بدأ يوم جديد · " + fmtDate(t, { weekday: "long", day: "numeric", month: "long" })); }
   else render(true);
 }
 function switchSec(s) {
   if (s === S.sec) return; S.sec = s; lsSet("gs_sec", s); applySec();
   /* التقرير يُحمَّل لكل الأقسام معاً، فتبديل القسم لا يحتاج قراءة جديدة من الخادم */
-  if (S.tab === "rep" && !(S.rep && S.rep.all)) loadReport(); render(true); window.scrollTo(0, 0);
+  render(true); window.scrollTo(0, 0);
 }
 function renderTop() {
   var t = S.date === todayStr(), dp = $("datePick");
@@ -776,7 +854,7 @@ function renderTop() {
   });
 }
 /* الشريط السفلي: اللوحة · الفريق · سجّل (الزر الأوسط) · المزرعة · التقارير (للعامل: حسابي) */
-var NAV_OF = { chat: "team", recType: "add", recDetail: "add", review: "today", sens: "farm", ops: "farm", sup: "farm", legacy: "farm", equipment: "farm", deliveries: "farm", crop: "farm", finance: "farm", changes: "farm", jobs: "farm", repLegacy: "rep" };
+var NAV_OF = { muted: "farm", gallery: "farm", chat: "team", recType: "add", recDetail: "add", review: "today", sens: "farm", ops: "farm", sup: "farm", legacy: "farm", equipment: "farm", deliveries: "farm", crop: "farm", finance: "farm", changes: "farm", jobs: "farm", repLegacy: "rep" };
 var MAIN_TABS = ["today", "team", "add", "farm", "rep"];
 function renderTabs() {
   var cur = NAV_OF[S.tab] || S.tab, un = window.Team ? Team.unread() : window.Farm ? Farm.unread() : 0, I = Board.icon;
@@ -818,9 +896,10 @@ function renderNow(force) {
   else if (S.tab === "recDetail") { html = Rec.detail(); }
   else if (S.tab === "review" && isSup()) html = Rec.review();
   else if(S.tab === "rep" && isSup()) html=GSUI.reports();
-  else if(S.tab === "repLegacy" && isSup()){html='<p class="banner warn">قسم الحساسات يستبعد فترات الصيانة المسجلة. التسجيلات اليدوية تبقى كما أدخلها المستخدم؛ راجع ملاحظاتها وسياقها.</p>'+repView();after=bindCharts;}
   else if (S.tab === "sup" && isSup()) html = Farm.settings()+supView();
   else if (S.tab === "farm") html = Board.hub();
+  else if (S.tab === "muted" && isSup()) html = Board.mutedPage();
+  else if (S.tab === "gallery" && window.Rec) { html = Rec.gallery(); after = Rec.galleryAfter; }
   else if (S.tab === "team") html = window.Team ? Team.view() : teamView();
   else if (S.tab === "chat" && window.Team) { html = Team.roomView(); after = Team.after; }
   else if(Farm.pages.includes(S.tab))html=Farm.view(S.tab);
@@ -834,9 +913,9 @@ function renderNow(force) {
   /* الصفحات الفرعية (المعدات، المهام، الفريق، التقارير التفصيلية…) ليس لها زر في الشريط السفلي: زر رجوع ظاهر أعلاها */
   if (MAIN_TABS.indexOf(S.tab) < 0 && S.tab !== "chat" && NAV.tabs.length) html = '<div class="backbar"><button class="backbtn" type="button" data-act="goBack">' + Board.icon("back", 18, 2.2) + "<span>رجوع</span></button></div>" + html;
   var run = function () { if (!after) return; try { after(); } catch (err) { logCrash(err, "تجهيز صفحة " + S.tab); } };
-  if (!force && html === v.__h && v.firstElementChild) { run(); return; }
+  if (!force && html === v.__h && v.firstElementChild) { run(); applyRestore(); return; }
   v.innerHTML = html; v.__h = html; run();
-  loadPhotos(v);
+  loadPhotos(v); applyRestore();
 }
 /* ===== شبكة أمان العرض: خطأ في صفحة لا يترك الشاشة بيضاء. يُعرض ما حدث مع طريق للرجوع، ويُحفظ آخر 20 خطأ على الجوال (تظهر في «فحص النظام») ===== */
 var CRASH = [];
@@ -887,139 +966,146 @@ function statTile(lab, val, unit, c, sub, dec, ts) {
   var st = chk(c, val, null, ts), bad = isBad(st);
   return '<div class="stat sm' + (bad ? " s-bad" : "") + '"><span class="lab">' + lab + (sub ? ' <span class="t">' + sub + "</span>" : "") + '</span><span class="val num' + (bad ? " tx-bad" : "") + '">' + (val == null ? "—" : f(val, dec != null ? dec : (c === "ph" ? 2 : 1))) + " <small>" + unit + "</small>" + (bad ? ' <span class="st">' + (st === "lo" ? "منخفض" : "مرتفع") + "</span>" : "") + "</span></div>";
 }
-function badReadings(E) {
-  var out = [];
-  E.forEach(function (e) {
-    var sec = secOf(e); if (sec === "g") return; var T = typeDef(e.type, sec); if (!T) return; var v = e.v || {};
-    T.fields.forEach(function (fd) {
-      if (!fd.c) return;
-      if (fd.t === "grid") {
-        var D = dimOf(fd);
-        D.rows.forEach(function (r, ri) { D.cols.forEach(function (c, ci) { var n = num(v[gkey(fd.k, r, c)]), st = chk(fd.c, n, sec, e.time); if (isBad(st)) out.push(fmtTime(e.time) + " · " + fd.l + " " + D.rowL[ri] + "/" + D.colL[ci] + ": " + f(n, 1) + " " + fd.u + " (" + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec, e.time) + ")"); }); });
-        return;
-      }
-      var n = compVal(fd, v[fd.k], v), st = chk(fd.c, n, sec, e.time);
-      if (isBad(st)) out.push(fmtTime(e.time) + " · " + T.short + ": " + (fd.pg ? MNAME[fd.pg] + " " : "") + (fd.cl || fd.l) + " " + f(n, fd.c === "ph" ? 2 : 0) + " " + unitOf(fd) + (fd.comp && !cfg("atc") ? (fd.comp === "ph" ? " (مصحح)" : "") : "") + " — " + (st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(fd.c, sec, e.time));
-    });
+/* 3.7.0: كل قيمة لها حد في تسجيل، خانة بخانة في الشبكات، ومنها «قبل التعويض». يُحكم بحد وقت التسجيل (نهار/ليل) كما كُتب "HH:MM".
+   st(c, v, sec, time) اختياري لاختبارات الحسابات. j = خاضعة لحد (الضوء خارج 9 ص – 3 م بلا حكم) */
+function limitCells(e, st) {
+  var sec = secOf(e), out = []; if (sec === "g") return out; var T = typeDef(e.type, sec); if (!T || !Array.isArray(T.fields)) return out; var v = e.v || {};
+  st = st || chk;
+  T.fields.forEach(function (fd) {
+    if (!fd.c) return;
+    if (fd.t === "grid") {
+      var D = dimOf(fd);
+      D.rows.forEach(function (r, ri) { D.cols.forEach(function (c, ci) { var n = num(v[gkey(fd.k, r, c)]); if (n == null) return; var s2 = st(fd.c, n, sec, e.time); out.push({ e: e, c: fd.c, k: fd.k, l: fd.l, cell: D.rowL[ri] + "/" + D.colL[ci], ri: ri, ci: ci, D: D, v: n, st: s2, j: judged(fd.c, e.time) && s2 != null, u: unitOf(fd) }); }); });
+      return;
+    }
+    var n = compVal(fd, v[fd.k], v); if (n == null) return; var s3 = st(fd.c, n, sec, e.time);
+    out.push({ e: e, c: fd.c, k: fd.k, l: (fd.pg ? MNAME[fd.pg] + " " : "") + (fd.cl || fd.l), v: n, st: s3, j: judged(fd.c, e.time) && s3 != null, u: unitOf(fd) });
   });
   return out;
 }
+function cellText(x) { var sec = secOf(x.e), T = typeDef(x.e.type, sec); return (x.cell ? x.l + " " + x.cell : (T ? T.short : "") + ": " + x.l) + " " + f(x.v, x.c === "ph" ? 2 : x.cell ? 1 : 0) + " " + x.u + " (" + (x.st === "lo" ? "أقل" : "أعلى") + " من " + rangeTxt(x.c, sec, x.e.time) + ")"; }
+function badCells(E) { var out = []; E.forEach(function (e) { limitCells(e).forEach(function (x) { if (isBad(x.st)) out.push(x); }); }); return out; }
+function badReadings(E) { return badCells(E).map(function (x) { return fmtTime(x.e.time) + " · " + cellText(x); }); }
+/* ===== 3.7.0 · تفاصيل اليوم: ملخص منظم أعلى الصفحة، ثم بطاقات مرتبة ===== */
+function dayCard(ic, tone, title, body, link, id) { return '<section class="bd-card"' + (id ? ' id="' + id + '"' : "") + '><div class="bd-h"><span class="bd-hic ' + (tone || "") + '">' + Board.icon(ic, 18) + '</span><h2 class="bd-title">' + title + "</h2>" + (link || "") + "</div>" + body + "</section>"; }
+function dayLink(t, attrs) { return '<a href="#" class="bd-link" ' + attrs + ">" + esc(t) + Board.icon("chev", 14, 2.2) + "</a>"; }
 function legacyTodayView() {
-  var sec = S.sec, E = viewEntries(), SE = secEntries(S.entries, sec), isToday = S.date === todayStr(), past = S.date < todayStr(), h = "";
-  var mt = tasksFor(sec, S.entries), mp = mt.need ? Math.min(100, mt.done / mt.need * 100) : 100, rec = canAdd() && (isToday || isSup());
-  var so = signoffOf(sec), pend = SE.filter(function (e) { return !e.review; }).length, flags = SE.filter(function (e) { return e.review && e.review.s === "flag"; }).length;
-  var on = S.openNotes.filter(function (e) { return secOf(e) === sec; }), bad = badReadings(SE);
-  var alerts = isToday ? equipAlerts().concat(sprayAlerts(sec)) : [];
-
-  /* Read-only dashboard: retains the selected day, role and all task workflows. */
-  h += '<section class="sec day-overview"><div class="sec-h"><div><span class="eyebrow">GREEN SIDE · ' + esc(SECS[sec].name) + '</span><h2>' + (isToday ? 'لوحة اليوم' : 'ملخص ' + esc(fmtShort(S.date))) + '</h2></div>' + (rec ? '<button class="btn pri" type="button" data-act="goTab" data-t="add">+ تسجيل</button>' : '') + '</div><div class="day-overview-grid">';
-  var overviewTiles = [
-    {label:'مهام متبقية',value:mt.need ? mt.left : '—',note:mt.need ? 'من أصل ' + mt.need : 'لا مهام محددة',target:'tasksSec',tone:mt.left ? 'warn' : 'neutral'},
-    {label:'ملاحظات مفتوحة',value:on.length,note:'تحتاج متابعة',target:'notesSec',tone:on.length ? 'warn' : 'neutral'},
-    {label:'قراءات يدوية خارج الحدود',value:bad.length,note:'في اليوم المحدد',target:'alertsSec',tone:bad.length ? 'bad' : 'neutral'}
-  ];
-  if (isSup()) overviewTiles.splice(1,0,{label:'بانتظار المراجعة',value:pend,note:so ? 'اليوم معتمد · راجع أي إضافات' : 'تسجيلات غير مراجعة',target:'logSec',tone:pend ? 'warn' : 'neutral'});
-  overviewTiles.forEach(function (x) {
-    var active = x.value !== '—' && x.value > 0;
-    h += '<button type="button" class="day-overview-tile ' + x.tone + '"' + (active ? ' data-act="jump" data-to="' + x.target + '"' : ' disabled') + '><span>' + x.label + '</span><b class="num">' + x.value + '</b><small>' + x.note + '</small></button>';
-  });
-  h += '</div>' + (!isToday ? '<p class="help muted">تعرض هذه الصفحة سجلات التاريخ المختار؛ القراءات المباشرة متاحة عند الرجوع إلى اليوم.</p>' : '') + '</section>';
-  if (isToday && window.SENS && SENS.dashboard) h += SENS.dashboard();
-
-  /* 1. مهام اليوم: التقدم وكل مهمة بزر تسجيل مباشر */
-  var nm = nowMin(), rows = "";
+  var sec = S.sec, I = Board.icon, E = viewEntries(), SE = secEntries(S.entries, sec), t0 = todayStr(), isToday = S.date === t0, rec = canAdd() && (isToday || isSup()), h = "";
+  var X = RPT._t.ctx(sec), C = RPT._t.compliance(SE, X, [S.date]), D = C.days[0] || { need: 0, done: 0, ok: 0, up: 0, cnt: [] };
+  var so = signoffOf(sec), pend = SE.filter(function (e) { return !e.review; }).length, on = S.openNotes.filter(function (e) { return secOf(e) === sec; });
+  var bad = badCells(SE), alerts = isToday ? equipAlerts().concat(sprayAlerts(sec)) : [], style = window.Rec && Rec.style ? Rec.style : function () { return ["list", "gray"]; };
+  /* الرأس والتنقل بين الأيام */
+  h += '<header class="bd-page"><h1>تفاصيل اليوم</h1><p>' + esc(SECS[sec].name) + " · كل ما سُجّل في يوم واحد</p></header>";
+  h += '<div class="rp-range"><button type="button" data-act="dayStep" data-d="-1" aria-label="اليوم السابق">' + I("back", 16, 2.4) + "</button><div><b>" + esc(fmtDate(S.date, { weekday: "long", day: "numeric", month: "long" })) + "</b><small>" + (isToday ? "اليوم · حتى " + fmtTime(nowTime()) : S.date === addDays(t0, -1) ? "أمس" : "قبل " + Board.dN(daysBetween(S.date, t0))) + '</small></div><button type="button" data-act="dayStep" data-d="1" aria-label="اليوم التالي"' + (isToday ? " disabled" : "") + ">" + I("chev", 16, 2.4) + "</button></div>";
+  /* الملخص */
+  var cntN = 0, cntD = 0; (D.cnt || []).forEach(function (x) { cntN += x.n; cntD += x.done; });
+  var sl = C.slots, nOk = sl.filter(function (x) { return x.state === "ok"; }).length, nLate = sl.filter(function (x) { return x.state === "late"; }).length, nMiss = sl.filter(function (x) { return x.state === "miss"; }).length, nUp = D.up + (cntN - cntD);
+  var total = D.need + D.up + cntN, done = D.done + cntD, pctD = total ? Math.round(done / total * 100) : null, w = function (n) { return total ? (n / total * 100).toFixed(1) : 0; };
+  h += '<section class="dy-sum"><div class="dy-sum-h"><div><small>' + (isToday ? "المهام حتى الآن" : "مهام اليوم") + "</small><h2>" + (total ? "أُنجزت " + done + " من " + total : "لا مهام محددة") + "</h2></div>" + (pctD == null ? "" : "<b>" + pctD + "<small>%</small></b>") + "</div>" +
+    (total ? '<div class="dy-bar"><i class="ok" style="width:' + w(nOk + cntD) + '%"></i><i class="late" style="width:' + w(nLate) + '%"></i><i class="miss" style="width:' + w(nMiss) + '%"></i></div>' +
+      '<div class="dy-leg"><span><i class="ok"></i>في موعدها <b>' + (nOk + cntD) + '</b></span><span><i class="late"></i>سُجّلت متأخرة <b>' + nLate + '</b></span><span><i class="miss"></i>' + (isToday ? "متأخرة" : "لم تُسجَّل") + " <b>" + nMiss + "</b></span>" + (nUp ? "<span><i></i>" + (isToday ? "قادمة" : "متبقية") + " <b>" + nUp + "</b></span>" : "") + "</div>" : "");
+  var tile = function (cls, lab, n, sub, to) { return '<button type="button" class="dy-tile ' + (n ? cls : "") + '"' + (n && to ? ' data-act="jump" data-to="' + to + '"' : " disabled") + "><span>" + lab + '</span><b class="num">' + n + "</b><small>" + sub + "</small></button>"; };
+  var badN = {}; bad.forEach(function (x) { badN[x.e.id] = 1; }); var nBadR = Object.keys(badN).length;
+  h += '<div class="dy-tiles">' + tile("bad", "خارج الحدود", bad.length, bad.length ? Board.pl(nBadR, "في قراءة واحدة", "في قراءتين", "في قراءات", "في قراءة") : "كل القراءات ضمن الحد", "actSec") +
+    tile("warn", "تنبيهات", alerts.length, alerts.length ? esc(alerts.slice(0, 2).map(function (a) { return a.t.split(" ")[0] === "عبوة" ? "العبوات" : a.ic === "batt" ? "البطارية" : a.ic === "wrench" ? "المعايرة" : "الرش"; }).filter(function (x, i, A) { return A.indexOf(x) === i; }).join(" و")) : isToday ? "لا تنبيهات" : "لليوم الجاري فقط", "actSec") +
+    tile("warn", "ملاحظات مفتوحة", on.length, on.length ? esc(txt((on[0].v || {}).cat, 30)) : "لا ملاحظات مفتوحة", "actSec") +
+    (isSup() ? tile("", "بانتظار المراجعة", pend, SE.length ? "من " + Board.pl(SE.length, "تسجيل واحد", "تسجيلين", "تسجيلات", "تسجيلاً") : "لا تسجيلات", "logSec") : tile("", "تسجيلات اليوم", SE.length, "في " + esc(SECS[sec].name), "logSec")) + "</div>";
+  if (isSup() && SE.length) h += so ? '<div class="dy-sign ok"><span>' + I("check", 14, 2.4) + " اعتمد " + esc(nameOf(so.by)) + " سجل " + esc(SECS[sec].name) + (so.at ? " الساعة " + tsTime(so.at) : "") + "</span></div>" :
+    '<div class="dy-sign"><span>اليوم <b>غير معتمد</b> بعد' + (pend ? " · " + pend + " بانتظار المراجعة" : "") + "</span>" + (pend ? '<button class="btn sm pri" type="button" data-bd="queue" data-k="pending">مراجعة سريعة</button>' : '<button class="btn sm pri" type="button" data-act="signoff">اعتماد ' + esc(SECS[sec].name) + "</button>") + "</div>";
+  h += "</section>";
+  /* 1. يحتاج تصرفاً */
+  var act = "";
+  bad.slice(0, 6).forEach(function (x) { var st = style(x.e.type); act += '<a href="#" data-rc="detail" data-id="' + esc(x.e.id) + '"><span class="bd-hic sm" style="background:var(--bad-soft);color:var(--bad)">' + I(st[0], 16) + '</span><span class="dy-act-t"><b>' + esc((x.cell ? x.l + " · " + x.cell : (typeDef(x.e.type, sec) || {}).short + " · " + x.l) + " " + f(x.v, x.c === "ph" ? 2 : x.cell && x.c !== "lux" ? 1 : 0)) + (x.c === "lux" ? "" : esc(x.u === "°C" ? "°" : x.u ? " " + x.u : "")) + '</b><small class="bad">' + esc((x.st === "lo" ? "أقل من " : "أعلى من ") + rangeTxt(x.c, sec, x.e.time) + " · " + fmtTime(x.e.time)) + "</small></span>" + I("chev", 16, 2) + "</a>"; });
+  if (bad.length > 6) act += '<div><span class="dy-act-t"><small>و' + (bad.length - 6) + " قيم أخرى خارج الحد · افتح التسجيل لتفاصيله</small></span></div>";
+  alerts.forEach(function (a) { act += '<div><span class="bd-hic sm ' + (a.tone === "bad" ? "" : "warn") + '"' + (a.tone === "bad" ? ' style="background:var(--bad-soft);color:var(--bad)"' : "") + ">" + I(a.ic, 16) + '</span><span class="dy-act-t"><b>' + esc(a.t) + "</b><small>" + esc(a.s) + "</small></span>" + (a.btn || "") + "</div>"; });
+  on.sort(function (a, b) { return b.ts - a.ts; }).slice(0, 6).forEach(function (e) { var v = e.v || {}; act += '<a href="#" data-rc="detail" data-id="' + esc(e.id) + '"><span class="bd-hic sm warn">' + I("leaf", 16) + '</span><span class="dy-act-t"><b>' + esc([v.cat === NOTE_OTHER ? v.catX : v.cat, v.loc || v.pos || ""].filter(Boolean).join(" · ")) + "</b><small>" + esc("ملاحظة مفتوحة · " + (e.date === S.date ? fmtTime(e.time) : fmtShort(e.date)) + (v.sev ? " · " + v.sev : "")) + "</small></span>" + I("chev", 16, 2) + "</a>"; });
+  h += act ? dayCard("bang", "warn", "يحتاج تصرفاً", '<div class="dy-act">' + act + "</div>", "", "actSec") : '<div id="actSec"></div>';
+  /* 2. المهام والجولات */
+  var rows = "";
   TASKS[sec].forEach(function (x) {
-    var times = schedOf(sec, x[0]), need = needOf(sec, x), done = doneOf(SE, x[0]);
-    if (!need && !done) return;
-    var full = done >= need, nLate = 0, dueT = null, nextT = null;
-    times.forEach(function (t, i) { if (i < done) return; if (past || (isToday && nm > tMin(t) + 30)) nLate++; else if (isToday && nm >= tMin(t)) dueT = dueT || t; else nextT = nextT || t; });
-    /* سطر واحد يلخص الحالة بدل عرض كل المواعيد */
-    var stx = full ? "" : nLate ? '<span class="tr-s late">' + (nLate === 1 ? "موعد متأخر" : nLate + " مواعيد متأخرة") + (nextT ? " · التالي " + fmtTime(nextT) : "") + "</span>" : dueT ? '<span class="tr-s due">حان الآن · ' + fmtTime(dueT) + "</span>" : nextT ? '<span class="tr-s">التالي ' + fmtTime(nextT) + "</span>" : "";
-    var cls = full ? "done" : nLate ? "late" : dueT ? "due" : "", late = nLate > 0, due = !!dueT;
-    rows += '<div class="trow ' + cls + '"><span class="e-ic sm">' + ico(x[0], 17) + '</span><span class="tr-t"><b>' + typeDef(x[0], sec).label + "</b>" + stx + '</span><span class="tr-n num">' + done + "/" + need + "</span>" +
-      (full ? '<span class="tr-ok" aria-label="تمت">✓</span>' : rec ? '<button class="btn sm' + (late || due ? " pri" : "") + '" type="button" data-act="new" data-type="' + x[0] + '">سجّل</button>' : '<span class="tr-ok"></span>') + "</div>";
+    var type = x[0], T = typeDef(type, sec); if (!T) return;
+    var my = sl.filter(function (q) { return q.type === type; }), cn = (D.cnt || []).filter(function (q) { return q.type === type; })[0];
+    if (!my.length && !cn) return;
+    var dn = my.filter(function (q) { return q.e; }).length + (cn ? cn.done : 0), need = my.length + (cn ? cn.n : 0), st = style(type);
+    var lateN = my.filter(function (q) { return q.state === "miss" || q.state === "due"; }).length + (cn && isToday && cn.done < cn.n ? 0 : 0);
+    var chips = my.map(function (q) {
+      var tt = q.t ? fmtTime(q.t) : "";
+      if (q.state === "ok" || q.state === "late") return '<span class="' + q.state + '">' + I("check", 12, 2.6) + (tt ? tt + " · " : "") + fmtTime(q.e.time) + (q.state === "late" && q.dl != null ? " (" + (q.dl > 0 ? "+" : "−") + Math.abs(q.dl) + " د)" : "") + "</span>";
+      if (q.state === "miss") return '<span class="miss">' + (tt ? tt + " · " : "") + (isToday ? "متأخر" : "لم يُسجَّل") + "</span>";
+      if (q.state === "due") return '<span class="due">حان الآن · ' + tt + "</span>";
+      return "<span>" + tt + "</span>";
+    }).join("");
+    if (cn) { SE.filter(function (e) { return taskTypes(type).indexOf(e.type) >= 0; }).slice(0, cn.done).forEach(function (e) { chips += '<span class="ok">' + I("check", 12, 2.6) + fmtTime(e.time) + "</span>"; }); if (cn.n > cn.done) chips += "<span>متبقٍ " + (cn.n - cn.done) + " · بلا موعد</span>"; }
+    var full = dn >= need, btn = !full && rec && (lateN || cn) ? '<button class="btn sm pri" type="button" data-act="new" data-type="' + type + '">سجّل</button>' : full ? '<span class="dy-done" aria-label="تمت">' + I("check", 16, 2.6) + "</span>" : rec ? '<button class="btn sm" type="button" data-act="new" data-type="' + type + '">سجّل</button>' : "<span></span>";
+    rows += '<div class="dy-task"><span class="bd-hic sm ' + (st[1] || "") + '">' + I(st[0], 16) + "</span><b><bdi>" + esc(T.short || T.label) + '</bdi> <small class="' + (full ? "ok" : "") + '">' + dn + " من " + need + "</small></b>" + btn + '<div class="dy-slots">' + chips + "</div></div>";
   });
-  var chipsTop = [];
-  if (alerts.length) chipsTop.push('<button type="button" class="dchip warn" data-act="jump" data-to="alertsSec">' + alerts.length + " " + (alerts.length === 1 ? "تنبيه" : "تنبيهات") + "</button>");
-  if (bad.length) chipsTop.push('<button type="button" class="dchip bad" data-act="jump" data-to="alertsSec">' + bad.length + " خارج الحدود</button>");
-  if (on.length) chipsTop.push('<button type="button" class="dchip warn" data-act="jump" data-to="notesSec">' + on.length + " ملاحظة مفتوحة</button>");
-  if (isSup() && pend && !so) chipsTop.push('<button type="button" class="dchip" data-act="jump" data-to="logSec">' + pend + " بانتظار المراجعة</button>");
-  if (mt.need || rows) h += '<section class="sec" id="tasksSec"><div class="card day"><div class="day-h"><div class="day-t"><h2>' + SECS[sec].icon + " مهام " + SECS[sec].name + "</h2><span>" + (mt.left ? "متبقي " + mt.left + " من " + mt.need : mt.need ? "اكتملت كل المهام ✓" : "لا مهام محددة") + '</span></div><b class="day-n num">' + mt.done + "<small>/" + mt.need + "</small></b></div>" +
-    '<div class="bar"><i class="' + (mp >= 100 ? "full" : "") + '" style="width:' + mp + '%"></i></div>' + (chipsTop.length ? '<div class="dchips">' + chipsTop.join("") + "</div>" : "") + '<div class="trows">' + rows + "</div></div></section>";
-
-  /* 2. التنبيهات وما يحتاج تصرفاً */
-  if (alerts.length || bad.length) {
-    h += '<section class="sec alerts" id="alertsSec">' + alerts.join("");
-    if (bad.length) h += fold("bad_" + sec, "قراءات خارج الحدود اليوم", '<ul class="badlist">' + bad.map(function (b) { return "<li>" + esc(b) + "</li>"; }).join("") + "</ul>", { badge: bad.length, tone: "bad", open: true });
-    h += "</section>";
+  h += dayCard("tasks", "", "المهام والجولات", rows ? "<div>" + rows + '</div><p class="bd-foot">الأخضر في موعده (±30 دقيقة) · البرتقالي سُجّل خارج المهلة · الأحمر ' + (isToday ? "فات موعده" : "لم يُسجَّل") + ".</p>" : '<p class="bd-empty">لا مهام محددة لهذا اليوم.</p>', "", "tasksSec");
+  /* 3. قراءات اليوم */
+  var cells = []; SE.forEach(function (e) { limitCells(e).forEach(function (x) { cells.push(x); }); });
+  var MS = [["ec", "الأملاح" + (cfg("atc") ? "" : " (25°)"), "µS/cm", 0], ["ph", "pH", "", 2], ["wt", "حرارة المحلول", "°C", 1], ["air", "حرارة الجو", "°C", 1], ["rh", "الرطوبة", "%", 0], ["lux", "الضوء", "lux", 0]];
+  var tiles = MS.map(function (m) {
+    var L = cells.filter(function (x) { return x.c === m[0]; }); if (!L.length) return '<div class="none"><span>' + m[1] + "</span><b>لم تُسجَّل</b><small>لا قراءات في هذا اليوم</small></div>";
+    var by = {}; L.forEach(function (x) { (by[x.e.id] = by[x.e.id] || []).push(x); });
+    var ids = Object.keys(by), last = ids.map(function (k) { return by[k]; }).sort(function (a, b) { return (String(a[0].e.time) + (a[0].e.ts || 0)).localeCompare(String(b[0].e.time) + (b[0].e.ts || 0)); }).pop();
+    var lv = last[0].cell ? avg(last.map(function (x) { return x.v; })) : last[last.length - 1].v, /* الشبكة: متوسط خاناتها · قبل/بعد التعويض: القيمة الأخيرة (بعد) */ vs = L.map(function (x) { return x.v; }), nb = L.filter(function (x) { return isBad(x.st); }).length;
+    return '<div class="' + (nb ? "bad" : "") + '"><span>' + m[1] + "<em>" + fmtTime(last[0].e.time) + "</em></span><b>" + f(lv, m[3]) + (m[2] ? " <small>" + m[2] + "</small>" : "") + '</b><small class="' + (nb ? "x" : "") + '">المدى ' + "⁦" + f(Math.min.apply(null, vs), m[3]) + " – " + f(Math.max.apply(null, vs), m[3]) + "⁩ · " + (nb ? Board.pl(nb, "قيمة واحدة خارج الحد", "قيمتان خارج الحد", "قيم خارج الحد", "قيمة خارج الحد") : Board.pl(ids.length, "قراءة واحدة", "قراءتان", "قراءات", "قراءة")) + "</small></div>";
+  }).join("");
+  var foot = "الرقم الكبير آخر قراءة (متوسط خاناتها) · المدى من كل خانات اليوم · الأحمر فيه قيمة خارج الحد.";
+  if (sec === "t") { var tk = tankState(); if (tk && tk.vol != null) foot += " خزان الأبراج " + f(tk.vol) + " لتر (" + (tk.date === S.date ? "" : fmtShort(tk.date) + " ") + fmtTime(tk.time) + ")."; }
+  else { var irr = SE.filter(function (e) { return e.type === "irr"; }); if (irr.length) foot += " الري: " + Board.pl(irr.length, "رية واحدة", "ريتان", "ريات", "رية") + " · " + f(sum(irr.map(function (e) { return irrL(e.v); })), 1) + " لتر."; }
+  h += dayCard("flask", "teal", "قراءات اليوم", '<div class="dy-read">' + tiles + '</div><p class="bd-foot">' + esc(foot) + "</p>", "", "readSec");
+  /* 4. الحساسات الآن */
+  if (isToday && window.SENS && SENS.api && !SENS.api.access()) {
+    var sens = SENS.api.list().filter(function (s2) { var g = SENS.api.group(s2); return g === "air" || g === "water"; }).slice(0, 6);
+    var cell = function (q, d, u) { return q && q.v != null && q.state !== "stale" && q.state !== "missing" ? '<b class="' + (isBad(q.state) ? "bad" : "") + '">' + "⁦" + f(q.v, d) + u + "⁩</b>" : "<b>—</b>"; };
+    if (sens.length) h += dayCard("radio", "info", "الحساسات الآن", '<div class="dy-sens"><div class="h"><span></span><b>الحرارة</b><b>الرطوبة / pH</b><b>VPD</b></div>' + sens.map(function (s2) {
+      var g = SENS.api.group(s2), T = SENS.api.live(s2, g === "water" ? "waterTemp" : "temp"), Hm = SENS.api.live(s2, g === "water" ? "ph" : "hum"), at = Math.max(T.at || 0, Hm.at || 0);
+      var vp = g !== "water" && T.v != null && Hm.v != null && T.state !== "stale" && Hm.state !== "stale" ? 0.6108 * Math.exp(17.27 * T.v / (T.v + 237.3)) * (1 - Hm.v / 100) : null;
+      return "<div><span><bdi>" + esc(SENS.api.name(s2)) + "</bdi><small>" + (at ? esc(SENS.api.age(at)) : "لا قراءة") + "</small></span>" + cell(T, 1, "°") + cell(Hm, g === "water" ? 2 : 0, g === "water" ? "" : "%") + "<b>" + (vp == null ? "—" : f(vp, 2)) + "</b></div>";
+    }).join("") + "</div>", dayLink("المراقبة", 'data-ux="monitor" data-group="all"'));
   }
-
-  /* 3. البيئة الآن من الحساسات */
-  if (isToday && window.SENS && !SENS.dashboard && SENS.strip) h += SENS.strip();
-
-  /* 4. آخر القراءات اليدوية: المتوفر فقط، والناقص في سطر واحد */
-  var ecE = lastOf(SE, function (e) { return e.v && num(e.v.ec) != null; }), phE = lastOf(SE, function (e) { return e.v && num(e.v.ph) != null; }), wtE = lastOf(SE, function (e) { return e.v && num(e.v.wt) != null && e.type !== "temp"; });
-  var airE = lastOf(SE, function (e) { return e.type === "temp" && metric(e.v, "air") != null; }), rhE = lastOf(SE, function (e) { return e.type === "temp" && metric(e.v, "rh") != null; }), lE = lastOf(SE, function (e) { return e.type === "light" && metric(e.v, "lux") != null; });
-  var tiles = [], miss = [];
-  var add = function (lab, e, val, unit, c, dec) { if (e && val != null) tiles.push(statTile(lab, val, unit, c, fmtTime(e.time), dec, e.time)); else miss.push(lab); };
-  add("الأملاح" + (cfg("atc") ? "" : " (25°)"), ecE, ecE ? ec25(num(ecE.v.ec), num(ecE.v.wt)) : null, "µS/cm", "ec", 0);
-  add("pH", phE, phE ? ph25(num(phE.v.ph), num(phE.v.wt)) : null, "", "ph");
-  add("حرارة المحلول", wtE, wtE ? num(wtE.v.wt) : null, "°C", "wt");
-  add("حرارة الجو", airE, airE ? metric(airE.v, "air") : null, "°C", "air");
-  add("الرطوبة", rhE, rhE ? metric(rhE.v, "rh") : null, "%", "rh", 0);
-  add("الضوء", lE, lE ? metric(lE.v, "lux") : null, "lux", "lux", 0);
-  if (sec === "n") { var irr = SE.filter(function (e) { return e.type === "irr"; }); if (irr.length) tiles.push('<div class="stat sm"><span class="lab">الري</span><span class="val num">' + irr.length + " <small>رية · " + f(sum(irr.map(function (e) { return irrL(e.v); })), 1) + " لتر</small></span></div>"); else miss.push("الري"); }
-  else { var tk = tankState(); if (tk && tk.vol != null) tiles.push('<div class="stat sm"><span class="lab">خزان الأبراج <span class="t">' + (tk.date === todayStr() ? "" : fmtShort(tk.date) + " ") + fmtTime(tk.time) + '</span></span><span class="val num">' + f(tk.vol) + " <small>لتر</small></span></div>"); }
-  h += '<section class="sec"><div class="sec-h"><h2>آخر القراءات اليدوية</h2></div>' + (tiles.length ? '<div class="grid2 grid-stat">' + tiles.join("") + "</div>" : "") + (miss.length ? '<p class="miss">' + (tiles.length ? "لم تُسجَّل بعد: " : "لا توجد قراءات بعد: ") + miss.join("، ") + "</p>" : "") + "</section>";
-
-  /* 5. المراجعة */
-  if (so) h += '<section class="sec"><div class="banner ok">' + ico("sup", 20) + "<span>اعتمد " + esc(nameOf(so.by)) + " سجل " + SECS[sec].name + " لهذا اليوم" + (so.at ? " الساعة " + tsTime(so.at) : "") + "</span></div></section>";
-  else if (SE.length && isSup()) h += '<section class="sec"><div class="banner ' + (pend ? "warn" : "n") + '"><span style="flex:1"><b>' + pend + "</b> بانتظار المراجعة" + (flags ? " · <b>" + flags + "</b> عليها ملاحظة" : "") + '</span><button class="btn sm pri" data-act="signoff">اعتماد ' + SECS[sec].name + "</button></div></section>";
-
-  /* 6. التفاصيل: مطوية افتراضياً */
-  var folds = "";
-  if (on.length) folds += '<div id="notesSec">' + fold("notes_" + sec, "ملاحظات مفتوحة على النبات", '<div class="list">' + on.sort(function (a, b) { return b.ts - a.ts; }).slice(0, 8).map(function (e) { return entryCard(e, true); }).join("") + "</div>", { badge: on.length, tone: "warn", icon: "note" }) + "</div>";
-  if (sec === "t") folds += fold("zones", "المناطق · آخر قياس", zoneBody(SE), { icon: "temp" });
-  else { folds += fold("sides", "اليمين واليسار · آخر قياس", sideBody(SE), { icon: "temp" }); var sb = sowBody(); folds += fold("sow", "الزراعة هذا الشهر", sb.h, { icon: "sow", badge: sb.ready ? sb.ready + " جاهزة للنقل" : "", tone: "warn" }); }
-  var sp = sprayBody(sec); folds += fold("spray_" + sec, "الرش والوقاية", sp.h, { icon: "spray", badge: sp.due ? "مستحق" : "", tone: "warn" });
-  folds += fold("equip", "المعدات", equipBody(), { icon: "batt" });
-  folds += '<button class="fold-link" type="button" data-act="gallery"><span class="e-ic sm">' + ico("gallery", 17) + '</span><span class="fold-t">صور النمو · ' + SECS[sec].name + '</span><span class="fold-i" aria-hidden="true"></span></button>';
-  h += '<section class="sec folds">' + folds + "</section>";
-
-  /* 7. السجل */
-  h += '<section class="sec" id="logSec"><div class="sec-h"><h2>سجل ' + (isToday ? "اليوم" : fmtShort(S.date)) + '</h2><span class="muted num" style="font-size:13px">' + E.length + " تسجيل</span></div>";
-  if (!E.length) h += '<div class="empty">لا توجد تسجيلات في ' + SECS[sec].name + " لهذا اليوم بعد." + (rec ? '<button class="btn pri" data-act="goTab" data-t="add">سجّل أول قراءة</button>' : "") + "</div>";
-  else h += '<div class="list">' + E.slice().reverse().map(function (e) { return entryCard(e); }).join("") + "</div>";
-  return h + "</section>";
+  /* 5. المناطق أو اليمين واليسار، والزراعة (المشتل) */
+  h += placeCard(SE, sec);
+  if (sec === "n") { var sb = sowBody(); h += dayCard("sprout", "green", "الزراعة هذا الشهر", sb.h, ""); }
+  /* 6. الرش والمعدات */
+  var P = sprayPlan(sec), spDue = (P.ca && P.ca.list.length ? 1 : 0) + P.prev.filter(function (x) { return x.due <= t0; }).length, lastSp = lastOf(sprays(sec), function () { return true; });
+  var eqA = alerts.filter(function (a) { return a.ic !== "spray"; }).length, pump = sec === "t" ? lastOf(SE, function (e) { return e.type === "pump"; }) : null, c = lastCal(), bi = battInfo();
+  h += '<div class="rp-kpis">' +
+    '<button type="button" class="rp-kpi ' + (spDue ? "warn" : "") + '"' + (rec ? ' data-act="new" data-type="spray"' : " disabled") + "><span>" + I("spray", 15, 2) + "الرش والوقاية</span><b style=\"font-size:17px\">" + (spDue ? "مستحق الآن" : "لا شيء مستحق") + "</b><p>" + (lastSp ? "آخر رش " + esc(fmtShort(lastSp.date)) + (lastSp.v && lastSp.v.product ? " · " + esc(txt(lastSp.v.product, 30)) : "") : "لم يُسجَّل رش بعد") + "</p><em>" + (P.phi.length ? "فترة أمان حتى " + esc(fmtShort(P.phi[0].until)) : P.prev.length ? "القادم " + esc(fmtShort(P.prev.map(function (x) { return x.due; }).sort()[0])) : "") + "</em></button>" +
+    '<button type="button" class="rp-kpi ' + (eqA ? "warn" : "") + '" data-act="goTab" data-t="equipment"><span>' + I("batt", 15, 2) + "المعدات</span><b style=\"font-size:17px\">" + (eqA ? Board.pl(eqA, "تنبيه واحد", "تنبيهان", "تنبيهات", "تنبيهاً") : "لا تنبيهات") + "</b><p>" + (pump ? "المضخة " + fmtTime(pump.time) + ": " + esc(txt((pump.v || {}).status, 40) || "فُحصت") : bi.state === "charging" ? "البطارية على الشاحن" : bi.state === "idle" ? "آخر شحن قبل " + fmtAgo(bi.h) : "لا شحن مسجّل") + "</p><em>" + (c ? "آخر معايرة " + esc(fmtShort(c.date)) : "لا معايرة مسجّلة") + "</em></button></div>";
+  /* 7. سجل اليوم */
+  var log = E.slice().reverse().map(function (e) {
+    var st = style(e.type), T = typeDef(e.type, secOf(e)) || { label: e.type }, rv = e.review, pc = window.Farm && Farm.pendingChange(e.id);
+    var pill = pc ? '<span class="dy-st warn">أُعيد للمراجعة</span>' : rv ? (rv.s === "ok" ? '<span class="dy-st ok">معتمد</span>' : '<span class="dy-st bad">تصحيح</span>') : '<span class="dy-st warn">بانتظار</span>';
+    var vals = window.Rec && Rec.vals ? Rec.vals(e) : [], sub = vals.slice(0, 4).map(function (q) { return q.bad ? '<span class="tx-bad">' + esc(q.t) + "</span>" : esc(q.t); }).join(" · ");
+    return '<a href="#" data-rc="detail" data-id="' + esc(e.id) + '"><time>' + (fmtTime(e.time) || "—") + '</time><span class="bd-hic sm ' + (st[1] || "") + '">' + I(st[0], 16) + "</span><b>" + esc(T.short || T.label) + "</b>" + pill + "<small>" + (sub ? sub + " · " : "") + esc(nameOf(e.by)) + "</small></a>";
+  }).join("");
+  h += '<section class="bd-card" id="logSec"><div class="bd-h"><span class="bd-hic gray">' + I("list", 18) + '</span><h2 class="bd-title">سجل ' + (isToday ? "اليوم" : esc(fmtShort(S.date))) + ' <small class="muted" style="font-size:12px;font-weight:500">' + Board.pl(E.length, "تسجيل واحد", "تسجيلان", "تسجيلات", "تسجيلاً") + "</small></h2>" + (isSup() && pend ? dayLink("مراجعة سريعة", 'data-bd="queue" data-k="pending"') : "") + "</div>" +
+    (E.length ? '<div class="dy-log">' + log + '</div><p class="bd-foot">اضغط أي تسجيل لتفاصيله وأزرار التعديل والمراجعة.</p>' : '<div class="empty">لا توجد تسجيلات في ' + SECS[sec].name + " لهذا اليوم بعد." + (rec ? '<button class="btn pri" type="button" data-act="goTab" data-t="add">سجّل أول قراءة</button>' : "") + "</div>") + "</section>";
+  return h;
+}
+/* المناطق (الأبراج) أو اليمين واليسار (المشتل): آخر قياس، والخانة حمراء إن كان فيها قيمة خارج الحد */
+function placeCard(SE, sec) {
+  var te = lastOf(SE, function (e) { return e.type === "temp" && (metric(e.v, "air") != null || metric(e.v, "rh") != null); }), le = lastOf(SE, function (e) { return e.type === "light" && metric(e.v, "lux") != null; });
+  var D = DIMS[sec === "t" ? "t" : "n"], cols = D.rowL, irr = sec === "n" ? SE.filter(function (e) { return e.type === "irr"; }) : [];
+  if (!te && !le && !irr.length) return "";
+  var row = function (lab, e, m, dec) {
+    if (!e) return ""; var cs = limitCells(e).filter(function (x) { return x.k === m && x.cell; });
+    var vals = D.rows.map(function (r, ri) { return rowAvg(e.v, m, D, ri) != null ? rowAvg(e.v, m, D, ri) : (sec === "t" ? zoneAvg(e.v, m, ri) : null); }); if (vals.every(function (v) { return v == null; })) return "";
+    return "<tr><th>" + lab + "</th>" + vals.map(function (v, ri) { var b = cs.filter(function (x) { return x.ri === ri && isBad(x.st); }).length; return '<td class="' + (b ? "bad" : "") + '">' + (v == null ? "—" : f(v, dec)) + (b ? "<small>" + (b > 1 ? b + " خارج" : "خارج") + "</small>" : "") + "</td>"; }).join("") + (sec === "n" ? "<td>" + f(avg(vals), dec) + "</td>" : "") + "</tr>";
+  };
+  var il = sec === "n" ? [0, 1].map(function (si) { return sum(irr.map(function (e) { return irrL(e.v, si); })); }) : null;
+  var body = '<table class="rp-zone"><thead><tr><th></th>' + cols.map(function (c) { return "<th>" + esc(c) + "</th>"; }).join("") + (sec === "n" ? "<th>" + esc(D.all) + "</th>" : "") + "</tr></thead><tbody>" +
+    row("حرارة °", te, "air", 1) + row("رطوبة %", te, "rh", 0) + row("ضوء", le, "lux", 0) +
+    (il && irr.length ? "<tr><th>الري لتر</th>" + il.map(function (x) { return "<td>" + f(x, 1) + "</td>"; }).join("") + "<td>" + f(il[0] + il[1], 1) + "</td></tr>" : "") + "</tbody></table>" +
+    (sec === "t" ? '<p class="bd-foot">' + esc(cfg("zoneNote", "t")) + "</p>" : "");
+  var tt = te || le, when = tt ? " · آخر قياس " + fmtTime(tt.time) : "";
+  return dayCard("therm", "", (sec === "t" ? "المناطق" : "اليمين واليسار") + when, body, "");
 }
 function tankState() {
   var e = lastOf(S.hist, function (r) { return secOf(r) === "t"; }); if (!e) return null; var v = e.v || {};
   var vol = e.type === "refill" ? (lvlToL(num(v.level1)) || ((lvlToL(num(v.level0)) || 0) + (num(v.waterAdd) || 0) - (num(v.drained) || 0))) : num(v.water);
   return { vol: vol, ec: ec25(num(v.ec), num(v.wt)), ph: ph25(num(v.ph), num(v.wt)), date: e.date, time: e.time };
-}
-function zoneBody(SE) {
-  var te = lastOf(SE, function (e) { return e.type === "temp" && metric(e.v, "air") != null; }), le = lastOf(SE, function (e) { return e.type === "light" && metric(e.v, "lux") != null; });
-  if (!te && !le) return "";
-  var row = function (lab, e, m, dec) {
-    if (!e) return "";
-    return "<tr><td>" + lab + "</td>" + ZONES.map(function (z, zi) { var v = zoneAvg(e.v, m, zi); return '<td class="' + (isBad(chk(m, v, null, e.time)) ? "bad" : "") + '">' + f(v, dec) + "</td>"; }).join("") + "<td><b>" + f(metric(e.v, m), dec) + "</b></td></tr>";
-  };
-  return '<div class="tbl-wrap" style="border:0"><table class="minitable"><thead><tr><th></th>' + ZONES.map(function (z) { return "<th>" + z + "</th>"; }).join("") + "<th>البيت</th></tr></thead><tbody>" +
-    row("حرارة °C", te, "air", 1) + row("رطوبة %", te, "rh", 0) + row("ضوء lux", le, "lux", 0) + '</tbody></table></div><p class="help" style="margin:6px 0 0">' + esc(cfg("zoneNote", "t")) + "</p>";
-}
-function sideBody(SE) {
-  var hasSide = function (e, ms) { return ms.some(function (m) { return sideAvg(e.v, m, 0) != null || sideAvg(e.v, m, 1) != null; }); };
-  var te = lastOf(SE, function (e) { return e.type === "temp" && hasSide(e, ["air", "rh"]); }), le = lastOf(SE, function (e) { return e.type === "light" && hasSide(e, ["lux"]); });
-  var irr = SE.filter(function (e) { return e.type === "irr"; }), il = [0, 1].map(function (si) { return sum(irr.map(function (e) { return irrL(e.v, si); })); });
-  var anyIrr = irr.some(function (e) { return irrL(e.v, 0) != null || irrL(e.v, 1) != null; });
-  if (!te && !le && !anyIrr) return "";
-  var row = function (lab, e, m, dec) {
-    if (!e) return ""; var vs = [0, 1].map(function (si) { return sideAvg(e.v, m, si); }); if (vs.every(function (x) { return x == null; })) return "";
-    return "<tr><td>" + lab + ' <span class="muted">' + fmtTime(e.time) + "</span></td>" + vs.map(function (x) { return '<td class="' + (isBad(chk(m, x, null, e.time)) ? "bad" : "") + '">' + f(x, dec) + "</td>"; }).join("") + "<td><b>" + f(avg(vs), dec) + "</b></td></tr>";
-  };
-  return '<div class="tbl-wrap" style="border:0"><table class="minitable"><thead><tr><th></th>' + SIDES.map(function (x) { return "<th>" + x + "</th>"; }).join("") + "<th>المشتل</th></tr></thead><tbody>" +
-    row("حرارة °C", te, "air", 1) + row("رطوبة %", te, "rh", 0) + row("ضوء lux", le, "lux", 0) +
-    (anyIrr ? "<tr><td>الري اليوم (لتر)</td>" + il.map(function (x) { return "<td>" + f(x, 1) + "</td>"; }).join("") + "<td><b>" + f(il[0] + il[1], 1) + "</b></td></tr>" : "") + "</tbody></table></div>";
 }
 function sowBatches() { return (window.Farm && Farm.cropReady()?Farm.crops():S.meta).filter(function (e) { return e.type === "sow"; }); }
 function transplanted(id) { return sum(S.meta.filter(function (e) { return e.type === "xplant" && e.v && e.v.batch === id; }).map(function (e) { return num(e.v.count); })); }
@@ -1053,16 +1139,20 @@ function battInfo() {
   if (!b.v || !b.v.end) return { state: "charging", b: b, h: (now - (b.v && b.v.start || b.ts)) / 36e5 };
   return { state: "idle", b: b, h: (now - b.v.end) / 36e5 };
 }
+/* 3.7.0: تنبيهات المعدات كبيانات (تُرسم في «يحتاج تصرفاً» بتفاصيل اليوم) */
 function equipAlerts() {
-  var out = [], bi = battInfo(), lim = num(cfg("battHours")), mx = num(cfg("battMaxCharge"));
-  if (bi.state === "none") out.push('<div class="alert warn">' + ico("batt", 20) + '<span class="tx">لم يُسجَّل شحن لبطارية مضخة الري بعد.</span>' + (canAdd() ? '<button class="btn sm" data-act="battStart">بدء الشحن</button>' : "") + "</div>");
-  else if (bi.state === "idle" && bi.h > lim) out.push('<div class="alert bad">' + ico("batt", 20) + '<span class="tx"><b>تأخر شحن بطارية المضخة:</b> آخر شحن انتهى قبل ' + fmtAgo(bi.h) + ".</span>" + (canAdd() ? '<button class="btn sm pri" data-act="battStart">بدء الشحن</button>' : "") + "</div>");
-  else if (bi.state === "charging" && bi.h > mx) out.push('<div class="alert warn">' + ico("batt", 20) + '<span class="tx"><b>البطارية على الشاحن منذ ' + fmtAgo(bi.h) + "</b>. افصل الشاحن إذا اكتمل الشحن.</span>" + (canAdd() ? '<button class="btn sm pri" data-act="battEnd" data-id="' + esc(bi.b.id) + '">انتهى الشحن</button>' : "") + "</div>");
-  var c = lastCal(), cd = num(cfg("calDays"));
-  if (!c) out.push('<div class="alert warn">' + ico("cal", 20) + '<span class="tx">لم تُسجَّل معايرة لجهاز القياس بعد.</span>' + (canAdd() ? '<button class="btn sm" data-act="new" data-type="cal">تسجيل معايرة</button>' : "") + "</div>");
-  else { var dd = daysBetween(c.date, todayStr()); if (dd >= cd) out.push('<div class="alert warn">' + ico("cal", 20) + '<span class="tx"><b>حان موعد معايرة جهاز القياس:</b> آخر معايرة قبل ' + dd + " يوم.</span>" + (canAdd() ? '<button class="btn sm" data-act="new" data-type="cal">تسجيل معايرة</button>' : "") + "</div>"); }
+  var out = [], bi = battInfo(), lim = num(cfg("battHours")), mx = num(cfg("battMaxCharge")), add = canAdd();
+  var mu = function (k) { return window.Board && Board.muted ? Board.muted(k) : false; };
+  if (bi.state !== "charging" && mu("batt")) {}
+  else if (bi.state === "none") out.push({ tone: "warn", ic: "batt", t: "شحن بطارية مضخة الري", s: "لم يُسجَّل شحن بعد", btn: add ? '<button class="btn sm" type="button" data-act="battStart">بدء الشحن</button>' : "" });
+  else if (bi.state === "idle" && bi.h > lim) out.push({ tone: "bad", ic: "batt", t: "تأخر شحن بطارية المضخة", s: "آخر شحن انتهى قبل " + fmtAgo(bi.h), btn: add ? '<button class="btn sm pri" type="button" data-act="battStart">بدء الشحن</button>' : "" });
+  else if (bi.state === "charging" && bi.h > mx && !mu("battEnd")) out.push({ tone: "warn", ic: "batt", t: "البطارية على الشاحن منذ " + fmtAgo(bi.h), s: "افصل الشاحن إذا اكتمل الشحن", btn: add ? '<button class="btn sm pri" type="button" data-act="battEnd" data-id="' + esc(bi.b.id) + '">انتهى الشحن</button>' : "" });
+  var c = lastCal(), cd = num(cfg("calDays")), calBtn = add ? '<button class="btn sm" type="button" data-act="new" data-type="cal">سجّل</button>' : "";
+  if (mu("cal")) {}
+  else if (!c) out.push({ tone: "warn", ic: "wrench", t: "معايرة جهاز EC/pH", s: "لم تُسجَّل معايرة بعد", btn: calBtn });
+  else { var dd = daysBetween(c.date, todayStr()); if (dd >= cd) out.push({ tone: "warn", ic: "wrench", t: "معايرة جهاز EC/pH", s: dd > cd ? "متأخرة منذ " + Board.dN(dd - cd) : "مستحقة اليوم", btn: calBtn }); }
   var st = computeStock();
-  ["A", "B"].forEach(function (tk) { var o = st[tk]; if (o && o.pct < 15) out.push('<div class="alert warn"><span class="tx"><b>عبوة ' + tk + " المركزة قاربت على النفاد:</b> المتبقي تقريباً " + f(Math.max(0, o.left)) + " مل.</span></div>"); });
+  ["A", "B"].forEach(function (tk) { var o = st[tk]; if (o && o.pct < 15 && !mu("stock" + tk)) out.push({ tone: "warn", ic: "flask", t: "عبوة " + tk + " المركزة قاربت على النفاد", s: "المتبقي تقريباً " + f(Math.max(0, o.left)) + " مل", btn: "" }); });
   return out;
 }
 /* ---------- الرش: مواعيد الكالسيوم بعد النقل للأبراج، والرش الوقائي، وفترة الأمان ---------- */
@@ -1090,10 +1180,11 @@ function sprayPlan(sec) {
   return out;
 }
 function sprayAlerts(sec) {
-  var P = sprayPlan(sec), today = todayStr(), out = [], btn = canAdd() ? '<button class="btn sm pri" data-act="new" data-type="spray">تسجيل الرش</button>' : "";
-  if (P.ca && P.ca.list.length) out.push('<div class="alert warn">' + ico("spray", 20) + '<span class="tx"><b>حان موعد رش الكالسيوم للأبراج</b> · ' + P.ca.list.map(function (b) { return "نقل " + fmtShort(b.date) + " (منذ " + daysBetween(b.date, today) + " يوم" + (b.v && b.v.zone ? "، " + esc(b.v.zone) : "") + ")"; }).join(" · ") + "</span>" + btn + "</div>");
-  P.prev.forEach(function (x) { if (x.due <= today) out.push('<div class="alert warn">' + ico("spray", 20) + '<span class="tx"><b>حان موعد ' + x.name + "</b> · " + (x.last ? "آخر رش قبل " + daysBetween(x.last.date, today) + " يوم (" + esc(x.last.v.product || "") + ")" : "لم يُسجَّل رش بعد") + "</span>" + btn + "</div>"); });
-  P.phi.forEach(function (x) { out.push('<div class="alert bad">' + ico("spray", 20) + '<span class="tx"><b>فترة أمان: لا تحصد قبل ' + fmtShort(x.until) + "</b> · " + esc(x.e.v.product || "") + " رُش " + fmtShort(x.e.date) + (x.e.v.zone ? " · " + esc(x.e.v.zone) : "") + "</span></div>"); });
+  var P = sprayPlan(sec), today = todayStr(), out = [], btn = canAdd() ? '<button class="btn sm" type="button" data-act="new" data-type="spray">سجّل</button>' : "";
+  var mu = function (k) { return window.Board && Board.muted ? Board.muted(k) : false; };
+  if (P.ca && P.ca.list.length && !mu("ca:" + sec)) out.push({ tone: "warn", ic: "spray", t: "رش الكالسيوم للأبراج", s: P.ca.list.slice(0, 2).map(function (b) { return "نقل " + fmtShort(b.date) + " (منذ " + Board.dN(daysBetween(b.date, today)) + (b.v && b.v.zone ? "، " + b.v.zone : "") + ")"; }).join(" · ") + (P.ca.list.length > 2 ? " و" + Board.pl(P.ca.list.length - 2, "نقل آخر", "نقلان آخران", "عمليات نقل أخرى", "عملية نقل أخرى") : ""), btn: btn });
+  P.prev.forEach(function (x) { if (x.due <= today && !mu("sp" + x.k + ":" + sec)) out.push({ tone: "warn", ic: "spray", t: x.name, s: x.last ? "آخر رش قبل " + Board.dN(daysBetween(x.last.date, today)) + (x.last.v.product ? " (" + x.last.v.product + ")" : "") : "لم يُسجَّل رش بعد", btn: btn }); });
+  P.phi.forEach(function (x) { out.push({ tone: "bad", ic: "spray", t: "فترة أمان: لا تحصد قبل " + fmtShort(x.until), s: (x.e.v.product || "") + " رُش " + fmtShort(x.e.date) + (x.e.v.zone ? " · " + x.e.v.zone : ""), btn: "" }); });
   return out;
 }
 function sprayBody(sec) {
@@ -1131,7 +1222,7 @@ function pgChip(m, u, v, sec, ts) {
   return '<span class="chip ' + (b2 ? "bad" : "") + '"><span class="k">' + MNAME[m] + ' (ب/و/ن)</span><span class="num">' + vs.map(function (x) { return f(x, d2); }).join(" · ") + "</span> " + u + ' <span class="k">· متوسط ' + f(avg(vs), d2) + "</span></span>";
 }
 function summaryChips(e) {
-  var sec = secOf(e), T = typeDef(e.type, sec); if (!T) return "";
+  var sec = secOf(e), T = typeDef(e.type, sec); if (!T || !Array.isArray(T.fields)) return "";
   var v = e.v || {}, out = "", seen = {}, keys = {};
   T.fields.forEach(function (fd) {
     keys[fd.k] = 1;
@@ -1285,6 +1376,7 @@ function buildFields(T, split) {
 /* forceSec: قسم التسجيل من صفحة دورة الزراعة (العدّ في المشتل، النقل والحصاد في الأبراج) دون تبديل القسم المعروض */
 function openForm(type, e, prefill, forceSec) {
   var sec = e ? secOf(e) : (TYPES_G[type] ? "g" : (forceSec || S.sec)), vsec = sec === "g" ? S.sec : sec, T = typeDef(type, vsec);
+  if (!T || !Array.isArray(T.fields)) { toast("نوع تسجيل غير معروف؛ لا يمكن فتحه"); return; }
   FORM = { type: type, e: e, sec: sec, vsec: vsec, photos: {}, modeTouched: !!e, split: !!(T.split && !e), lockBatch: !e && !!(prefill && prefill.batch) };
   FORM.fields = buildFields(T, FORM.split);
   if(type==="waterOnly"&&!e){
@@ -1486,6 +1578,8 @@ function saveForm(btn) {
   if(type==="waterOnly"&&!(num(v.waterAdd)>0))miss.push("كمية الماء المضافة يجب أن تكون موجبة");
   var reason=$("changeReason");
   if(e && isWorker() && e.review && Object.keys(FORM.photos).length)miss.push("للصورة المعتمدة اطلب من المشرف تعديل الصورة مباشرة");
+  /* 3.5.0: طلب تصحيح واحد معلّق لكل تسجيل (الزر يختفي، وهذا الفحص يمنع نموذجاً فُتح قبل وصول الطلب الأول) */
+  if(e && isWorker() && e.review && Farm.pendingChange(e.id))miss.push("لهذا التسجيل طلب تصحيح ينتظر قرار المشرف. انتظر القرار ثم أرسل طلباً جديداً إن لزم");
   if(reason && !reason.value.trim())miss.push("سبب التعديل أو التسجيل المتأخر");
   if (miss.length) { kpHide();var errorBox=$("formErrors");errorBox.hidden=false;errorBox.textContent="لم يُحفظ التسجيل. صحح التالي: "+Array.from(new Set(miss)).join("، ");errorBox.scrollIntoView({block:"center"});return; }
   $("formErrors").hidden=true;
@@ -1520,7 +1614,7 @@ function saveForm(btn) {
     if (type === "note") d.open = v.cat !== NOTE_NONE;
     var ref=col.doc();if(reason)Farm.audit(wb,ref.id,null,d.v,reason.value);wb.set(ref,d);
   }
-  if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) wb.update(S.db.collection("config").doc("settings"), { noteCats: (S.settings.noteCats || []).concat([v.cat]) });
+  if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) wb.update(S.db.collection("config").doc("settings"), { noteCats: (Array.isArray(S.settings.noteCats) ? S.settings.noteCats : []).concat([v.cat]) });
   /* الصورة والتسجيل يُحفظان معاً أو لا يُحفظ أيٌّ منهما */
   var submitted=FORM,where=FORM.sec==='g'?'':' في '+SECS[FORM.sec].name;
   submitted.saving=true;
@@ -1731,30 +1825,11 @@ function openFlag(id) {
 }
 
 /* ================= reports ================= */
-function loadReport() {
-  S.rep = { loading: true }; S.repSens = null; S.repSensForce = true; if (S.tab === "rep") render(true);
-  var end = S.date, start = addDays(end, -(S.repDays - 1));
-  S.db.collection("entries").where("date", ">=", start).where("date", "<=", end).get().then(function (q) {
-    S.rep = { start: start, end: end, all: entriesOf(q).sort(function (a, b) { return (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")); }) };
-    render(true);
-  }).catch(function () { S.rep = { err: 1 }; render(true); });
-}
+/* 3.7.0: حسابات التقارير وعرضها وتصديرها في workspace.js (RPT). هنا ما تحتاجه بقية الصفحات: الوصفات ومخزون العبوات */
 function recipeFor(tank, date) { return S.recipes.filter(function (r) { return r.tank === tank && r.date <= date; }).sort(function (a, b) { return (b.date + b.ts).localeCompare(a.date + a.ts); })[0]; }
 function recipeMl(r) { return r.volMl != null ? num(r.volMl) : num(r.volL) * 1000; }
 function toBase(it) { var q = num(it.qty); if (q == null) return null; return (it.unit === "كغ" || it.unit === "لتر") ? q * 1000 : q; }
 function unitBase(it) { return (it.unit === "مل" || it.unit === "لتر") ? "مل" : "غ"; }
-function consumption(rows) {
-  var per = {}, mlA = 0, mlB = 0, down = 0, up = 0, water = 0;
-  rows.filter(function (r) { return ["mix","refill","waterOnly"].includes(r.type); }).forEach(function (r) {
-    var v = r.v || {}; down += num(v.phDownMl) || 0; up += num(v.phUpMl) || 0; water += num(r.type === "mix" ? v.water : v.waterAdd) || 0;
-    [["A", "mlA"], ["B", "mlB"]].forEach(function (p) {
-      var ml = num(v[p[1]]); if (!ml) return; if (p[0] === "A") mlA += ml; else mlB += ml;
-      var rc = recipeFor(p[0], r.date); if (!rc || !recipeMl(rc)) return; var frac = ml / recipeMl(rc);
-      (rc.items || []).forEach(function (it) { var g = toBase(it); if (g == null) return; var key = it.name + "|" + unitBase(it); per[key] = (per[key] || 0) + g * frac; });
-    });
-  });
-  return { mlA: mlA, mlB: mlB, down: down, up: up, water: water, per: per };
-}
 function computeStock() {
   var out = {};
   ["A", "B"].forEach(function (tk) {
@@ -1763,389 +1838,6 @@ function computeStock() {
     var left = recipeMl(rc) - used; out[tk] = { rc: rc, used: used, left: left, pct: Math.max(0, left / recipeMl(rc) * 100) };
   });
   return out;
-}
-function daily(rows) {
-  var by = {}; rows.forEach(function (r) { (by[r.date] = by[r.date] || []).push(r); });
-  return Object.keys(by).sort().reverse().map(function (d) {
-    var a = by[d], g = function (t) { return a.filter(function (r) { return r.type === t; }); };
-    var ecs = a.map(function (r) { return r.v && ec25(num(r.v.ec), num(r.v.wt)); }), phs = a.map(function (r) { return r.v && ph25(num(r.v.ph), num(r.v.wt)); }), wts = a.filter(function (r) { return r.type !== "temp"; }).map(function (r) { return num(r.v && r.v.wt); });
-    var mr = g("mix").concat(g("refill"));
-    return { d: d, mix: mr.length, mlA: sum(mr.map(function (r) { return num(r.v.mlA); })), mlB: sum(mr.map(function (r) { return num(r.v.mlB); })), ec: avg(ecs), ph: avg(phs), wt: avg(wts),
-      air: avg(g("temp").map(function (r) { return metric(r.v, "air"); })), rh: avg(g("temp").map(function (r) { return metric(r.v, "rh"); })), lux: avg(g("light").map(function (r) { return metric(r.v, "lux"); })),
-      irr: g("irr").length, lit: sum(g("irr").map(function (r) { return irrL(r.v); })), seeds: sum(g("sow").map(function (r) { return num(r.v.seeds); })), kg: sum(g("harvest").map(function (r) { return num(r.v.weight); })),
-      notes: g("note").length, pend: a.filter(function (r) { return !r.review; }).length };
-  });
-}
-function ptsFor(rows, k) {
-  var t = function (r) { return new Date(r.date + "T" + (r.time || "12:00") + ":00").getTime(); }, lab = function (r) { return r.date.slice(5) + " " + fmtTime(r.time); };
-  if (k === "air" || k === "lux" || k === "rh") { var ty = k === "lux" ? "light" : "temp"; return rows.filter(function (r) { return r.type === ty && metric(r.v, k) != null; }).map(function (r) { return { t: t(r), y: metric(r.v, k), lab: lab(r) }; }); }
-  if (k === "wt") return rows.filter(function (r) { return r.type !== "temp" && r.v && num(r.v.wt) != null; }).map(function (r) { return { t: t(r), y: num(r.v.wt), lab: lab(r) }; });
-  return rows.filter(function (r) { return r.v && num(r.v[k]) != null; }).map(function (r) { var y = k === "ec" ? ec25(num(r.v.ec), num(r.v.wt)) : ph25(num(r.v.ph), num(r.v.wt)); return { t: t(r), y: y, lab: lab(r) }; });
-}
-function zoneTable(rows, m, dec, title, D, sec) {
-  D = D || DIMS.t; sec = sec || "t";
-  var ty = m === "lux" ? "light" : "temp", list = rows.filter(function (r) { return r.type === ty && gridKeysD(m, D).some(function (k) { return num(r.v[k]) != null; }); }); if (!list.length) return "";
-  var cell = function (ri, ci) { return avg(list.map(function (r) { return num(r.v[gkey(m, D.rows[ri], D.cols[ci])]); })); };
-  var h = "<h3>" + title + '</h3><div class="tbl-wrap" style="margin:6px 0 12px"><table class="minitable"><thead><tr><th></th>' + D.colL.map(function (l) { return "<th>" + l + "</th>"; }).join("") + "<th>متوسط " + D.rowName + "</th></tr></thead><tbody>";
-  D.rows.forEach(function (r, ri) { h += "<tr><td>" + D.rowL[ri] + "</td>" + D.cols.map(function (c, ci) { var v = cell(ri, ci); return '<td class="' + (isBad(chk(m, v, sec)) ? "bad" : "") + '">' + f(v, dec) + "</td>"; }).join("") + "<td><b>" + f(avg(D.cols.map(function (c, ci) { return cell(ri, ci); })), dec) + "</b></td></tr>"; });
-  h += "<tr><td>متوسط " + D.colName + "</td>" + D.cols.map(function (c, ci) { return "<td><b>" + f(avg(D.rows.map(function (r, ri) { return cell(ri, ci); })), dec) + "</b></td>"; }).join("") + "<td><b>" + f(avg(list.map(function (r) { return avg(gridKeysD(m, D).map(function (k) { return num(r.v[k]); })); })), dec) + "</b></td></tr>";
-  return h + "</tbody></table></div>";
-}
-function sideReport(rows) {
-  var T = rows.filter(function (r) { return r.type === "temp"; }), L = rows.filter(function (r) { return r.type === "light"; }), I = rows.filter(function (r) { return r.type === "irr"; });
-  var W = rows.filter(function (r) { return r.type === "sow"; }), P = rows.filter(function (r) { return r.type === "photo"; });
-  var sa = function (list, m, si) { return avg(list.map(function (r) { return sideAvg(r.v, m, si); })); };
-  var lines = [
-    ["حرارة الجو (°C)", function (si) { return sa(T, "air", si); }, 1, "air"],
-    ["الرطوبة (%)", function (si) { return sa(T, "rh", si); }, 0, "rh"],
-    ["الضوء (lux)", function (si) { return sa(L, "lux", si); }, 0, "lux"],
-    ["محلول الري (لتر)", function (si) { return sum(I.map(function (r) { return irrL(r.v, si); })); }, 1],
-    ["عدد الريات", function (si) { return I.filter(function (r) { return irrL(r.v, si) > 0; }).length; }, 0],
-    ["مدة الري (دقيقة)", function (si) { return sum(I.map(function (r) { return num(r.v["mins_" + SK[si]]); })); }, 0],
-    ["البذور المزروعة", function (si) { return sum(W.filter(function (r) { return sideIdx(r.v) === si; }).map(function (r) { return num(r.v.seeds); })); }, 0],
-    ["صور النمو", function (si) { return P.filter(function (r) { return sideIdx(r.v) === si; }).length; }, 0]
-  ];
-  var body = lines.map(function (L2) {
-    var a = L2[1](0), b = L2[1](1); if ((a == null || a === 0) && (b == null || b === 0)) return "";
-    var d = a != null && b != null ? a - b : null;
-    return "<tr><td>" + L2[0] + "</td>" + [a, b].map(function (x) { return '<td class="' + (L2[3] && isBad(chk(L2[3], x, "n")) ? "bad" : "") + '">' + f(x, L2[2]) + "</td>"; }).join("") + '<td class="muted">' + (d == null ? "—" : (d > 0 ? "+" : "") + f(d, L2[2])) + "</td></tr>";
-  }).join("");
-  if (!body) return "";
-  return '<section class="sec"><div class="card"><h2>اليمين واليسار</h2><div class="tbl-wrap" style="border:0;margin-top:6px"><table class="minitable"><thead><tr><th></th><th>اليمين</th><th>اليسار</th><th>الفرق</th></tr></thead><tbody>' + body + "</tbody></table></div>" +
-    zoneTable(rows, "air", 1, "حرارة الجو حسب الجهة والموقع (°C)", DIMS.n, "n") + zoneTable(rows, "rh", 0, "الرطوبة حسب الجهة والموقع (%)", DIMS.n, "n") + zoneTable(rows, "lux", 0, "الضوء حسب الجهة والموقع (lux)", DIMS.n, "n") + "</div></section>";
-}
-/* ---------- إضافات التقارير ---------- */
-function repDates(start, end) { var t = todayStr(), last = end < t ? end : start === t ? t : addDays(t, -1), out = [], d = start; while (d <= last) { out.push(d); d = addDays(d, 1); } return out; }
-/* التزام التسجيل: المطلوب حسب جدول المهام الحالي مقابل المسجّل فعلاً لكل يوم */
-function compliance(rows, sec, start, end) {
-  var dates = repDates(start, end), by = {}, types = {};
-  rows.forEach(function (r) { (by[r.date] = by[r.date] || []).push(r); });
-  var days = dates.map(function (d) {
-    var E = secEntries(by[d] || [], sec), need = 0, done = 0, miss = [];
-    TASKS[sec].forEach(function (x) {
-      var n = needOf(sec, x); if (!n) return; var k = Math.min(n, doneOf(E, x[0]));
-      need += n; done += k; var t = types[x[0]] = types[x[0]] || { need: 0, done: 0 }; t.need += n; t.done += k;
-      if (k < n) miss.push(typeDef(x[0], sec).label + (n > 1 ? " " + k + "/" + n : ""));
-    });
-    return { d: d, need: need, done: done, miss: miss };
-  });
-  var need = sum(days.map(function (x) { return x.need; })), done = sum(days.map(function (x) { return x.done; }));
-  return { days: days, types: types, need: need, done: done, full: days.filter(function (x) { return x.need && x.done >= x.need; }).length };
-}
-function pct(a, b) { return b ? Math.round(a / b * 100) : null; }
-function complianceHTML(C, sec) {
-  if (!C.need) return "";
-  var p = pct(C.done, C.need), cls = p >= 90 ? "ok" : p >= 70 ? "warn" : "bad";
-  var types = Object.keys(C.types).map(function (t) { var x = C.types[t], q = pct(x.done, x.need); return "<tr><td>" + esc(typeDef(t, sec).label) + '</td><td class="num">' + x.done + " / " + x.need + '</td><td class="num ' + (q < 70 ? "bad" : "") + '">' + q + "%</td></tr>"; }).join("");
-  var short = C.days.filter(function (x) { return x.need && x.done < x.need; }).reverse().slice(0, 7), more = C.days.filter(function (x) { return x.need && x.done < x.need; }).length - short.length;
-  return '<section class="sec"><div class="card"><h2>التزام التسجيل</h2><p style="margin:4px 0 8px"><span class="pill ' + cls + '">' + p + "%</span> · " + C.done + " من " + C.need + " تسجيلاً مطلوباً · أيام مكتملة " + C.full + " من " + C.days.length + "</p>" +
-    '<div class="tbl-wrap" style="border:0"><table class="minitable"><thead><tr><th>المهمة</th><th>المنجز</th><th>النسبة</th></tr></thead><tbody>' + types + "</tbody></table></div>" +
-    (short.length ? '<h3 style="margin-top:10px">أيام فيها نقص</h3><div class="tbl-wrap" style="border:0"><table class="minitable wrapcells"><thead><tr><th>اليوم</th><th>الناقص</th></tr></thead><tbody>' + short.map(function (x) { return '<tr><td class="num">' + esc(fmtShort(x.d)) + "</td><td>" + esc(x.miss.join("، ")) + "</td></tr>"; }).join("") + "</tbody></table></div>" + (more > 0 ? '<p class="muted" style="font-size:12px;margin:4px 0 0">و' + more + " أيام أخرى · التفاصيل كاملة في ملف Excel</p>" : "") : "") +
-    '<p class="help muted" style="font-size:12px;margin:6px 0 0">محسوب حسب جدول المهام الحالي في الإعدادات' + (C.days.length && C.days[C.days.length - 1].d !== todayStr() && S.rep.end >= todayStr() ? "، حتى أمس (اليوم لم يكتمل بعد)" : "") + ".</p></div></section>";
-}
-/* القراءات اليدوية خارج الحدود */
-var LIM_ROWS = [["ec", "الأملاح EC", 0], ["ph", "pH", 2], ["wt", "حرارة الماء", 1], ["air", "حرارة الجو", 1], ["rh", "الرطوبة", 0], ["lux", "الضوء", 0]];
-function limitStats(rows, sec) {
-  return LIM_ROWS.map(function (L) {
-    var pts = ptsFor(rows, L[0]).filter(function (p) { return p.y != null && isFinite(p.y); }), lo = 0, hi = 0;
-    pts.forEach(function (p) { var st = chk(L[0], p.y, sec, p.t); if (st === "lo") lo++; else if (st === "hi") hi++; });
-    return { k: L[0], l: L[1], n: pts.length, lo: lo, hi: hi, min: pts.length ? Math.min.apply(null, pts.map(function (p) { return p.y; })) : null, max: pts.length ? Math.max.apply(null, pts.map(function (p) { return p.y; })) : null, d: L[2] };
-  }).filter(function (x) { return x.n; });
-}
-function limitsHTML(st) {
-  if (!st.length) return "";
-  return '<section class="sec"><div class="card"><h2>القراءات اليدوية خارج الحدود</h2><div class="tbl-wrap" style="border:0;margin-top:6px"><table class="minitable"><thead><tr><th>القياس</th><th>القراءات</th><th>ضمن الحد</th><th>منخفض</th><th>مرتفع</th></tr></thead><tbody>' +
-    st.map(function (x) { var q = pct(x.n - x.lo - x.hi, x.n); return "<tr><td>" + x.l + '</td><td class="num">' + x.n + '</td><td class="num ' + (q < 80 ? "bad" : "") + '">' + q + '%</td><td class="num ' + (x.lo ? "bad" : "") + '">' + x.lo + '</td><td class="num ' + (x.hi ? "bad" : "") + '">' + x.hi + "</td></tr>"; }).join("") +
-    "</tbody></table></div></div></section>";
-}
-/* نشاط العمال والمراجعة */
-function workerStats(rows) {
-  var by = {};
-  rows.forEach(function (r) { if (r.type === "selftest" || !r.by) return; var w = by[r.by] = by[r.by] || { id: r.by, n: 0, ok: 0, flag: 0, pend: 0, days: {} }; w.n++; w.days[r.date] = 1; if (!r.review) w.pend++; else if (r.review.s === "ok") w.ok++; else w.flag++; });
-  return Object.keys(by).map(function (k) { by[k].dn = Object.keys(by[k].days).length; return by[k]; }).sort(function (a, b) { return b.n - a.n; });
-}
-function workersHTML(ws) {
-  if (!ws.length) return "";
-  var pend = sum(ws.map(function (w) { return w.pend; })), flag = sum(ws.map(function (w) { return w.flag; }));
-  return '<section class="sec"><div class="card"><h2>العمال والمراجعة</h2><p style="margin:4px 0 8px">بانتظار المراجعة: <b class="num">' + pend + '</b> · عليها ملاحظة: <b class="num">' + flag + "</b></p>" +
-    '<div class="tbl-wrap" style="border:0"><table class="minitable"><thead><tr><th>الاسم</th><th>التسجيلات</th><th>أيام العمل</th><th>معتمد</th><th>ملاحظة</th><th>بانتظار</th></tr></thead><tbody>' +
-    ws.map(function (w) { return "<tr><td>" + esc(nameOf(w.id)) + '</td><td class="num">' + w.n + '</td><td class="num">' + w.dn + '</td><td class="num">' + w.ok + '</td><td class="num ' + (w.flag ? "bad" : "") + '">' + w.flag + '</td><td class="num">' + w.pend + "</td></tr>"; }).join("") +
-    "</tbody></table></div></div></section>";
-}
-/* البيئة من الحساسات للفترة نفسها (تُحمَّل مرة لكل فترة وتُعاد عند "تحديث") */
-function sensRep(rows) {
-  if (!window.SENS || !SENS.report || !S.rep || !S.rep.all) return null;
-  if(window.GSUI&&!GSUI.ready())return {loading:true};
-  var key = S.rep.start + "|" + S.rep.end + "|" + S.sec + "|" + (window.GSUI?GSUI.careKey():"");
-  if (!S.repSens || S.repSens.key !== key) {
-    var force = !!S.repSensForce; S.repSensForce = false; S.repSens = { key: key, loading: true };
-    SENS.report(S.rep.start, S.rep.end, rows, force).then(function (d) { if (S.repSens && S.repSens.key === key) { S.repSens = { key: key, data: d }; render(); } })
-      .catch(function (e) { console.warn(e); if (S.repSens && S.repSens.key === key) { S.repSens = { key: key, err: String(e && e.message || e) }; render(); } });
-  }
-  return S.repSens;
-}
-function hrsTxt(x) { return x == null ? "—" : f(x, x < 10 ? 1 : 0) + " س"; }
-function sensRepHTML(R) {
-  if (!R) return "";
-  var head = '<section class="sec"><h2>البيئة من الحساسات</h2>';
-  if (R.loading) return head + '<div class="empty">جارٍ قراءة بيانات الحساسات للفترة…</div></section>';
-  if (R.err) return head + '<div class="empty">تعذّر قراءة الحساسات: ' + esc(R.err) + "</div></section>";
-  var L = R.data.sensors; if (!L.length) return head + '<div class="empty">لا توجد قراءات حساسات في ' + esc(SECS[S.sec].name) + " لهذه الفترة.</div></section>";
-  var lo = lim("air", S.sec, "00:00")[0], hi = lim("air", S.sec, null)[1];
-  var dg = function (x) { return x == null ? "—" : '<bdi dir="ltr" class="num">' + f(x, 1) + "°</bdi>"; };
-  var df = function (d, u, dec) { return d ? '<bdi dir="ltr" class="num ' + (Math.abs(d.avg) > (u === "°" ? 1.5 : 8) ? "sn-warn" : "") + '">' + (d.avg > 0 ? "+" : "") + f(d.avg, dec) + u + '</bdi> <small class="muted">' + d.n + " قراءة</small>" : '<span class="muted">—</span>'; };
-  var rowsT = [
-    ["حرارة النهار / الليل <small>متوسط " + dnSpan() + "</small>", function (s) { return dg(s.tDay) + " / " + dg(s.tNight); }],
-    ["أعلى / أدنى حرارة", function (s) { return '<span class="' + (s.dMax > hi ? "sn-bad" : "") + '">' + dg(s.dMax) + '</span> / <span class="' + (s.nMin < lo ? "sn-bad" : "") + '">' + dg(s.nMin) + "</span>"; }],
-    ["الحرارة ضمن الحد <small>" + dnTxt("air", S.sec, "°") + "</small>", function (s) { var q = pct(s.tot.inT, s.tot.cov); return q == null ? "—" : '<b class="num ' + (q < 70 ? "sn-bad" : q < 90 ? "sn-warn" : "") + '">' + q + "%</b>"; }],
-    ["ساعات الإجهاد الحراري <small>فوق حد الإجهاد · مجموع الفترة</small>", function (s) { return '<span class="' + (s.tot.heat >= 3 ? "sn-bad" : s.tot.heat > 0.4 ? "sn-warn" : "") + '">' + hrsTxt(s.tot.heat) + "</span>"; }],
-    ["الرطوبة ضمن الحد", function (s) { var q = pct(s.tot.inH, s.tot.hCov); return q == null ? "—" : '<b class="num ' + (q < 70 ? "sn-bad" : q < 90 ? "sn-warn" : "") + '">' + q + "%</b>"; }],
-    ["VPD نهاراً <small>kPa · متوسط " + dnSpan(true) + "</small>", function (s) { if (s.vDay == null) return "—"; var o = s.vDay >= s.vMin && s.vDay <= s.vMax; return '<b class="num ' + (o ? "" : "sn-warn") + '"><bdi dir="ltr">' + s.vDay.toFixed(2) + "</bdi></b> " + '<small class="muted">' + (s.vDay < s.vMin ? "رطب" : s.vDay > s.vMax ? "جاف" : "مثالي") + "</small>"; }],
-    ["VPD ضمن المثالي <small>نسبة الوقت</small>", function (s) { var q = pct(s.tot.inV, s.tot.vCov); return q == null ? "—" : '<b class="num ' + (q < 50 ? "sn-bad" : q < 75 ? "sn-warn" : "") + '">' + q + "%</b>"; }],
-    ["نقطة الندى <small>متوسط الفترة</small>", function (s) { return s.dewAvg == null ? "—" : dg(s.dewAvg); }],
-    ["أقل هامش ندى <small>الحرارة ناقص نقطة الندى · ومتى</small>", function (s) { var m = s.minMg; if (!m) return "—"; var d = new Date(m.t), dt = todayStr(d), hm = String(d.getHours()).padStart(2, "0") + ":" + String(d.getMinutes()).padStart(2, "0"); return '<b class="num ' + (m.v <= s.dewGap ? "sn-bad" : "") + '"><bdi dir="ltr">' + f(m.v, 1) + '°</bdi></b> <small class="muted">' + esc(fmtShort(dt)) + " " + fmtTime(hm) + "</small>"; }],
-    ["ساعات التكثّف المحتمل <small>على الأوراق · هامش ندى ≤ " + f(L[0] ? L[0].condGap : 1) + "° · مجموع الفترة</small>", function (s) { if (!s.hasDew) return "—"; var h = s.tot.cond; return h > 0 ? '<b class="num sn-bad">' + hrsTxt(h) + '</b> <small class="muted">' + s.days.filter(function (d) { return d.cond > 0; }).length + " يوم</small>" : '<span class="sn-good">لا يوجد</span>'; }],
-    ["ساعات خطر الأمراض الفطرية <small>مجموع الفترة</small>", function (s) { return '<span class="' + (s.tot.risk >= 6 * s.days.length ? "sn-bad" : s.tot.risk >= 2 * s.days.length ? "sn-warn" : "") + '">' + hrsTxt(s.tot.risk) + "</span>"; }],
-    ["فرق الحساس عن القياس اليدوي: الحرارة", function (s) { return df(s.diffT, "°", 1); }],
-    ["فرق الحساس عن القياس اليدوي: الرطوبة", function (s) { return df(s.diffH, "%", 0); }],
-    ["تغطية البيانات <small>من ساعات الفترة</small>", function (s) { var full = s.days.length * 24; return '<span class="muted">' + (pct(Math.max(s.tot.cov, s.tot.hCov), full) || 0) + "%</span>"; }]
-  ];
-  return head + '<div class="tbl-wrap"><table class="sn-tbl sn-an"><thead><tr><th>المؤشر</th>' + L.map(function (s) { return '<th><i class="sn-sw" style="background:' + s.col + '"></i><bdi>' + esc(s.name) + "</bdi></th>"; }).join("") + "</tr></thead><tbody>" +
-    rowsT.map(function (r) { return "<tr><td>" + r[0] + "</td>" + L.map(function (s) { return "<td>" + r[1](s) + "</td>"; }).join("") + "</tr>"; }).join("") +
-    '</tbody></table></div><p class="help muted" style="font-size:12px">الفرق الموجب يعني أن الحساس أعلى من القياس اليدوي في نفس الموقع والوقت. فرق ثابت أكبر من 1.5° في الحرارة أو 8% في الرطوبة يعني أن الحساس يحتاج معايرة أو أن مكانه يختلف عن مكان القياس.</p></section>';
-}
-/* ---------- الملخص: جمل تلقائية مرتبة بالأهمية ---------- */
-function repFindings(rows, sec, R) {
-  var out = [], add = function (tone, txt) { out.push([tone, txt]); };
-  var C = compliance(rows, sec, R.start, R.end);
-  if (C.need) {
-    var p = pct(C.done, C.need), worst = Object.keys(C.types).map(function (t) { return [t, C.types[t]]; }).filter(function (x) { return x[1].need; }).sort(function (a, b) { return a[1].done / a[1].need - b[1].done / b[1].need; })[0];
-    add(p >= 90 ? "ok" : p >= 70 ? "warn" : "bad", "التزام التسجيل <b>" + p + "%</b>: سُجّل " + C.done + " من " + C.need + " تسجيلاً مطلوباً" + (worst && worst[1].done < worst[1].need ? "، وأكثر مهمة ناقصة " + esc(typeDef(worst[0], sec).label) + " (" + worst[1].done + " من " + worst[1].need + ")" : "") + ".");
-  }
-  var SR = S.repSens && S.repSens.data;
-  if (SR && SR.sensors.length) {
-    var L = SR.sensors, hi = lim("air", sec, null)[1], lo = lim("air", sec, "00:00")[0];
-    var mx = L.filter(function (s) { return s.dMax != null; }).sort(function (a, b) { return b.dMax - a.dMax; })[0], mn = L.filter(function (s) { return s.nMin != null; }).sort(function (a, b) { return a.nMin - b.nMin; })[0];
-    if (mx) add(mx.dMax > hi ? "bad" : "n", "أعلى حرارة <b>" + f(mx.dMax, 1) + "°</b> عند " + esc(mx.name) + (mx.dMax > hi ? "، فوق الحد " + f(hi) + "°" : "") + ".");
-    if (mn) add(mn.nMin < lo ? "warn" : "n", "أدنى حرارة <b>" + f(mn.nMin, 1) + "°</b> عند " + esc(mn.name) + (mn.nMin < lo ? "، تحت الحد " + f(lo) + "°" : "") + ".");
-    var inT = L.filter(function (s) { return s.tot.cov; }).map(function (s) { return pct(s.tot.inT, s.tot.cov); });
-    if (inT.length) { var a = Math.min.apply(null, inT), b = Math.max.apply(null, inT); add(a >= 90 ? "ok" : a >= 70 ? "warn" : "bad", "الحرارة ضمن الحد <b>" + (a === b ? a : a + "–" + b) + "%</b> من الوقت حسب الحساسات."); }
-    var heat = L.reduce(function (t, s) { return t + (s.tot.heat || 0); }, 0); if (heat > 0.4) add("bad", "إجهاد حراري <b>" + hrsTxt(heat) + "</b> مجموعاً بين الحساسات.");
-    var cnd = L.filter(function (s) { return s.tot.cond > 0; }).sort(function (a, b) { return b.tot.cond - a.tot.cond; });
-    if (cnd.length) add("bad", "تكثّف محتمل على الأوراق <b>" + hrsTxt(cnd[0].tot.cond) + "</b> عند " + esc(cnd[0].name) + " في " + cnd[0].days.filter(function (d) { return d.cond > 0; }).length + " يوم. افحص الأوراق القريبة وحسّن التهوية ليلاً.");
-    else if (L.some(function (s) { return s.hasDew; })) add("ok", "لا تكثّف محتمل على الأوراق خلال الفترة.");
-    var vp = L.filter(function (s) { return s.vDay != null; }); if (vp.length) { var vo = vp.filter(function (s) { return s.vDay < s.vMin || s.vDay > s.vMax; }); add(vo.length ? "warn" : "ok", vo.length ? "VPD نهاراً خارج المثالي عند " + vo.map(function (s) { return esc(s.name) + " (" + s.vDay.toFixed(2) + ")"; }).join("، ") + "." : "VPD نهاراً ضمن المثالي في كل الحساسات."); }
-  } else if (S.repSens && S.repSens.loading) add("n", "جارٍ قراءة بيانات الحساسات…");
-  var LS = limitStats(rows, sec), badL = LS.filter(function (x) { return x.lo + x.hi > 0; });
-  badL.forEach(function (x) { add(x.lo + x.hi > x.n * 0.2 ? "bad" : "warn", esc(x.l) + " خارج الحد في <b>" + (x.lo + x.hi) + "</b> من " + x.n + " قراءة يدوية (" + (x.hi ? "أعلى قراءة " + f(x.max, x.d) : "أدنى قراءة " + f(x.min, x.d)) + ")."); });
-  if (LS.length && !badL.length) add("ok", "كل القراءات اليدوية ضمن الحدود.");
-  var pend = rows.filter(function (r) { return !r.review; }).length, flg = rows.filter(function (r) { return r.review && r.review.s === "flag"; }).length;
-  if (pend || flg) add(pend > 20 ? "warn" : "n", (pend ? "<b>" + pend + "</b> تسجيلاً بانتظار المراجعة" : "") + (pend && flg ? "، و" : "") + (flg ? "<b>" + flg + "</b> عليها ملاحظة" : "") + ".");
-  var rank = { bad: 0, warn: 1, n: 2, ok: 3 };
-  return out.sort(function (a, b) { return rank[a[0]] - rank[b[0]]; });
-}
-function kpi(lab, val, unit, sub) { return '<div class="stat sm"><span class="lab">' + lab + '</span><span class="val num">' + val + (unit ? " <small>" + unit + "</small>" : "") + "</span>" + (sub ? '<span class="sub">' + sub + "</span>" : "") + "</div>"; }
-function repView() {
-  var sec = S.sec, R = S.rep;
-  var tabs = [["sum", "الملخص"], ["env", "البيئة"], ["sol", "المحلول"], ["prod", "الإنتاج"], ["team", "الفريق"]];
-  var h = '<section class="sec"><div class="sec-h"><h2>التقارير · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2><button class="btn sm" data-act="refreshRep">تحديث</button></div>' +
-    '<div class="seg" role="group" aria-label="الفترة">' + [[1, S.date === todayStr() ? "اليوم" : fmtShort(S.date)], [7, "7 أيام"], [30, "30 يوم"], [90, "90 يوم"]].map(function (p) { return '<button type="button" data-act="repDays" data-n="' + p[0] + '" aria-pressed="' + (S.repDays === p[0]) + '">' + p[1] + "</button>"; }).join("") +
-    '</div><p class="muted" style="margin:0;font-size:12.5px">' + (S.repDays === 1 ? fmtDate(S.date) : fmtShort(addDays(S.date, -(S.repDays - 1))) + " – " + fmtShort(S.date)) + " · لفترة سابقة غيّر التاريخ في الأعلى</p>" + subTabs("rep", tabs) + "</section>";
-  if (!R || R.loading) return h + '<div class="empty">جارٍ تجهيز التقرير…</div>';
-  if (R.err) return h + '<div class="empty">تعذّر تحميل التقرير. اضغط تحديث.</div>';
-  var tab = subGet("rep", tabs), rows = R.all.filter(function (r) { return secOf(r) === sec; }), sr = sensRep(rows);
-  var none = '<div class="empty">لا توجد تسجيلات يدوية في ' + SECS[sec].name + " لهذه الفترة.</div>";
-  var C = consumption(rows), cnt = function (t, k) { return sum(rows.filter(function (r) { return r.type === t; }).map(function (r) { return num(r.v[k]); })); };
-
-  if (tab === "sum") {
-    var F = repFindings(rows, sec, R);
-    h += '<section class="sec"><div class="card"><h2>أهم ما في الفترة</h2>' + (F.length ? '<ul class="finds">' + F.map(function (x) { return '<li class="' + x[0] + '">' + x[1] + "</li>"; }).join("") + "</ul>" : '<p class="muted">لا توجد بيانات كافية للفترة.</p>') + "</div></section>";
-    if (rows.length) {
-      var ks = [], irr = rows.filter(function (r) { return r.type === "irr"; });
-      if (sec === "n") { if (irr.length) ks.push(kpi("محلول الري", f(sum(irr.map(function (r) { return irrL(r.v); }))), "لتر", irr.length + " رية")); var sd = cnt("sow", "seeds"); if (sd) ks.push(kpi("البذور المزروعة", f(sd), "")); }
-      else { var hv = cnt("harvest", "weight"), xp = cnt("xplant", "count"); if (hv) ks.push(kpi("الحصاد", f(hv, 1), "كغ")); if (xp) ks.push(kpi("الشتلات المنقولة", f(xp), "")); if (C.water) ks.push(kpi("الماء المضاف للخزان", f(C.water), "لتر")); }
-      if (C.mlA || C.mlB) ks.push(kpi("محلول A + B", f(C.mlA) + " + " + f(C.mlB), "مل"));
-      var nt = rows.filter(function (r) { return r.type === "note" && (r.v || {}).cat !== NOTE_NONE; }).length; if (nt) ks.push(kpi("ملاحظات النبات", nt, ""));
-      if (ks.length) h += '<section class="sec"><div class="grid2 grid-stat">' + ks.join("") + "</div></section>";
-      var D = daily(rows), dh = "";
-      (function () { var h = ""; h += '<section class="sec"><h2>الملخص اليومي</h2><div class="tbl-wrap"><table><thead><tr><th>التاريخ</th><th>خلط/تعويض</th><th>A مل</th><th>B مل</th><th>EC</th><th>pH</th><th>حرارة الماء</th><th>حرارة الجو</th><th>الرطوبة</th><th>الضوء</th>' + (sec === "n" ? "<th>ريات</th><th>لتر</th><th>بذور</th>" : "<th>حصاد كغ</th>") + "<th>ملاحظات</th><th>بانتظار المراجعة</th></tr></thead><tbody>" +
-    D.map(function (r) { return '<tr><td class="num">' + r.d + '</td><td class="num">' + r.mix + '</td><td class="num">' + f(r.mlA) + '</td><td class="num">' + f(r.mlB) + '</td><td class="num">' + f(r.ec) + '</td><td class="num">' + f(r.ph, 2) + '</td><td class="num">' + f(r.wt, 1) + '</td><td class="num">' + f(r.air, 1) + '</td><td class="num">' + f(r.rh) + '</td><td class="num">' + f(r.lux) + "</td>" + (sec === "n" ? '<td class="num">' + r.irr + '</td><td class="num">' + f(r.lit, 1) + '</td><td class="num">' + f(r.seeds) + "</td>" : '<td class="num">' + f(r.kg, 1) + "</td>") + '<td class="num">' + r.notes + '</td><td class="num">' + r.pend + "</td></tr>"; }).join("") + "</tbody></table></div></section>";
- dh = h; })();
-      h += '<section class="sec folds">' + fold("rep_daily", "الملخص اليومي (جدول)", dh.replace('<section class="sec"><h2>الملخص اليومي</h2>', "").replace(/<\/section>$/, ""), { icon: "today" }) + "</section>";
-    }
-      h += '<section class="sec"><div class="card"><h2>تصدير إلى Excel</h2><p class="muted" style="font-size:13.5px">ملف ' + SECS[sec].name + ' فيه ورقة لكل نوع تسجيل، والملخص اليومي، والمعدات، والوصفات، واستهلاك الأسمدة، والتزام التسجيل، والقراءات خارج الحدود، والعمال، وبيانات الحساسات للفترة المختارة.</p><button class="btn pri block" data-act="export">تنزيل ملف Excel</button></div></section>';
-    return h;
-  }
-  if (tab === "env") {
-    h += sensRepHTML(sr);
-    if (!rows.length) return h;
-    h += '<section class="sec"><h2>القياس اليدوي</h2>' + [["air", "حرارة الجو، متوسط (°C)"], ["rh", "الرطوبة، متوسط (%)"], ["lux", "متوسط الضوء (lux)"]].map(function (c) { return '<h3 class="ch-t">' + c[1] + '</h3><div class="card chart" data-chart="' + c[0] + '"></div>'; }).join("") + "</section>";
-    if (sec === "n") h += sideReport(rows);
-    else { var zt = zoneTable(rows, "air", 1, "حرارة الجو حسب المنطقة والمستوى (°C)") + zoneTable(rows, "rh", 0, "الرطوبة حسب المنطقة والمستوى (%)") + zoneTable(rows, "lux", 0, "الضوء حسب المنطقة والمستوى (lux)"); if (zt) h += '<section class="sec"><div class="card">' + zt + "</div></section>"; }
-    return h;
-  }
-  if (!rows.length) return h + none;
-  if (tab === "sol") {
-    var ks2 = [];
-    if (C.mlA || C.mlB) { ks2.push(kpi("محلول A", f(C.mlA), "مل")); ks2.push(kpi("محلول B", f(C.mlB), "مل")); }
-    if (C.down || C.up) ks2.push(kpi("خافض / رافع pH", f(C.down) + " / " + f(C.up), "مل"));
-    if (C.water) ks2.push(kpi("الماء المضاف", f(C.water), "لتر"));
-    if (ks2.length) h += '<section class="sec"><div class="grid2 grid-stat">' + ks2.join("") + "</div></section>";
-    h += limitsHTML(limitStats(rows, sec));
-    h += '<section class="sec">' + [["ec", "الأملاح" + (cfg("atc") ? "" : " عند 25°") + " (µS/cm)"], ["ph", "pH"], ["wt", "حرارة ماء المحلول (°C)"]].map(function (c) { return '<h3 class="ch-t">' + c[1] + '</h3><div class="card chart" data-chart="' + c[0] + '"></div>'; }).join("") + "</section>";
-  var per = Object.keys(C.per).map(function (k) { return [k, C.per[k]]; }).sort(function (a, b) { return b[1] - a[1]; });
-    h += '<section class="sec"><h2>استهلاك الأسمدة التقديري</h2><p class="muted" style="margin:0;font-size:13px">من كميات A و B في سجلات الخلط والتعويض، وآخر وصفة لكل عبوة.</p>';
-    h += per.length ? '<div class="tbl-wrap"><table><thead><tr><th>المادة</th><th>الكمية</th></tr></thead><tbody>' + per.map(function (p) { var n = p[0].split("|"), g = p[1]; return "<tr><td>" + esc(n[0]) + '</td><td class="num">' + (g >= 1000 ? f(g / 1000, 2) + (n[1] === "غ" ? " كغ" : " لتر") : f(g, 3) + " " + n[1]) + "</td></tr>"; }).join("") + "</tbody></table></div>" : '<div class="empty">سجّل وصفة لعبوتي A و B من قسم المشرف ليظهر استهلاك كل مادة.</div>';
-    h += "</section>";
-    return h;
-  }
-  if (tab === "prod") {
-    var kp = [], ir = rows.filter(function (r) { return r.type === "irr"; });
-    if (sec === "n") { kp.push(kpi("البذور المزروعة", f(cnt("sow", "seeds")), "")); kp.push(kpi("محلول الري", f(sum(ir.map(function (r) { return irrL(r.v); }))), "لتر", ir.length + " رية")); }
-    else { kp.push(kpi("الشتلات المنقولة", f(cnt("xplant", "count")), "")); kp.push(kpi("الحصاد", f(cnt("harvest", "weight"), 1), "كغ", f(cnt("harvest", "count")) + " نبتة")); }
-    kp.push(kpi("ملاحظات النبات", rows.filter(function (r) { return r.type === "note" && (r.v || {}).cat !== NOTE_NONE; }).length, ""));
-    kp.push(kpi("صور النمو", rows.filter(function (r) { return r.type === "photo"; }).length, ""));
-    h += '<section class="sec"><div class="grid2 grid-stat">' + kp.join("") + '</div></section><section class="sec"><button class="btn block" type="button" data-act="gallery">' + ico("gallery", 18) + "&nbsp; صور النمو</button></section>";
-    return h;
-  }
-  /* الفريق */
-  h += complianceHTML(compliance(rows, sec, R.start, R.end), sec) + workersHTML(workerStats(rows));
-  return h;
-}
-function sideSeries(rows, k) {
-  var ty = k === "lux" ? "light" : "temp", t = function (r) { return new Date(r.date + "T" + (r.time || "12:00") + ":00").getTime(); }, lab = function (r) { return r.date.slice(5) + " " + fmtTime(r.time); };
-  var list = rows.filter(function (r) { return r.type === ty; });
-  var out = [0, 1].map(function (si) { return { name: SIDES[si], pts: list.map(function (r) { return { t: t(r), y: sideAvg(r.v, k, si), lab: lab(r) }; }).filter(function (p) { return p.y != null; }) }; });
-  var old = list.filter(function (r) { return sideAvg(r.v, k, 0) == null && sideAvg(r.v, k, 1) == null && metric(r.v, k) != null; }).map(function (r) { return { t: t(r), y: metric(r.v, k), lab: lab(r) }; });
-  if (old.length) out.push({ name: "قبل التقسيم", pts: old });
-  return out;
-}
-function bindCharts() {
-  var R = S.rep; if (!R || !R.all) return; var rows = R.all.filter(function (r) { return secOf(r) === S.sec; });
-  document.querySelectorAll("[data-chart]").forEach(function (el) { var k = el.getAttribute("data-chart"); drawChart(el, S.sec === "n" && (k === "air" || k === "rh" || k === "lux") ? sideSeries(rows, k) : [{ pts: ptsFor(rows, k) }], k); });
-}
-/* مكان نافذة القراءة: فوق الرسم حتى لا تغطي الخطوط، وإن لم يتسع فبجانب المؤشر، وإلا في النصف البعيد عن النقاط */
-function placeTip(tip, r, px, ys) {
-  var tw = tip.offsetWidth || 160, th = tip.offsetHeight || 80, w = r.width, h = r.height, top = $("top"), barB = top && !top.hidden ? top.getBoundingClientRect().bottom : 0;
-  var cx = Math.max(4, Math.min(w - tw - 4, px - tw / 2));
-  if (r.top - th - 8 >= barB + 4) { tip.style.left = cx + "px"; tip.style.top = (-th - 8) + "px"; return; }
-  if (px + 14 + tw <= w - 4) { tip.style.left = (px + 14) + "px"; tip.style.top = "0px"; return; }
-  if (px - 14 - tw >= 4) { tip.style.left = (px - 14 - tw) + "px"; tip.style.top = "0px"; return; }
-  var avg = ys.length ? ys.reduce(function (a, b) { return a + b; }, 0) / ys.length : 0;
-  tip.style.left = cx + "px"; tip.style.top = (avg < h / 2 ? Math.max(0, h - th) : 0) + "px";
-}
-var CH_UNIT = { ec: "µS/cm", ph: "", wt: "°C", air: "°C", rh: "%", lux: "lux" };
-function drawChart(el, series, c) {
-  var COL = ["var(--ln1)", "var(--ln2)", "var(--ln3)"];
-  series = series.map(function (sr, i) { return { name: sr.name || "", col: COL[i % 3], pts: sr.pts.filter(function (p) { return p.y != null && isFinite(p.y) && Math.abs(p.y) < 1e9 && isFinite(p.t); }).sort(function (a, b) { return a.t - b.t; }) }; }).filter(function (sr) { return sr.pts.length; });
-  if (!series.length) { el.innerHTML = '<div class="muted" style="font-size:13px;text-align:center;padding:16px">لا توجد قراءات</div>'; return; }
-  var all = [].concat.apply([], series.map(function (sr) { return sr.pts; })).sort(function (a, b) { return a.t - b.t; });
-  var unit = CH_UNIT[c] || "", vdec = c === "ph" ? 2 : (c === "wt" || c === "air") ? 1 : 0, adec = c === "ph" ? 1 : 0;
-  var W = 420, H = 210, L = c === "lux" || c === "ec" ? 46 : 34, Rr = 12, T = 18, B = 28, lo = lim(c, S.sec, null)[0], hi = lim(c, S.sec, null)[1];
-  var ys = all.map(function (p) { return p.y; }), ymin = Math.min.apply(null, ys), ymax = Math.max.apply(null, ys), sp = Math.max(ymax - ymin, Math.abs(ymax) * 0.05, c === "ph" ? 0.2 : 1);
-  // نظهر نطاق الحدود كاملاً إن كان قريباً من القراءات، كي لا تنضغط الخطوط
-  if (lo != null && lo > ymin - sp * 1.5) ymin = Math.min(ymin, lo);
-  if (hi != null && hi < ymax + sp * 1.5) ymax = Math.max(ymax, hi);
-  var padv = (ymax - ymin) * 0.14 || 1; ymin -= padv; ymax += padv; if (Math.min.apply(null, ys) >= 0 && ymin < 0) ymin = 0;
-  var t0 = all[0].t, t1 = all[all.length - 1].t, span = t1 - t0;
-  var X = function (t) { return L + (span ? (t - t0) / span * (W - L - Rr) : (W - L - Rr) / 2); }, Y = function (y) { return T + (1 - (y - ymin) / (ymax - ymin)) * (H - T - B); };
-  var g = "", st4 = (ymax - ymin) / 4; adec = st4 < 0.1 ? 2 : st4 < 1 ? 1 : adec; // كسور عشرية حسب المدى حتى لا تتكرر الأرقام
-  for (var i = 0; i <= 4; i++) { var v = ymin + (ymax - ymin) * i / 4; g += '<line class="gl" x1="' + L + '" x2="' + (W - Rr) + '" y1="' + Y(v).toFixed(1) + '" y2="' + Y(v).toFixed(1) + '"/><text class="ax" x="' + (L - 5) + '" y="' + (Y(v) + 4).toFixed(1) + '" text-anchor="end">' + f(v, adec) + "</text>"; }
-  var band = lo != null && hi != null ? (function () { var y1 = Math.max(T, Y(Math.min(hi, ymax))), y2 = Math.min(H - B, Y(Math.max(lo, ymin))); return y2 > y1 ? '<rect x="' + L + '" width="' + (W - L - Rr) + '" y="' + y1.toFixed(1) + '" height="' + (y2 - y1).toFixed(1) + '" fill="var(--band)"/>' : ""; })() : "";
-  // محور الوقت: ساعات ليوم واحد، وتواريخ لأكثر
-  var hm = function (t) { var d = new Date(t); return pad(d.getHours()) + ":" + pad(d.getMinutes()); }, dlab = function (t) { var d = new Date(t); return d.getDate() + "/" + (d.getMonth() + 1); };
-  var oneDay = span < 36 * 3600e3, xs = "", uniq = all.map(function (p) { return p.t; }).filter(function (t, i, a) { return a.indexOf(t) === i; }), ticks;
-  if (oneDay && uniq.length <= 5) ticks = uniq; // أوقات القراءات نفسها
-  else { ticks = []; for (var k = 0; k < 4; k++) { var tt = t0 + span * k / 3; if (oneDay && k > 0 && k < 3) tt = Math.round(tt / 3600e3) * 3600e3; ticks.push(tt); } }
-  ticks.forEach(function (tt, k) { var xx = X(tt), an = ticks.length > 1 && k === 0 ? "start" : ticks.length > 1 && k === ticks.length - 1 ? "end" : "middle"; xs += '<text class="ax" x="' + xx.toFixed(1) + '" y="' + (H - 8) + '" text-anchor="' + an + '">' + (oneDay ? fmtTime(hm(tt)) : dlab(tt)) + "</text>"; });
-  var few = series.length === 1 && series[0].pts.length <= 8; // أرقام على النقاط لخط واحد فقط، وللخطين تكفي النافذة
-  var lines = series.map(function (sr, si) {
-    var path = sr.pts.map(function (p, j) { return (j ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.y).toFixed(1); }).join(" ");
-    var dots = sr.pts.map(function (p) {
-      var st = chk(c, p.y, null, p.t), bad = st === "lo" || st === "hi", cx = X(p.t), cy = Y(p.y);
-      var lab = few ? '<text class="vl' + (bad ? " bad" : "") + '" x="' + cx.toFixed(1) + '" y="' + (cy - 9).toFixed(1) + '" text-anchor="' + (cx < L + 18 ? "start" : cx > W - Rr - 18 ? "end" : "middle") + '">' + f(p.y, vdec) + "</text>" : "";
-      return '<circle cx="' + cx.toFixed(1) + '" cy="' + cy.toFixed(1) + '" r="' + (all.length > 60 ? 2.6 : 4.2) + '" fill="' + (bad ? "var(--bad)" : sr.col) + '" stroke="var(--surface)" stroke-width="1.5"/>' + lab;
-    }).join("");
-    return '<path d="' + path + '" fill="none" stroke="' + sr.col + '" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>' + dots;
-  }).join("");
-  var legend = series.length > 1 ? '<div class="legend">' + series.map(function (sr) { return '<span><i style="background:' + sr.col + '"></i>' + esc(sr.name) + "</span>"; }).join("") + "</div>" : "";
-  el.innerHTML = legend + '<div class="sn-plot"><svg viewBox="0 0 ' + W + " " + H + '" role="img">' + band + g + xs + lines + '<line class="hov" x1="0" x2="0" y1="' + T + '" y2="' + (H - B) + '" stroke="var(--ink)" stroke-width="1" visibility="hidden"/><g class="hovd"></g></svg><div class="sn-tip" hidden></div></div>';
-  var svg = el.querySelector("svg"), tip = el.querySelector(".sn-tip"), hv = svg.querySelector(".hov"), hd = svg.querySelector(".hovd");
-  function mv(ev) {
-    var r = svg.getBoundingClientRect(), cx = ev.touches ? ev.touches[0].clientX : ev.clientX, x = (cx - r.left) / r.width * W, best = null, bd = 1e9;
-    all.forEach(function (p) { var d = Math.abs(X(p.t) - x); if (d < bd) { bd = d; best = p; } });
-    if (!best) return;
-    var rows = [], dots = "", yy = [];
-    series.forEach(function (sr) {
-      var q = null, qd = 1e18; sr.pts.forEach(function (p) { var d = Math.abs(p.t - best.t); if (d < qd) { qd = d; q = p; } });
-      if (!q || qd > 45 * 60000) return;
-      var st = chk(c, q.y, null, q.t), bad = st === "lo" || st === "hi";
-      rows.push('<div><i style="background:' + sr.col + '"></i>' + (sr.name ? "<bdi>" + esc(sr.name) + "</bdi> " : "") + '<b class="num' + (bad ? " sn-bad" : "") + '"><bdi dir="ltr">' + f(q.y, vdec) + "</bdi></b>" + (unit ? ' <small><bdi dir="ltr">' + unit + "</bdi></small>" : "") + (bad ? ' <small class="sn-bad">' + (st === "lo" ? "منخفض" : "مرتفع") + "</small>" : "") + "</div>");
-      dots += '<circle cx="' + X(q.t).toFixed(1) + '" cy="' + Y(q.y).toFixed(1) + '" r="6" fill="' + sr.col + '" stroke="var(--surface)" stroke-width="2"/>'; yy.push(Y(q.y) / H * r.height);
-    });
-    hv.setAttribute("x1", X(best.t)); hv.setAttribute("x2", X(best.t)); hv.setAttribute("visibility", "visible"); hd.innerHTML = dots;
-    var d0 = new Date(best.t), ds = d0.getFullYear() + "-" + pad(d0.getMonth() + 1) + "-" + pad(d0.getDate());
-    tip.innerHTML = '<div class="sn-tt">' + esc(fmtShort(ds)) + ' · <span class="num">' + fmtTime(hm(best.t)) + "</span></div>" + rows.join(""); tip.hidden = false;
-    placeTip(tip, r, X(best.t) / W * r.width, yy);
-  }
-  svg.addEventListener("mousemove", mv); svg.addEventListener("touchstart", mv, { passive: true }); svg.addEventListener("touchmove", mv, { passive: true });
-  svg.addEventListener("mouseleave", function () { tip.hidden = true; hv.setAttribute("visibility", "hidden"); hd.innerHTML = ""; });
-}
-function exportXlsx(btn) {
-  if (!window.XLSX || !S.rep || !S.rep.all) { toast("التصدير غير متاح الآن، تحقق من الإنترنت"); return; }
-  btn.disabled = true;
-  try {
-    var sec = S.sec, rows = S.rep.all.filter(function (r) { return secOf(r) === sec; }), wb = XLSX.utils.book_new(); wb.Workbook = { Views: [{ RTL: true }] };
-    var names = {}, add = function (name, aoa) { name = name.slice(0, 31); if (names[name]) name = name.slice(0, 28) + " " + (++names[name]); names[name] = 1; var ws = XLSX.utils.aoa_to_sheet(aoa); ws["!cols"] = aoa[0].map(function (_, i) { return { wch: Math.min(40, Math.max.apply(null, [10].concat(aoa.map(function (r) { return String(r[i] == null ? "" : r[i]).length + 2; })))) }; }); XLSX.utils.book_append_sheet(wb, ws, name); };
-    add("الملخص اليومي", [["التاريخ", "خلط/تعويض", "A مل", "B مل", "متوسط EC المقاس", "متوسط pH", "حرارة الماء", "حرارة الجو", "الرطوبة", "الضوء", "ريات", "لتر", "بذور", "حصاد كغ", "ملاحظات", "بانتظار المراجعة"]].concat(daily(rows).map(function (r) { return [r.d, r.mix, r.mlA, r.mlB, r.ec && Math.round(r.ec), r.ph && +r.ph.toFixed(2), r.wt && +r.wt.toFixed(1), r.air && +r.air.toFixed(1), r.rh && Math.round(r.rh), r.lux && Math.round(r.lux), r.irr, r.lit, r.seeds, r.kg, r.notes, r.pend]; })));
-    var types = ORDER[sec].slice(); rows.forEach(function (r) { if (types.indexOf(r.type) < 0 && r.type !== "selftest" && typeDef(r.type, sec) && !TYPES_G[r.type]) types.push(r.type); });
-    types.forEach(function (t) {
-      var T = typeDef(t, sec), cols = [], head = ["التاريخ"];
-      T.fields.forEach(function (x) {
-        if (x.t === "grid") { var D = dimOf(x); D.rows.forEach(function (r, ri) { D.cols.forEach(function (c, ci) { cols.push({ gk: gkey(x.k, r, c) }); head.push(x.l + " - " + D.rowL[ri] + "/" + D.colL[ci]); }); cols.push({ gr: x.k, D: D, ri: ri }); head.push(x.l + " - متوسط " + D.rowL[ri]); }); cols.push({ gm: x.k }); head.push(x.l + " - المتوسط"); return; }
-        cols.push({ fd: x }); head.push((x.pg ? MNAME[x.pg] + " - " : "") + (x.cl || x.l) + (unitOf(x) && unitOf(x) !== "pH" ? " (" + unitOf(x) + ")" : ""));
-        if (x.comp === "ec" && !cfg("atc")) { cols.push({ ec25: x.k }); head.push(x.l + " مصحح 25°"); }
-      });
-      if (t === "irr") { cols.push({ irrT: 1 }); head.push("مجموع الري (لتر)"); }
-      if (t === "note") head.push("الحالة"); head = head.concat(["المسجّل", "المراجعة", "ملاحظة المشرف"]);
-      var data = rows.filter(function (r) { return r.type === t; }).map(function (r) {
-        var v = r.v || {}, row = [r.date];
-        cols.forEach(function (c) {
-          if (c.gm) { var mm = metric(v, c.gm); row.push(mm == null ? "" : +mm.toFixed(1)); return; }
-          if (c.gk) { row.push(num(v[c.gk])); return; }
-          if (c.gr) { var ra = rowAvg(v, c.gr, c.D, c.ri); row.push(ra == null ? "" : +ra.toFixed(1)); return; }
-          if (c.irrT) { row.push(irrL(v)); return; }
-          if (c.ec25) { var e25 = ec25(num(v[c.ec25]), num(v.wt)); row.push(e25 == null ? "" : Math.round(e25)); return; }
-          var x = c.fd, val = v[x.k];
-          if (x.t === "t") row.push(fmtTime(val));
-          else if (x.t === "batch") { var b = sowBatches().filter(function (s) { return s.id === val; })[0]; row.push(b ? b.date + " " + (b.v.crop || "") : ""); }
-          else row.push(x.t === "n" ? num(val) : (val == null ? "" : val));
-        });
-        if (t === "note") row.push(v.cat === NOTE_NONE ? "—" : r.open ? "مفتوحة" : "تم الحل");
-        return row.concat([nameOf(r.by), r.review ? (r.review.s === "ok" ? "معتمد" : "عليه ملاحظة") : "بانتظار", r.review && r.review.c || ""]);
-      });
-      if (data.length) add(T.label, [head].concat(data));
-    });
-    var eq = S.rep.all.filter(function (r) { return r.sec === "g"; });
-    if (eq.length) add("المعدات", [["التاريخ", "النوع", "البداية / الوقت", "الانتهاء", "التفاصيل", "المسجّل"]].concat(eq.map(function (r) { var v = r.v || {}; return [r.date, typeDef(r.type).label, r.type === "batt" ? tsTime(v.start || r.ts) : fmtTime(r.time), v.end ? tsTime(v.end) : "", r.type === "cal" ? (v.what || "") + " · " + (v.result || "") : (v.before || ""), nameOf(r.by)]; })));
-    add("وصفات العبوات المركزة", [["التاريخ", "العبوة", "حجم المحلول المركز (مل)", "المادة", "الكمية", "الوحدة", "ملاحظات", "المشرف"]].concat(S.recipes.reduce(function (acc, r) { return acc.concat((r.items || [{}]).map(function (it) { return [r.date, r.tank, recipeMl(r), it.name || "", num(it.qty), it.unit || "", r.notes || "", nameOf(r.by)]; })); }, [])));
-    var C = consumption(rows);
-    add("استهلاك الأسمدة", [["البند", "الكمية", "الوحدة"]].concat(Object.keys(C.per).map(function (k) { var n = k.split("|"); return [n[0], +C.per[k].toFixed(3), n[1]]; })).concat([[], ["محلول A", C.mlA, "مل"], ["محلول B", C.mlB, "مل"], ["خافض pH", C.down, "مل"], ["رافع pH", C.up, "مل"]]));
-    var CP = compliance(rows, sec, S.rep.start, S.rep.end || todayStr());
-    if (CP.need) add("التزام التسجيل", [["التاريخ", "المطلوب", "المنجز", "النسبة %", "الناقص"]].concat(CP.days.map(function (x) { return [x.d, x.need, x.done, pct(x.done, x.need), x.miss.join("، ")]; })).concat([[], ["المهمة", "المطلوب", "المنجز", "النسبة %"]]).concat(Object.keys(CP.types).map(function (t) { var x = CP.types[t]; return [typeDef(t, sec).label, x.need, x.done, pct(x.done, x.need)]; })));
-    var LS = limitStats(rows, sec);
-    if (LS.length) add("خارج الحدود", [["القياس", "القراءات", "ضمن الحد %", "منخفض", "مرتفع", "الأدنى", "الأعلى"]].concat(LS.map(function (x) { return [x.l, x.n, pct(x.n - x.lo - x.hi, x.n), x.lo, x.hi, x.min == null ? "" : +x.min.toFixed(2), x.max == null ? "" : +x.max.toFixed(2)]; })));
-    var WS = workerStats(rows);
-    if (WS.length) add("العمال", [["الاسم", "التسجيلات", "أيام العمل", "معتمد", "عليه ملاحظة", "بانتظار المراجعة"]].concat(WS.map(function (w) { return [nameOf(w.id), w.n, w.dn, w.ok, w.flag, w.pend]; })));
-    var SR = S.repSens && S.repSens.data, r1 = function (x, d) { return x == null ? "" : +x.toFixed(d); };
-    if (SR && SR.sensors.length) {
-      add("الحساسات - الفترة", [["الحساس", "حرارة النهار", "حرارة الليل", "أعلى حرارة", "أدنى حرارة", "الحرارة ضمن الحد %", "ساعات الإجهاد الحراري", "الرطوبة ضمن الحد %", "VPD نهاراً (kPa)", "VPD ضمن المثالي %", "متوسط نقطة الندى", "أقل هامش ندى", "ساعات التكثّف المحتمل", "ساعات خطر الأمراض", "فرق الحرارة عن اليدوي", "قراءات المقارنة", "فرق الرطوبة عن اليدوي"]].concat(SR.sensors.map(function (s) { return [s.name, r1(s.tDay, 1), r1(s.tNight, 1), r1(s.dMax, 1), r1(s.nMin, 1), pct(s.tot.inT, s.tot.cov), r1(s.tot.heat, 1), pct(s.tot.inH, s.tot.hCov), r1(s.vDay, 2), pct(s.tot.inV, s.tot.vCov), r1(s.dewAvg, 1), s.minMg ? r1(s.minMg.v, 1) : "", r1(s.tot.cond, 1), r1(s.tot.risk, 1), s.diffT ? r1(s.diffT.avg, 1) : "", s.diffT ? s.diffT.n : "", s.diffH ? r1(s.diffH.avg, 0) : ""]; })));
-      add("الحساسات - يومي", [["التاريخ", "الحساس", "أدنى حرارة", "أعلى حرارة", "متوسط الحرارة", "أدنى رطوبة", "أعلى رطوبة", "متوسط الرطوبة", "ساعات الحرارة ضمن الحد", "ساعات الإجهاد", "VPD نهاراً (kPa)", "ساعات VPD ضمن المثالي", "متوسط نقطة الندى", "أقل هامش ندى", "ساعات التكثّف المحتمل", "ساعات خطر الأمراض", "ساعات فيها قراءات"]].concat(SR.sensors.reduce(function (acc, s) { return acc.concat(s.days.map(function (d) { return [d.date, s.name, d.t ? r1(d.t.mn, 1) : "", d.t ? r1(d.t.mx, 1) : "", d.t ? r1(d.t.av, 1) : "", d.h ? r1(d.h.mn, 0) : "", d.h ? r1(d.h.mx, 0) : "", d.h ? r1(d.h.av, 0) : "", r1(d.inT, 1), r1(d.heat, 1), r1(d.vDay, 2), r1(d.inV, 1), r1(d.dewAvg, 1), r1(d.mgMin, 1), r1(d.cond, 1), r1(d.risk, 1), r1(Math.max(d.cov, d.hCov), 1)]; })); }, []).sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; })));
-    }
-    XLSX.writeFile(wb, "GREEN-SIDE-" + (sec === "t" ? "TOWERS" : "NURSERY") + "-" + S.rep.start + "-" + (S.rep.end || todayStr()) + ".xlsx");
-    toast("تم تنزيل الملف");
-  } catch (e) { console.warn(e); toast("تعذّر إنشاء الملف"); }
-  btn.disabled = false;
 }
 
 /* ================= supervisor ================= */
@@ -2174,6 +1866,8 @@ function supView() {
   h += "</section>";
   var PT = { sol: h, team: "", lim: "", set: "" }; h = "";
   if (isOwner) h += '<section class="sec"><div class="card"><div class="sec-h"><h2>فحص النظام</h2><button class="btn sm pri" data-act="selfTest">تشغيل الفحص</button></div><p class="help" style="margin:6px 0 0">اختبار حقيقي للحفظ والقراءة والصلاحيات والحسابات على قاعدة بياناتك. يستغرق أقل من دقيقة ويحذف بيانات الاختبار بعد انتهائه.</p></div></section>';
+  /* 3.6.0: التنبيهات الموقوفة (يوقفها المشرف من زر ⋮ بجانب التنبيه) */
+  h = '<section class="sec"><div class="card">' + Board.mutedLink() + "</div></section>" + h;
   PT.set = h; h = "";
   var ids = Object.keys(S.users).filter(function (id) { return !S.users[id].selftest; }).sort(function (a, b) { return (S.users[a].createdAt || 0) - (S.users[b].createdAt || 0); });
   h += '<section class="sec"><div class="sec-h"><h2>المستخدمون والصلاحيات</h2>' + (isOwner ? '<button class="btn sm pri" data-act="newUser">+ مستخدم جديد</button>' : "") + '</div><div class="card">';
@@ -2196,7 +1890,7 @@ function supView() {
     ["#", "الضوء"], ["luxMin", "الضوء الأدنى", "lux"], ["luxMax", "الضوء الأعلى", "lux"],
     ["#", sec === "t" ? "الخزان والمهام" : "الخلطة والطاقة والمهام"], ["tankL", sec === "t" ? "سعة خزان الأبراج" : "كمية ماء الخلطة المعتادة", "لتر"]];
   if (sec === "n") sf = sf.concat([["pumpL", "سعة مضخة الري", "لتر"], ["capR", "طاقة الجهة اليمنى شهرياً", "بذرة"], ["capL", "طاقة الجهة اليسرى شهرياً", "بذرة"]]);
-  sf = sf.concat(TASKS[sec].filter(function (x) { return !schedOf(sec, x[0]).length; }).map(function (x) { return [x[1], "عدد " + typeDef(x[0], sec).short + " يومياً", "مرة"]; }));
+  /* 3.6.0: العدد اليومي للمهام بدون مواعيد صار في بطاقات «مواعيد المهام» (−/+) */
   h += '<section class="sec"><h2>الحدود المستهدفة · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2><form class="card fgrid" id="setSec" novalidate>' + sf.map(function (x, i) { if (x[0] === "#") return '<div class="grp-h"' + (i ? "" : ' style="margin-top:0;padding-top:0;border-top:0"') + ">" + x[1] + (x[2] ? ' <small class="muted" style="font-weight:400;font-size:12px">' + x[2] + "</small>" : "") + "</div>"; return '<label class="f' + (x[3] === "full" ? " full" : "") + '" for="ss_' + x[0] + '">' + x[1] + '<div class="unitwrap"><input class="in num" ' + KPA() + ' id="ss_' + x[0] + '" value="' + esc(cfg(x[0], sec)) + '"><span class="u">' + x[2] + "</span></div></label>"; }).join("") +
     '<label class="f full" for="ss_zoneNote">تعريف المناطق (يظهر بخط صغير تحت القياسات)<input class="in" id="ss_zoneNote" value="' + esc(cfg("zoneNote", sec)) + '"></label>' +
     '<div class="full"><button class="btn pri block" type="button" data-act="saveSec">حفظ حدود ' + SECS[sec].name + "</button></div></form></section>";
@@ -2212,24 +1906,94 @@ function supView() {
   var tabs = [["lim", "الحدود والمواعيد"], ["sol", "المحلول"], ["team", "الفريق"], ["set", "الإعدادات"]], tab = subGet("sup", tabs);
   return '<section class="sec"><div class="sec-h"><h2>المشرف · ' + SECS[sec].icon + " " + SECS[sec].name + "</h2></div>" + subTabs("sup", tabs) + "</section>" + PT[tab];
 }
+/* 3.6.0: مواعيد المهام — لكل نوع: مفتاح إيقاف كلي، وعدد يومي (−/+)، والضغط على موعد لتغييره أو إيقافه مؤقتاً أو حذفه */
 function schedCard(sec) {
-  var h = '<section class="sec" id="schedSec"><div class="sec-h"><h2>مواعيد المهام · ' + SECS[sec].icon + " " + SECS[sec].name + '</h2></div><div class="card">';
+  var I = Board.icon, ST = window.Rec && Rec.style ? Rec.style : function () { return ["list", "gray"]; };
+  var h = '<section class="sec" id="schedSec"><div class="sec-h"><h2>مواعيد المهام · ' + SECS[sec].icon + " " + SECS[sec].name + "</h2></div>";
   TASKS[sec].forEach(function (x) {
-    var times = schedOf(sec, x[0]);
-    h += '<div class="sch-row"><div class="sch-t"><b>' + typeDef(x[0], sec).label + '</b><span class="muted">' + (times.length ? (times.length === 1 ? "مرة واحدة" : times.length === 2 ? "مرتان" : times.length + (times.length <= 10 ? " مرات" : " مرة")) + " يومياً" : "بدون مواعيد · العدد اليومي " + f(num(cfg(x[1], sec)) || 0)) + '</span></div><div class="tchips">' +
-      times.map(function (t) { return '<button type="button" class="tchip edit" data-act="schDel" data-sec="' + sec + '" data-type="' + x[0] + '" data-t="' + t + '">' + fmtTime(t) + ' <span aria-hidden="true">✕</span></button>'; }).join("") +
-      '<button type="button" class="tchip add" data-act="schAdd" data-sec="' + sec + '" data-type="' + x[0] + '">+ وقت</button></div></div>';
+    var type = x[0], T = typeDef(type, sec), times = schedOf(sec, type), off = taskOff(sec, type, todayStr()), st = ST(type), act = activeTimes(sec, type, todayStr());
+    var nP = times.length - act.length, n = times.length ? times.length : (num(cfg(x[1], sec)) || 0);
+    var sub = off ? "موقوفة · لا تظهر في الجولات ولا التنبيهات" : times.length ? Board.pl(times.length, "مرة واحدة", "مرتان", "مرات", "مرة") + " يومياً" + (nP ? " · " + Board.pl(nP, "موعد موقوف مؤقتاً", "موعدان موقوفان مؤقتاً", "مواعيد موقوفة مؤقتاً", "موعداً موقوفاً مؤقتاً") : "") : Board.pl(n, "مرة واحدة", "مرتان", "مرات", "مرة") + " يومياً · بدون موعد محدد";
+    var at = ' data-sec="' + sec + '" data-type="' + type + '"';
+    h += '<div class="tk' + (off ? " off" : "") + '" data-task="' + type + '"><div class="tk-h"><span class="bd-hic ' + st[1] + '">' + I(st[0], 18) + '</span><span class="tk-t"><b>' + esc(T.label) + "</b><small>" + esc(sub) + '</small></span><button type="button" role="switch" aria-checked="' + !off + '" aria-label="' + esc((off ? "تشغيل " : "إيقاف ") + T.label) + '" class="cz-sw" data-act="schToggle"' + at + "><i></i></button></div>";
+    if (!off) {
+      h += '<div class="tk-b"><span class="tk-lab">العدد يومياً</span><span class="step"><button type="button" data-act="schStep" data-d="-1"' + at + ' aria-label="تقليل العدد"' + (n <= 1 ? " disabled" : "") + '>−</button><b class="num">' + n + '</b><button type="button" data-act="schStep" data-d="1"' + at + ' aria-label="زيادة العدد"' + (n >= 24 ? " disabled" : "") + ">+</button></span>" + (times.length ? "" : '<button type="button" class="tchip add" style="margin-inline-start:auto" data-act="schAdd"' + at + ">+ وقت</button>") + "</div>";
+      if (times.length) h += '<div class="tchips">' + times.map(function (t) {
+        var p = slotPause(sec, type, t), pz = slotPaused(sec, type, t, todayStr()), un = p && okDay(p.until) ? p.until : "";
+        return '<button type="button" class="tchip edit' + (pz ? " paused" : "") + '" data-act="schOpt"' + at + ' data-t="' + t + '">' + fmtTime(t) + (pz ? "<small>" + (un ? "حتى " + esc(fmtShort(un)) : "موقوف") + "</small>" : "") + "</button>";
+      }).join("") + '<button type="button" class="tchip add" data-act="schAdd"' + at + ">+ وقت</button></div>";
+      else h += '<p class="tk-note">بدون مواعيد: العدد فقط، وتُحسب متأخرة آخر اليوم. أضف «+ وقت» لتحديد موعد.</p>';
+    }
+    h += "</div>";
   });
-  return h + '<p class="help" style="margin:8px 0 0">عدد مهام اليوم = عدد المواعيد، وتظهر في صفحة اليوم (✓ تمت، برتقالي حان وقتها، أحمر متأخرة). اضبط منبه الجوال على نفس الأوقات. المهمة بدون مواعيد تأخذ عددها من الحدود أدناه. اضغط ✕ لحذف موعد.</p></div></section>';
+  return h + '<p class="help" style="margin:4px 2px 0">المفتاح يوقف المهمة كلياً. −/+ يغيّر العدد اليومي: «+» يضيف موعداً بعد آخر موعد بساعتين، و«−» يحذف آخر موعد. اضغط أي موعد لتغيير وقته أو إيقافه مؤقتاً أو حذفه. يسري على كل الفريق.</p></section>';
 }
-function saveSched(sec, type, arr) {
+function clonePath(root, sec, type) { var o = clone(objAt(S.settings, root) || {}); if (!objAt(o, sec)) o[sec] = {}; if (type && !objAt(o, sec, type)) o[sec][type] = {}; return o; }
+function saveSched(sec, type, arr, extra) {
   var sc = clone(S.settings.sched || DEF.sched); sc[sec] = sc[sec] || {};
-  var u = {}; sc[sec][type] = arr.filter(function (t) { if (u[t]) return false; u[t] = 1; return true; }).sort();
-  return saveSettings({ sched: sc });
+  var u = {}; sc[sec][type] = arr.filter(function (t) { if (!okHM(t) || u[t]) return false; u[t] = 1; return true; }).sort();
+  /* إيقاف المواعيد المحذوفة لا يبقى معلّقاً */
+  var so = clonePath("slotOff", sec, type); Object.keys(so[sec][type]).forEach(function (t) { if (!u[t]) delete so[sec][type][t]; });
+  return saveSettings(Object.assign({ sched: sc, slotOff: so }, schedSnap(sec, type), extra || {}));
 }
-function openSchAdd(sec, type) {
-  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("موعد جديد · " + typeDef(type, sec).label, sec, "bell") +
-    '<div class="f full"><span>الوقت</span>' + timePicker("sch_tp", "08:00") + '</div><div class="sheet-actions"><button class="btn pri" type="button" data-act="schSave" data-sec="' + sec + '" data-type="' + type + '">إضافة الموعد</button></div></div></div>');
+function cntPatch(sec, k, n) { var o = {}; o[k] = n; return sec === "t" ? { tw: Object.assign({}, S.settings.tw || {}, o) } : o; }
+function nextFreeTime(times) {
+  var has = {}; times.forEach(function (t) { has[tMin(t)] = 1; });
+  var last = times.length ? tMin(times[times.length - 1]) : 8 * 60, c = [last + 120, last + 60, last + 30];
+  for (var hh = 6; hh <= 22; hh++) c.push(hh * 60);
+  for (var i = 0; i < c.length; i++) if (c[i] <= 23 * 60 && c[i] >= 0 && !has[c[i]]) return pad(Math.floor(c[i] / 60)) + ":" + pad(c[i] % 60);
+  return "";
+}
+function schToggle(sec, type) {
+  var o = clonePath("taskOff", sec), now = taskOff(sec, type, todayStr()), T = typeDef(type, sec);
+  /* التشغيل يُغلق فترة الإيقاف (until = اليوم) بدل حذفها، فتبقى أيام الإيقاف السابقة بلا جولات متأخرة */
+  if (now) { var cur = objAt(o, sec, type); if (cur && okDay(cur.from) && cur.from < todayStr()) o[sec][type] = Object.assign({}, cur, { until: todayStr() }); else delete o[sec][type]; }
+  else o[sec][type] = { from: todayStr(), until: "", by: S.uid, at: Date.now() };
+  toast((now ? "شُغّلت مهمة " : "أُوقفت مهمة ") + T.label);
+  return saveSettings({ taskOff: o });
+}
+function schStep(sec, type, d) {
+  var x = TASKS[sec].filter(function (y) { return y[0] === type; })[0], times = schedOf(sec, type);
+  if (!x) return Promise.resolve();
+  if (!times.length) { var n = Math.max(1, Math.min(24, (num(cfg(x[1], sec)) || 0) + d)); return saveSettings(Object.assign(cntPatch(sec, x[1], n), schedSnap(sec, type))); }
+  if (d > 0) { var t = nextFreeTime(times); if (!t) { toast("لا يوجد وقت متاح لموعد جديد"); return Promise.resolve(); } toast("أُضيف موعد " + fmtTime(t) + " · اضغطه لتعديله"); return saveSched(sec, type, times.concat([t])); }
+  if (times.length <= 1) return Promise.resolve();
+  toast("حُذف موعد " + fmtTime(times[times.length - 1]));
+  return saveSched(sec, type, times.slice(0, -1));
+}
+function schDelete(sec, type, t) {
+  var x = TASKS[sec].filter(function (y) { return y[0] === type; })[0], left = schedOf(sec, type).filter(function (y) { return y !== t; });
+  /* حذف آخر موعد: تبقى المهمة مرة واحدة يومياً بدون موعد (لا يرجع العدد القديم فجأة) */
+  return saveSched(sec, type, left, !left.length && x ? cntPatch(sec, x[1], 1) : null);
+}
+var SO = null;
+function soHTML() {
+  var I = Board.icon, T = typeDef(SO.type, SO.sec), t0 = todayStr(), p = slotPause(SO.sec, SO.type, SO.t), pz = slotPaused(SO.sec, SO.type, SO.t, t0), un = p && okDay(p.until) ? p.until : "";
+  var mins = addDays(t0, 1), left = schedOf(SO.sec, SO.type).length - 1;
+  var chip = function (k, l) { return '<button type="button" data-act="soMode" data-m="' + k + '" aria-pressed="' + (SO.mode === k) + '">' + l + "</button>"; };
+  var lab = SO.mode === "today" ? "إيقاف اليوم فقط" : SO.mode === "date" ? (okDay(SO.until) && SO.until > t0 ? "إيقاف حتى " + fmtShort(SO.until) : "اختر التاريخ") : "إيقاف حتى أفعّله";
+  return '<div class="sheet-bg" data-close><div class="sheet al-sh" role="dialog" aria-modal="true">' + sheetHead(T.label + " · موعد " + fmtTime(SO.t), SO.sec, "bell") +
+    (pz ? '<div class="al-team">' + I("clock", 16) + (un ? "هذا الموعد موقوف حتى " + esc(fmtDate(un)) + "." : "هذا الموعد موقوف حتى تفعّله.") + "</div>" : "") +
+    '<div class="sheet-actions" style="position:static;margin:10px 0 6px;padding:0">' + (pz ? '<button class="btn pri" type="button" data-act="soResume">إلغاء الإيقاف</button>' : "") + '<button class="btn" type="button" data-act="soTime">تغيير الوقت</button></div>' +
+    '<div class="al-opt' + (pz ? "" : " on") + '"><span class="al-opt-ic">' + I("pause", 20) + '</span><div class="al-opt-t"><b>' + (pz ? "تغيير مدة الإيقاف" : "إيقاف هذا الموعد مؤقتاً") + "</b><small>لا يُطلب ولا يُحسب متأخراً؛ تبقى بقية المواعيد كما هي.</small>" +
+    '<div class="al-days">' + chip("today", "اليوم فقط") + chip("date", "حتى تاريخ…") + chip("off", "حتى أفعّله") + "</div>" +
+    (SO.mode === "date" ? '<label class="al-date" for="so_until">يعود يوم<input class="in" type="date" id="so_until" min="' + mins + '" max="' + addDays(t0, 365) + '" value="' + esc(SO.until || "") + '"></label>' : "") +
+    '<button class="btn pri block" type="button" data-act="soSave" style="margin-top:12px"' + (SO.mode === "date" && !(okDay(SO.until) && SO.until > t0) ? " disabled" : "") + ">" + esc(lab) + "</button></div></div>" +
+    '<button type="button" class="al-opt" data-act="soDel" style="width:100%;text-align:start;font:inherit;cursor:pointer"><span class="al-opt-ic" style="color:var(--bad)">✕</span><span class="al-opt-t"><b style="color:var(--bad)">حذف الموعد</b><small>' + (left ? "يصير العدد اليومي " + left : "تبقى المهمة مرة واحدة يومياً بدون موعد") + "</small></span></button></div></div>";
+}
+function openSlot(sec, type, t) { SO = { sec: sec, type: type, t: t, mode: "today", until: addDays(todayStr(), 3) }; openSheet(soHTML()); }
+function soSave() {
+  if (!SO || !isSup()) return Promise.resolve();
+  var t0 = todayStr(), until = SO.mode === "today" ? addDays(t0, 1) : SO.mode === "date" ? SO.until : "";
+  if (SO.mode === "date" && !(okDay(until) && until > t0)) { toast("اختر تاريخاً بعد اليوم"); return Promise.resolve(); }
+  var o = clonePath("slotOff", SO.sec, SO.type); o[SO.sec][SO.type][SO.t] = { from: t0, until: until, by: S.uid, at: Date.now() };
+  toast(until ? "أُوقف موعد " + fmtTime(SO.t) + " حتى " + fmtShort(until) : "أُوقف موعد " + fmtTime(SO.t) + " حتى تفعّله");
+  return saveSettings({ slotOff: o });
+}
+function soResume() { var o = clonePath("slotOff", SO.sec, SO.type), cur = o[SO.sec][SO.type][SO.t]; if (cur && okDay(cur.from) && cur.from < todayStr()) o[SO.sec][SO.type][SO.t] = Object.assign({}, cur, { until: todayStr() }); else delete o[SO.sec][SO.type][SO.t]; toast("عاد موعد " + fmtTime(SO.t)); return saveSettings({ slotOff: o }); }
+function openSchAdd(sec, type, old) {
+  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead((old ? "تغيير موعد " + fmtTime(old) : "موعد جديد") + " · " + typeDef(type, sec).label, sec, "bell") +
+    '<div class="f full"><span>الوقت</span>' + timePicker("sch_tp", old || nextFreeTime(schedOf(sec, type)) || "08:00") + '</div><div class="sheet-actions"><button class="btn pri" type="button" data-act="schSave" data-sec="' + sec + '" data-type="' + type + '"' + (old ? ' data-old="' + old + '"' : "") + ">" + (old ? "حفظ الوقت" : "إضافة الموعد") + "</button></div></div></div>");
 }
 function openDoses(from) {
   var DS = doses(), rt = doseRatio();
@@ -2571,6 +2335,11 @@ async function runSelfTest() {
     if (errs.length) throw new Error("خطأ في: " + errs.join("، "));
     return "13 حساباً مطابقاً للقيم المتوقعة";
   });
+  await step("حسابات التقارير", async function () {
+    if (window.GSUI) GSUI.start(); for (var i = 0; i < 24 && window.GSUI && !GSUI.ready(); i++) await new Promise(function (r) { setTimeout(r, 250); });
+    var r = RPT.selfCheck(); if (!r.ok) throw new Error("خطأ في: " + r.errs.join("، "));
+    return r.pass + " حساباً مطابقاً للأرقام المعروفة" + r.note;
+  });
   draw();
   var ok = res.filter(function (r) { return r.ok; }).length, sm = $("stSum");
   if (sm) sm.innerHTML = '<div class="banner ' + (ok === res.length ? "ok" : "warn") + '"><b>' + ok + " / " + res.length + "</b>&nbsp;" + (ok === res.length ? "نجحت كل الاختبارات" : "بعض الاختبارات لم تنجح، صوّر هذه الشاشة وأرسلها") + "</div>" + crashLogHTML();
@@ -2604,19 +2373,29 @@ document.addEventListener("click", function (ev) {
       S.user.verifyBeforeUpdateEmail(ne).then(function () { toast("أُرسل رابط التأكيد إلى " + ne + " · افتحه ثم سجّل الدخول بالبريد الجديد"); closeSheet(); }).catch(fail); break;
     case "changePw": var np = $("p_new").value; if (np.length < 6) { toast("كلمة المرور 6 أحرف أو أكثر"); return; } b.disabled = true; S.user.updatePassword(np).then(function () { toast("تم تغيير كلمة المرور"); closeSheet(); }).catch(fail); break;
     case "close": closeSheet(); break;
-    case "stay": hideExit(); NAV.lastBack = 0; break;
     case "copyCred": copyCred(); break;
-    case "exitApp": hideExit(); try { history.go(-2); } catch (e) {} break;
     case "switchSec": switchSec(b.getAttribute("data-s")); break;
     case "sub": var sk = b.getAttribute("data-k"), sv = b.getAttribute("data-v"); SUB[sk] = sv; lsSet("gs_sub_" + sk, sv); render(true); var stb = document.querySelector("#view .subtabs"); if (stb && stb.getBoundingClientRect().top < $("top").offsetHeight) window.scrollTo(0, Math.max(0, stb.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10)); break;
     case "jump": jumpTo(b.getAttribute("data-to")); break;
+    case "dayStep": { var nd = addDays(S.date, +b.getAttribute("data-d") || 0); if (nd > todayStr()) break; S.date = nd; var dpk = $("datePick"); if (dpk) dpk.value = nd; subDay(); render(true); window.scrollTo(0, 0); break; }
     case "goTasks": var ts = $("tasksSec"); if (ts) window.scrollTo({ top: ts.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); break;
     case "goTab": setTab(b.getAttribute("data-t")); break;
     case "reloadApp": hardReload(true); break;
     case "clearCrash": CRASH = []; lsSet("gs_errs", "[]"); var cl = b.closest(".crashlog"); if (cl) cl.remove(); break;
-    case "schDel": var sd1 = b.getAttribute("data-sec"), ty1 = b.getAttribute("data-type"), tt1 = b.getAttribute("data-t"); saveSched(sd1, ty1, schedOf(sd1, ty1).filter(function (x) { return x !== tt1; })).catch(fail); toast("حُذف موعد " + fmtTime(tt1)); break;
+    case "schDel": var sd1 = b.getAttribute("data-sec"), ty1 = b.getAttribute("data-type"), tt1 = b.getAttribute("data-t"); schDelete(sd1, ty1, tt1).catch(fail); toast("حُذف موعد " + fmtTime(tt1)); break;
+    case "schToggle": if (isSup()) schToggle(b.getAttribute("data-sec"), b.getAttribute("data-type")).catch(fail); break;
+    case "schStep": if (isSup()) schStep(b.getAttribute("data-sec"), b.getAttribute("data-type"), +b.getAttribute("data-d")).catch(fail); break;
+    case "schOpt": if (isSup()) openSlot(b.getAttribute("data-sec"), b.getAttribute("data-type"), b.getAttribute("data-t")); break;
+    case "soMode": if (SO) { SO.mode = b.getAttribute("data-m"); var su0 = $("so_until"); if (su0) SO.until = su0.value; $("sheetRoot").innerHTML = soHTML(); } break;
+    case "soSave": if (SO) { var su1 = $("so_until"); if (su1) SO.until = su1.value; soSave().catch(fail); closeSheet(); } break;
+    case "soResume": if (SO) { soResume().catch(fail); closeSheet(); } break;
+    case "soTime": if (SO) openSchAdd(SO.sec, SO.type, SO.t); break;
+    case "soDel": if (SO) { schDelete(SO.sec, SO.type, SO.t).catch(fail); toast("حُذف موعد " + fmtTime(SO.t)); closeSheet(); } break;
     case "schAdd": openSchAdd(b.getAttribute("data-sec"), b.getAttribute("data-type")); break;
-    case "schSave": var sd2 = b.getAttribute("data-sec"), ty2 = b.getAttribute("data-type"), tt2 = readTime("sch_tp"); saveSched(sd2, ty2, schedOf(sd2, ty2).concat([tt2])).catch(fail); closeSheet(); toast("أُضيف موعد " + fmtTime(tt2)); break;
+    case "schSave": var sd2 = b.getAttribute("data-sec"), ty2 = b.getAttribute("data-type"), tt2 = readTime("sch_tp"), od2 = b.getAttribute("data-old");
+      if (od2 && od2 !== tt2 && schedOf(sd2, ty2).indexOf(tt2) >= 0) { toast("يوجد موعد في " + fmtTime(tt2) + " بالفعل"); break; }
+      if (od2) { var so2 = clonePath("slotOff", sd2, ty2), pz2 = so2[sd2][ty2][od2]; delete so2[sd2][ty2][od2]; if (pz2) so2[sd2][ty2][tt2] = pz2; var sc2 = clone(S.settings.sched || DEF.sched); sc2[sd2] = sc2[sd2] || {}; sc2[sd2][ty2] = schedOf(sd2, ty2).map(function (x) { return x === od2 ? tt2 : x; }).sort(); saveSettings({ sched: sc2, slotOff: so2 }).catch(fail); closeSheet(); toast("صار الموعد " + fmtTime(tt2)); break; }
+      saveSched(sd2, ty2, schedOf(sd2, ty2).concat([tt2])).catch(fail); closeSheet(); toast("أُضيف موعد " + fmtTime(tt2)); break;
     case "editDoses": openDoses(b.getAttribute("data-from")); break;
     case "addDose": $("doseList").insertAdjacentHTML("beforeend", doseRowHTML()); break;
     case "rmDose": b.closest(".dose-row").remove(); break;
@@ -2628,7 +2407,7 @@ document.addEventListener("click", function (ev) {
       toast("حُفظت الجرعات"); setTimeout(function () { if (fromD === "calc") openCalc(); else closeSheet(); }, 60); break;
     case "atcTest": openAtcTest(); break;
     case "saveAtc": if (!ATC_RES) return; var oa = { atc: ATC_RES.atc, atcChecked: todayStr() }; if (!ATC_RES.atc) oa.ecCoef = ATC_RES.coef; saveSettings(oa).catch(fail); closeSheet(); toast(ATC_RES.atc ? "اعتُمد: الجهاز يعوّض الحرارة (ATC)" : "اعتُمد معامل الحرارة " + f(ATC_RES.coef * 100, 2) + "% لكل درجة"); break;
-    case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); if (S.tab === "rep") loadReport(); render(true); break;
+    case "gotoday": S.date = todayStr(); $("datePick").value = S.date; subDay(); render(true); break;
     case "calc": openCalc(); break;
     case "cmode": CALC.mode = b.getAttribute("data-m"); b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); break;
     case "cstage": var sv = b.getAttribute("data-s"); CALC.stage = sv === "ec" || sv === "custom" ? sv : +sv; b.parentNode.querySelectorAll("button").forEach(function (x) { x.setAttribute("aria-pressed", x === b); }); calcRun(); if (sv === "custom") setTimeout(function () { var cd = $("c_dose"); if (cd) cd.focus(); }, 30); break;
@@ -2657,12 +2436,9 @@ document.addEventListener("click", function (ev) {
       toast("سُجّل بدء شحن البطارية"); break;
     case "battEnd": var be = findEntry(id) || lastBatt(); if (!be) return; var nv = Object.assign({}, be.v || {}, { end: Date.now(), endBy: S.uid });
       db.collection("entries").doc(be.id).update({ v: nv }).then(function () { toast("سُجّل انتهاء الشحن"); }).catch(function (err) { console.warn(err); toast(err && err.code === "permission-denied" ? "قواعد الحماية لم تُحدَّث بعد: انشر firestore.rules الجديد" : errMsg(err)); }); break;
-    case "gallery": openGallery(); break;
+    case "gallery": if (NAV.sheet) closeSheet(); if (window.Rec && Rec.openGallery) Rec.openGallery(); else openGallery(); break;
     case "lightbox": var pid = b.getAttribute("data-pid"); if (pid) openLightbox(pid, b.getAttribute("data-cap")); break;
     case "sowPlan": openSowPlan(); break;
-    case "repDays": S.repDays = +b.getAttribute("data-n"); loadReport(); break;
-    case "refreshRep": loadReport(); break;
-    case "export": exportXlsx(b); break;
     case "editFormula": openFormula(); break;
     case "saveFormula":
       var fo = { name: $("fo_name").value.trim() || "الخلطة", fullA: num($("fo_fullA").value), fullB: num($("fo_fullB").value), ecRaw: num($("fo_ecRaw").value), ecFull: num($("fo_ecFull").value), date: $("fo_date").value || todayStr() };
