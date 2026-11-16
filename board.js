@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.7.0 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
+/* GREEN SIDE 3.8.0 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
    يقرأ البيانات المحمّلة فقط (التسجيلات، الإعدادات، الحساسات، المزرعة) ولا يكتب شيئاً في قاعدة البيانات. */
 var Board=(()=>{
 'use strict';
@@ -508,6 +508,7 @@ function band(sec,worker){
  const sync=hl&&hl.n?(hl.late?'<span class="bd-sync warn"><i></i>'+(hl.lastRun?'آخر مزامنة '+E(SENS.api.age(hl.lastRun)):'لا مزامنة')+'</span>':'<span class="bd-sync"><i></i>متزامن '+E(SENS.api.age(hl.lastRun).replace('منذ ','قبل '))+'</span>'):'';
  return '<section class="bd-band"><div class="bd-when"><span>'+E((worker&&live()?name+' · ':'')+when)+'</span>'+sync+'</div><h1 class="bd-title">'+E(title)+'</h1>'+(sub?'<p class="bd-sub">'+E(sub)+'</p>':'')+
   (S.dayError?'<p class="bd-banner">'+E('تعذّر تحميل سجل اليوم: '+S.dayError)+'</p>':S.dayLoaded&&S.dayCached&&!navigator.onLine?'<p class="bd-banner">السجل من النسخة المحفوظة على الجهاز · يتحدّث عند الاتصال</p>':'')+
+  (window.Draft?Draft.bar():'')+
   (shown.length?'<div class="bd-alerts">'+shown.map(alertHTML).join('')+'</div>':'')+(more>0?'<button type="button" class="bd-more" data-bd="alerts">'+(more===1?'عرض تنبيه آخر':more===2?'عرض تنبيهين آخرين':'عرض '+pl(more,'','','تنبيهات أخرى','تنبيهاً آخر'))+I('down',14,2.2)+'</button>':'')+'</section>';
 }
 

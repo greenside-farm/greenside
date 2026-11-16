@@ -1,4 +1,4 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 3.0.0؛ مؤشرات التقارير 3.7.0)
+/* GREEN SIDE — صفحة الحساسات (الإصدار 3.0.0؛ مؤشرات التقارير 3.7.0؛ تخفيف الذاكرة 3.8.0)
    العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
@@ -1389,6 +1389,15 @@ var SENS = (function () {
       .catch(function (e) { if (RPC.key === key) RPC = { key: "", docs: null, p: null }; throw e; });
     RPC.p = p; return p;
   }
+  /* 3.8.0: تخفيف الذاكرة عند مغادرة الصفحات. وثائق التقارير (RPC) تُترك عند الخروج من «التقارير»،
+     ووثائق المؤشرات اليومية (KH.docs) تُقصّ إلى آخر 9 أيام عند الخروج من التقارير والمراقبة (تُقرأ من جديد عند الحاجة) */
+  function trim(tab) {
+    if (tab !== "rep" && !RPC.p) RPC = { key: "", docs: null, p: null };
+    if (tab === "rep" || tab === "sens" || KH.loading || typeof addDays !== "function") return;
+    var cut = addDays(dkey(Date.now()), -9);
+    KH.docs = KH.docs.filter(function (d) { return d && d.date >= cut; });
+    Object.keys(KH.have).forEach(function (d) { if (d < cut) delete KH.have[d]; });
+  }
   function rptLim(o) {
     o = o || {}; var d = o.dh || DH(), mid = function (h) { return p2(Math.floor(((h % 24) + 24) % 24)) + ":00"; };
     var dayHM = mid((d[0] + d[1]) / 2), nightHM = mid((d[1] + 24 + d[0]) / 2);
@@ -1494,5 +1503,5 @@ var SENS = (function () {
     if (typeof render === "function") render(true);
   });
 
-  return { rpt: { load: rptLoad, lim: rptLim, sensor: rptSensor, sensors: rptSensors, points: rptPoints, diff: function (s, docs, rows, k) { return manualDiff(s, myDocs(s, docs), rows, k); }, hold: HOLD, step: STEP }, view: view, bind: bind, start: start, selfTest: selfTest, strip: strip, dashboard: dashboard, api:{age:ago,access:access,retry:retry,list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms,dash:dash,name:nm,scn:scn}, _x: X };
+  return { rpt: { load: rptLoad, lim: rptLim, sensor: rptSensor, sensors: rptSensors, points: rptPoints, diff: function (s, docs, rows, k) { return manualDiff(s, myDocs(s, docs), rows, k); }, hold: HOLD, step: STEP }, view: view, bind: bind, start: start, selfTest: selfTest, trim: trim, strip: strip, dashboard: dashboard, api:{age:ago,access:access,retry:retry,list:sensorList,group:sensorGroup,kinds:kindsAvail,codes:codesFor,live:liveMetric,info:kindInfo,archive:archiveDays,ms:ms,dash:dash,name:nm,scn:scn}, _x: X };
 })();

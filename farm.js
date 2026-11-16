@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.7.0 — تشغيل المزرعة (دورة الزراعة والتكاليف في cycle.js) */
+/* GREEN SIDE 3.8.0 — تشغيل المزرعة (دورة الزراعة والتكاليف في cycle.js) */
 var Farm=(()=>{
 'use strict';
 const pages=['equipment','deliveries','crop','batch','cropDone','finance','team','jobs','changes'];
@@ -73,10 +73,21 @@ function pick(key,label,choices,required=true,current=''){
 }
 function numField(k,label,required=true,initial=''){return field(k,label,'number',required,initial,'min="0" step="any"');}
 function dateInput(value=S.date){return field('date','تاريخ العملية','date',true,value,'max="'+todayStr()+'"');}
-function form(title,body,save){
+/* 3.8.0: dk = مفتاح المسودة (farm:…) للنماذج التي تُحفظ مسودة تلقائياً وتُعاد بعد إغلاق التطبيق */
+function form(title,body,save,dk){
  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog">'+sheetHead(title,S.sec,'note')+'<form class="fgrid" id="farmForm">'+body+'<p class="full banner warn" role="alert" hidden></p><button class="full btn pri" type="submit">حفظ</button></form></div></div>');
+ if(dk)Draft.bindSheet($('sheetRoot'),dk,{title,sec:S.sec});
  const f=$('farmForm');f.onsubmit=async ev=>{ev.preventDefault();const btn=f.querySelector('[type=submit]');if(btn.disabled||!f.reportValidity())return;btn.disabled=true;btn.textContent='بانتظار تأكيد الحفظ…';const msg=f.querySelector('[role=alert]');msg.hidden=true;
- try{await save(Object.fromEntries(new FormData(f)));if(f.isConnected)closeSheet();toast('تم تأكيد الحفظ');}catch(e){msg.textContent=errMsg(e);msg.hidden=false;btn.disabled=false;btn.textContent='إعادة محاولة الحفظ';}};
+ if(dk)Draft.saveNow();
+ try{await save(Object.fromEntries(new FormData(f)));if(dk)Draft.drop(dk);if(f.isConnected)closeSheet();toast('تم تأكيد الحفظ');}catch(e){msg.textContent=errMsg(e);msg.hidden=false;btn.disabled=false;btn.textContent='إعادة محاولة الحفظ';}};
+}
+/* فتح نموذج مسودة محفوظة بمفتاحه. false = لا يمكن فتحه (لا صلاحية أو بند غير موجود) */
+function reopen(k){
+ if(k==='farm:water'){waterForm();return true;}
+ if(k==='farm:level'){if(!isSup())return false;levelForm();return true;}
+ if(k==='farm:job'){if(!isSup())return false;jobForm();return true;}
+ if(k.startsWith('farm:service:')){const kind=k.slice(13);if(!(kind in cycles))return false;serviceForm(kind);return true;}
+ return false;
 }
 const coll=k=>S.db.collection(k);
 const money=n=>f(n,2)+' ريال';
@@ -222,7 +233,7 @@ function levelForm(){if(!isSup())return;
  form('جرد الخزان الرئيسي لمياه الري',info('أدخل الكمية الموجودة فعليًا الآن بالطن. يصبح وقت الحفظ نقطة البدء الجديدة؛ لا تُحتسب الحركات السابقة مرة أخرى.')+numField('tons','الكمية الحالية (٠ إلى ١٨ طن)')+field('memo','ملاحظة الجرد','text',false),v=>{
  if(+v.tons<0||+v.tons>CAPACITY)throw userError('الكمية بين صفر و18 طنًا (سعة الخزان).');const observed=Date.now();
  return coll('farmLevels').add({tons:+v.tons,memo:v.memo,observed,date:todayStr(new Date(observed)),time:tsHM(observed),by:S.uid,created:stamp()});
- });
+ },'farm:level');
 }
 function sourceOptions(type){return type==='irr'?[PREPARED,MAIN,OTHER,UNKNOWN]:[MAIN,OTHER,UNKNOWN];}
 function sourceDefault(type,edit){return edit?UNKNOWN:type==='irr'?PREPARED:MAIN;}
@@ -254,7 +265,7 @@ function waterForm(){
  form('استلام حمولة ماء',pick('tank','الخزان المستلم',tanks)+dateInput()+field('time','وقت الاستلام','time',true,nowTime())+numField('tons','وزن الحمولة بالطن (حتى 18)')+field('supplier','المورّد','text',false)+field('invoice','رقم الفاتورة','text',false)+price,async v=>{
  if(+v.tons<=0||+v.tons>CAPACITY)throw userError('أدخل الوزن المفرّغ في هذا الخزان بين صفر و18 طنًا، ويجب أن يزيد على صفر');
  const ref=coll('farmWater').doc(),batch=S.db.batch();batch.set(ref,{tank:v.tank,tons:+v.tons,time:v.time,occurred:eventTime(v.date,v.time),supplier:v.supplier.trim(),invoice:v.invoice.trim(),date:v.date,by:S.uid,created:stamp()});
- if(v.price!==undefined&&v.price!==''){if(!(+v.price>=0))throw userError('سعر الحمولة رقم غير سالب');const a=window.Cycle?Cycle.autoAlloc():[];batch.set(coll('farmLedger').doc('water_'+ref.id),{kind:'تكلفة',category:v.tank===tanks[0]?'ماء الخلايا':'ماء الري',amount:+v.price,date:v.date,by:S.uid,memo:'استلام حمولة ماء',source:ref.id,allocation:a,basis:a.length?'تلقائي بعدد النباتات':'غير موزع',created:stamp()});}await batch.commit();});
+ if(v.price!==undefined&&v.price!==''){if(!(+v.price>=0))throw userError('سعر الحمولة رقم غير سالب');const a=window.Cycle?Cycle.autoAlloc():[];batch.set(coll('farmLedger').doc('water_'+ref.id),{kind:'تكلفة',category:v.tank===tanks[0]?'ماء الخلايا':'ماء الري',amount:+v.price,date:v.date,by:S.uid,memo:'استلام حمولة ماء',source:ref.id,allocation:a,basis:a.length?'تلقائي بعدد النباتات':'غير موزع',created:stamp()});}await batch.commit();},'farm:water');
 }
 function waterPage(){
  const water=rows('water').filter(v=>(!deliveryFilter||v.tank===deliveryFilter)&&(!waterFrom||v.date>=waterFrom)&&(!waterTo||v.date<=waterTo));
@@ -274,9 +285,9 @@ function serviceForm(kind){
  form(kind,dateInput()+ (leak?pick('result','نتيجة الفحص',['لا يوجد تسريب','يوجد تسريب']):'')+field('memo','الموقع أو الملاحظة','text',false),async v=>{
  if(v.result==='يوجد تسريب'&&!v.memo.trim())throw userError('أدخل موقع التسريب لإنشاء مهمة إصلاح');
  const batch=S.db.batch(),ref=coll('farmService').doc();batch.set(ref,{kind,result:v.result||'تم التنظيف',date:v.date,memo:v.memo,by:S.uid,created:stamp()});
- if(v.result==='يوجد تسريب')batch.set(coll('farmJobs').doc(ref.id),{title:'إصلاح تسريب · '+v.memo,by:S.uid,assignee:S.uid,due:v.date,status:'معلقة',note:'من فحص خطوط الري',created:stamp()});await batch.commit();});
+ if(v.result==='يوجد تسريب')batch.set(coll('farmJobs').doc(ref.id),{title:'إصلاح تسريب · '+v.memo,by:S.uid,assignee:S.uid,due:v.date,status:'معلقة',note:'من فحص خطوط الري',created:stamp()});await batch.commit();},'farm:service:'+kind);
 }
-function jobForm(){form('مهمة عامة',field('title','المطلوب')+pick('assignee','المسؤول',members())+field('due','تاريخ الاستحقاق','date',true,today()),v=>coll('farmJobs').add({...v,by:S.uid,status:'معلقة',note:'',created:stamp()}));}
+function jobForm(){form('مهمة عامة',field('title','المطلوب')+pick('assignee','المسؤول',members())+field('due','تاريخ الاستحقاق','date',true,today()),v=>coll('farmJobs').add({...v,by:S.uid,status:'معلقة',note:'',created:stamp()}),'farm:job');}
 function jobList(closed=false){
  return rows('jobs').filter(j=>(j.status==='مكتملة')===closed && (isSup()||j.assignee===S.uid)).map(j=>card(j.title,info(nameOf(j.assignee)+' · '+D(j.due)+' · '+j.status+(j.due<today()&&!closed?' · متأخرة':''))+info(j.note||'')+(j.history?.length?'<details><summary>سجل المهمة</summary>'+j.history.map(h=>info(D(h.day)+' · '+nameOf(h.by)+' · '+h.status+' · الموعد '+D(h.due)+' · '+h.note)).join('')+'</details>':''),closed?'':action('تم الإنجاز','job-done',j.id)+action('تأجيل','job-defer',j.id)+action('مراسلة بشأن المهمة','message-job',j.id))).join('')||info(closed?'لا مهام مكتملة.':'لا توجد مهام عامة معلقة.');
 }
@@ -440,5 +451,5 @@ async function click(b){
  }}
 document.addEventListener('click',e=>{const b=e.target.closest?.('[data-farm]');if(b)click(b).catch(err=>toast(errMsg(err)));});
 return {err:k=>errors[k]||'',balances:()=>rows('balances'),ledger:()=>rows('ledger'),ledgerReady:()=>!!data.ledger,cropCached:()=>!!cached.crop,waterRows:()=>rows('water'),
- legacyLedgerForm:id=>financeForm('',id),exportBatch,batchName,harvestWeeks,jobs:()=>rows('jobs'),services:()=>rows('service'),changesFor:id=>changeRows().filter(x=>x.entry===id),maintenance,tank,batchesNow,unread,messages,saveMovement,balanceOf,harvestSummary,shiftCropStatus:()=>errors.crop||(cached.crop?"نسخة محلية · قد تتغير بعد الاتصال":""),pendingChange,shiftJobs:()=>rows("jobs").filter(j=>j.status!=="مكتملة"&&(isSup()||j.assignee===S.uid)),shiftChanges:()=>rows("changes").filter(x=>x.requested&&!x.resolution),pages,action,start,stop,home,settings,view,validateEntry,gaugeName,gaugeChoices,gaugeSpec,sourceDefault,sourceOptions,setStockTime,stockCard,audit,cropReady:()=>!!data.crop,crops:()=>rows('crop'),test:{allocations,measureCost,stockBalance,validSpec}};
+ legacyLedgerForm:id=>financeForm('',id),reopen,exportBatch,batchName,harvestWeeks,jobs:()=>rows('jobs'),services:()=>rows('service'),changesFor:id=>changeRows().filter(x=>x.entry===id),maintenance,tank,batchesNow,unread,messages,saveMovement,balanceOf,harvestSummary,shiftCropStatus:()=>errors.crop||(cached.crop?"نسخة محلية · قد تتغير بعد الاتصال":""),pendingChange,shiftJobs:()=>rows("jobs").filter(j=>j.status!=="مكتملة"&&(isSup()||j.assignee===S.uid)),shiftChanges:()=>rows("changes").filter(x=>x.requested&&!x.resolution),pages,action,start,stop,home,settings,view,validateEntry,gaugeName,gaugeChoices,gaugeSpec,sourceDefault,sourceOptions,setStockTime,stockCard,audit,cropReady:()=>!!data.crop,crops:()=>rows('crop'),test:{allocations,measureCost,stockBalance,validSpec}};
 })();

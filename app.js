@@ -1,9 +1,9 @@
-/* GREEN SIDE 3.7.0 — متابعة المشتل والأبراج في البيت المحمي
+/* GREEN SIDE 3.8.0 — متابعة المشتل والأبراج في البيت المحمي
    البيانات في Firebase Firestore، والدخول عبر Firebase Authentication.
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "3.7.0";
+var APP_VERSION = "3.8.0";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -520,38 +520,46 @@ function nowMin() { return tMin(nowTime()); }
 function tMin(t) { var p = String(t).split(":"); return (+p[0]) * 60 + (+p[1] || 0); }
 
 /* ================= navigation (Android back button) ================= */
-var NAV = { kp: false, sheet: false, ignore: 0, tabs: [], lastBack: 0, backs: 0, armed: false, hintTimer: null, rearmTimer: null, disarmed: false, restore: null };
+/* 3.8.0: زر الرجوع مثل واتساب وجيميل. مدخلان فقط في سجل المتصفح: base وفوقه guard.
+   كل ضغطة رجوع تصل إلى base، فيقرر التطبيق ماذا يفعل (navBack) ثم يعيد guard فوراً.
+   لا history.back ولا history.go من الكود إطلاقاً، فلا يمكن أن ينحرف العدّ. */
+var NAV = { kp: false, sheet: false, tabs: [], mainY: {}, armed: false, hintTimer: null, exitTimer: null, exiting: false, restore: null };
 function navInit() {
   if (NAV.armed) return; NAV.armed = true;
   try { if ("scrollRestoration" in history) history.scrollRestoration = "manual"; } catch (e) {}
-  try { history.replaceState({ gs: "base" }, ""); history.pushState({ gs: "app" }, ""); } catch (e) {}
+  try { history.replaceState({ gs: "base" }, ""); history.pushState({ gs: "guard" }, ""); } catch (e) {}
   window.addEventListener("popstate", onPop);
-  /* أي لمس أو تمرير من المستخدم يلغي استعادة موضع التمرير المعلّقة، ويعيد تجهيز زر الرجوع إن كان في خطوة الخروج الأخيرة */
-  ["touchstart", "wheel", "keydown", "pointerdown"].forEach(function (k) { window.addEventListener(k, function () { NAV.restore = null; if (NAV.disarmed) rearm(); }, { passive: true, capture: true }); });
+  /* أي لمس أو تمرير من المستخدم يلغي استعادة موضع التمرير المعلّقة، ويعيد guard إن كانت رسالة الخروج ظاهرة */
+  ["touchstart", "wheel", "keydown", "pointerdown"].forEach(function (k) { window.addEventListener(k, function () { NAV.restore = null; if (NAV.exiting) navRearm(); }, { passive: true, capture: true }); });
 }
-/* 3.5.0: الخروج بثلاث ضغطات رجوع متتالية من الصفحة الأولى (بدل شريط الخروج).
-   الضغطة الأولى والثانية تُظهران تلميحاً صغيراً. بعد الثانية لا نضيف خطوة في السجل، فتصل الثالثة إلى النظام فيُغلق التطبيق.
-   إن لم تأتِ الثالثة خلال المهلة تعود الخطوة ويبدأ العدّ من جديد. */
-var BACK_WINDOW = 2500;
+function navGuard() { try { if (!history.state || history.state.gs !== "guard") history.pushState({ gs: "guard" }, ""); } catch (e) {} }
 function onPop() {
-  if (NAV.ignore > 0) { NAV.ignore--; return; }
-  if (NAV.kp) { var ai = document.activeElement; kpHide(true); if (ai && ai.blur) ai.blur(); return; }
-  if (NAV.sheet) { closeSheet(true); return; }
-  if (NAV.tabs.length) { var p = NAV.tabs.pop(); NAV.backs = 0; hideBackHint(); setTab(p.t, true, p.y); return; }
-  var now = Date.now();
-  NAV.backs = now - NAV.lastBack < BACK_WINDOW ? NAV.backs + 1 : 1; NAV.lastBack = now;
-  if (NAV.backs >= 3) { NAV.backs = 0; hideBackHint(); try { history.back(); } catch (e) {} return; }
-  showBackHint(NAV.backs === 1 ? "اضغط «رجوع» مرتين أخريين للخروج" : "اضغط «رجوع» مرة أخرى للخروج");
-  clearTimeout(NAV.rearmTimer);
-  if (NAV.backs === 1) { try { history.pushState({ gs: "app" }, ""); } catch (e) {} }
-  else { NAV.disarmed = true; NAV.rearmTimer = setTimeout(rearm, BACK_WINDOW); }
+  /* الرجوع للأمام (forward) إلى guard لا يعني شيئاً */
+  if (history.state && history.state.gs === "guard") return;
+  var exit = false;
+  try { exit = navBack(); } catch (err) { logCrash(err, "زر الرجوع"); }
+  if (!exit) navGuard();
 }
-function rearm() {
-  clearTimeout(NAV.rearmTimer); NAV.disarmed = false; NAV.backs = 0; hideBackHint();
-  try { if (history.state && history.state.gs === "base") history.pushState({ gs: "app" }, ""); } catch (e) {}
+/* ماذا تفعل ضغطة الرجوع: أول ما ينطبق بالترتيب. true = خطوة الخروج (لا يُعاد guard لثانيتين) */
+function navBack() {
+  NAV.restore = null;
+  if (NAV.kp || (KP.el && !KP.el.hidden)) { var ai = document.activeElement; kpHide(); if (ai && ai.blur && ai !== document.body) ai.blur(); return false; }
+  if (CAM.on) { camClose(); return false; }
+  if (NAV.sheet) {
+    if (Draft.sheetDirty()) { var ub = $("unsavedBar"); if (ub && !ub.hidden) unsavedClose(); else unsavedShow(); return false; }
+    closeSheet(); return false;
+  }
+  if (NAV.exiting) navRearm();
+  if (NAV.tabs.length) { var p = NAV.tabs.pop(); setTab(p.t, true, p.y); return false; }
+  if (S.role && S.tab !== "today") { setTab("today", true, NAV.mainY.today || 0); return false; }
+  /* اللوحة: رسالة الخروج. ضغطة ثانية خلال ثانيتين تصل إلى النظام فيُغلق التطبيق */
+  showBackHint("اضغط رجوع مرة أخرى للخروج");
+  NAV.exiting = true; clearTimeout(NAV.exitTimer); NAV.exitTimer = setTimeout(navRearm, 2000);
+  return true;
 }
-function showBackHint(m) { var b = $("backhint"); if (!b) return; b.textContent = m; b.hidden = false; clearTimeout(NAV.hintTimer); NAV.hintTimer = setTimeout(hideBackHint, BACK_WINDOW); }
-function hideBackHint() { var b = $("backhint"); if (b) b.hidden = true; }
+function navRearm() { clearTimeout(NAV.exitTimer); NAV.exiting = false; hideBackHint(); navGuard(); }
+function showBackHint(m) { var b = $("backhint"); if (!b) return; b.textContent = m; b.hidden = false; clearTimeout(NAV.hintTimer); NAV.hintTimer = setTimeout(hideBackHint, 2000); }
+function hideBackHint() { clearTimeout(NAV.hintTimer); var b = $("backhint"); if (b) b.hidden = true; }
 /* 3.5.0: الرجوع يعيد موضع التمرير في الصفحة السابقة. المحتوى قد يكتمل بعد الرسم الأول (تحميل البيانات)،
    فتبقى الاستعادة معلّقة لثوانٍ قليلة وتُطبَّق بعد كل رسم حتى يصبح طول الصفحة كافياً، ما لم يلمس المستخدم الشاشة */
 function applyRestore() {
@@ -566,19 +574,26 @@ function restoreScroll(t, y) {
   if (!NAV.restore) { window.scrollTo(0, 0); return; }
   applyRestore(); requestAnimationFrame(applyRestore); setTimeout(applyRestore, 120); setTimeout(applyRestore, 400);
 }
-function setTab(t, fromPop, y) {
+/* fromBar = الضغط على زر في الشريط السفلي: يبدأ من جديد (يمسح الصفحات الفرعية). الانتقال من داخل صفحة يُضاف إلى NAV.tabs */
+function setTab(t, fromPop, y, fromBar) {
   if (t === "repLegacy") t = "rep"; /* 3.7.0: صفحة تقارير واحدة */
-  if (NAV.disarmed) rearm();
-  if (!fromPop && t !== S.tab) { NAV.tabs.push({ t: S.tab, y: window.scrollY || 0 }); try { history.pushState({ gs: "tab" }, ""); } catch (e) {} }
+  if (NAV.exiting) navRearm();
+  if (MAIN_TABS.indexOf(S.tab) >= 0) NAV.mainY[S.tab] = window.scrollY || 0;
+  if (fromBar) NAV.tabs = [];
+  else if (!fromPop && t !== S.tab) NAV.tabs.push({ t: S.tab, y: window.scrollY || 0 });
   NAV.restore = null;
+  if (t !== S.tab && window.SENS && SENS.trim) { try { SENS.trim(t); } catch (e) {} }
   S.tab = t; render(true);
   if (fromPop) restoreScroll(t, y || 0); else window.scrollTo(0, 0);
+  diagHB();
 }
 function openSheet(html) {
   if (NAV.kp) kpHide();
+  if (CAM.on) camClose();
+  Draft.unbind();
   $("sheetRoot").innerHTML = html;
   document.documentElement.classList.add("lock");
-  if (!NAV.sheet) { NAV.sheet = true; try { history.pushState({ gs: "sheet" }, ""); } catch (e) {} }
+  NAV.sheet = true;
   var sh = $("sheetRoot").querySelector(".sheet"); if (sh) sh.scrollTop = 0;
 }
 /* بعض جوالات Android تُبقي أجزاء قديمة من الشاشة بعد إغلاق النافذة أو الرجوع للتطبيق، فتظهر الخانات مكررة فوق بعضها.
@@ -588,14 +603,15 @@ function repaint() {
   var v = $("view"); if (!v || RP) return;
   RP = requestAnimationFrame(function () { v.classList.add("rp"); requestAnimationFrame(function () { v.classList.remove("rp"); RP = 0; }); });
 }
-function closeSheet(fromPop) {
-  var had = NAV.sheet;
-  var kpw = NAV.kp; NAV.kp = false; kpHide(true); $("sheetRoot").innerHTML = ""; FORM = null; CALC.open = false;
+function closeSheet() {
+  if (CAM.on) camClose();
+  var hadDraft = Draft.sheetDirty();
+  Draft.flush(); Draft.unbind();
+  NAV.kp = false; kpHide(); $("sheetRoot").innerHTML = ""; FORM = null; CALC.open = false;
   document.documentElement.classList.remove("lock");
   NAV.sheet = false;
-  var steps = (had && !fromPop ? 1 : 0) + (kpw ? 1 : 0);
-  if (steps) { NAV.ignore++; history.go(-steps); }
-  if (S.dirty) render();
+  diagHB("idle");
+  if (S.dirty || hadDraft) render();
   repaint(); dayTick();
 }
 function sheetHead(title, sec, icon) {
@@ -613,6 +629,7 @@ function withAppCheck(app) {
   return app;
 }
 function boot() {
+  diagBoot();
   var cfgF = window.GS_CONFIG && window.GS_CONFIG.firebase;
   if (!window.firebase || !firebase.firestore || !firebase.auth) {
     /* ملفات المكتبة لم تُحمَّل (اتصال ضعيف عند أول فتح، أو نسخة محفوظة تالفة): نعرض السبب الحقيقي مع إعادة محاولة تمسح النسخة المحفوظة */
@@ -622,7 +639,7 @@ function boot() {
   if (!cfgF || !cfgF.apiKey) { $("view").innerHTML = '<div class="login"><div class="logo"><img src="icons/icon-192.png" alt=""><span class="wm big">GREEN SIDE</span></div><div class="card"><h2>التطبيق بانتظار الربط</h2><p class="muted">أضف بيانات مشروع Firebase في ملف config.js.</p></div></div>'; return; }
   withAppCheck(firebase.initializeApp(cfgF));
   S.auth = firebase.auth(); S.db = firebase.firestore();
-  S.db.enablePersistence({ synchronizeTabs: true }).then(function(){S.persistence=true;}).catch(function(){S.persistence=false;});
+  S.db.enablePersistence({ synchronizeTabs: true }).then(function(){S.persistence=true;diagPers(true);}).catch(function(){S.persistence=false;diagPers(false);});
   applySec(); bindTop();
   window.addEventListener("online", netState); window.addEventListener("offline", netState);
   window.addEventListener("beforeinstallprompt", function (e) { e.preventDefault(); S.installEvt = e; });
@@ -764,6 +781,7 @@ function onRole() { if(window.Farm)Farm.start(); if(S.role && window.Shift)Shift
     subDay();
   }
   render();
+  Draft.resume();
 }
 function logErr(e) { console.warn(e); }
 /* اعتماد عدد كبير من التسجيلات على دفعات من 8: كل اعتماد تتحقق منه قواعد الحماية بقراءات إضافية، وللطلب الواحد حد أقصى من هذه القراءات */
@@ -816,7 +834,7 @@ function bindTop() {
   /* على الحاسوب: فتح التقويم بالضغط على أي مكان في شريحة التاريخ */
   dp.addEventListener("click", function () { try { if (dp.showPicker && window.matchMedia && matchMedia("(pointer:fine)").matches) dp.showPicker(); } catch (e) {} });
   $("goToday").onclick = function () { go(todayStr()); };
-  $("tabs").addEventListener("click", function (e) { var b = e.target.closest("[data-tab]"); if (b) setTab(b.getAttribute("data-tab")); });
+  $("tabs").addEventListener("click", function (e) { var b = e.target.closest("[data-tab]"); if (b) setTab(b.getAttribute("data-tab"), false, 0, true); });
   $("secsw").addEventListener("click", function (e) { var b = e.target.closest("[data-sec]"); if (b) switchSec(b.getAttribute("data-sec")); });
   $("view").addEventListener("focusout", function () { setTimeout(function () { if (S.dirty && !NAV.sheet && !$("view").contains(document.activeElement)) render(); }, 0); });
 }
@@ -920,21 +938,96 @@ function renderNow(force) {
 /* ===== شبكة أمان العرض: خطأ في صفحة لا يترك الشاشة بيضاء. يُعرض ما حدث مع طريق للرجوع، ويُحفظ آخر 20 خطأ على الجوال (تظهر في «فحص النظام») ===== */
 var CRASH = [];
 try { CRASH = JSON.parse(lsGet("gs_errs") || "[]") || []; if (!Array.isArray(CRASH)) CRASH = []; } catch (e) { CRASH = []; }
-function logCrash(err, where) {
+function logCrash(err, where, x) {
   try {
     console.error(err);
     var m = txt(err && (err.message || String(err)), 300), st = txt(err && err.stack, 2000).split("\n").slice(1, 3).join(" ").replace(/https?:\/\/[^\s)]*\//g, "").slice(0, 200);
     var last = CRASH[CRASH.length - 1];
-    if (last && last.m === m && last.w === where) { last.n = (last.n || 1) + 1; last.t = Date.now(); }
-    else CRASH.push({ t: Date.now(), v: APP_VERSION, w: txt(where, 60), m: m, s: st });
+    if (last && last.m === m && last.w === where && !x) { last.n = (last.n || 1) + 1; last.t = Date.now(); }
+    else { var c = { t: Date.now(), v: APP_VERSION, w: txt(where, 60), m: m, s: st }; if (x) c.x = x; CRASH.push(c); }
     CRASH = CRASH.slice(-20); lsSet("gs_errs", JSON.stringify(CRASH));
   } catch (e) {}
 }
-function crashLogHTML() {
-  if (!CRASH.length) return "";
-  return '<details class="crashlog"><summary>أخطاء سُجّلت على هذا الجوال (' + CRASH.length + ")</summary>" + CRASH.slice().reverse().map(function (c) {
-    return '<p class="num" dir="ltr">' + esc(tsDay(c.t) + " " + tsHM(c.t) + " · " + c.v + " · " + c.m + (c.n ? " ×" + c.n : "") + (c.s ? " · " + c.s : "")) + '</p><p class="muted">' + esc(c.w) + "</p>";
-  }).join("") + '<button class="btn sm" type="button" data-act="clearCrash">مسح السجل</button></details>';
+/* ===== 3.8.0 · التشخيص الدائم: نبضة (gs_hb) تُستبدل مع كل تغيّر في الحالة، وسجل آخر 20 تشغيلاً (gs_boot).
+   عند التشغيل: إن كانت النبضة السابقة بلا clean (لم يُكتب pagehide) وفيها مرحلة غير idle، فقد أُغلق التطبيق بشكل غير متوقع ===== */
+var DIAG = { stage: "idle", prev: null, boots: [], closing: false };
+try { DIAG.prev = JSON.parse(lsGet("gs_hb") || "null"); if (!DIAG.prev || typeof DIAG.prev !== "object" || Array.isArray(DIAG.prev)) DIAG.prev = null; } catch (e) { DIAG.prev = null; }
+try { DIAG.boots = JSON.parse(lsGet("gs_boot") || "[]") || []; if (!Array.isArray(DIAG.boots)) DIAG.boots = []; } catch (e) { DIAG.boots = []; }
+var STAGE_TXT = { idle: "التصفح", form: "النموذج", camera: "التصوير", gallery: "اختيار صورة من المعرض", shrink: "تجهيز الصورة", saving: "الحفظ" };
+var STAGES = ["form", "camera", "gallery", "shrink", "saving"];
+function diagHeap() { try { var m = performance.memory; return m && m.usedJSHeapSize ? Math.round(m.usedJSHeapSize / 1048576) : null; } catch (e) { return null; } }
+function diagHB(stage, clean) {
+  if (stage) DIAG.stage = stage;
+  try {
+    lsSet("gs_hb", JSON.stringify({ t: Date.now(), v: APP_VERSION, tab: S.tab, sheet: !!NAV.sheet, form: FORM ? FORM.type + "|" + FORM.sec : "", stage: DIAG.stage, heap: diagHeap(), clean: !!(clean || DIAG.closing) }));
+  } catch (e) {}
+}
+function diagBoot() {
+  try {
+    var nv = (performance.getEntriesByType && performance.getEntriesByType("navigation")[0]) || {};
+    var b = { t: Date.now(), v: APP_VERSION, nav: txt(nv.type, 20), disc: !!document.wasDiscarded, sa: !!(window.matchMedia && matchMedia("(display-mode: standalone)").matches), mem: num(navigator.deviceMemory), pers: null, prev: DIAG.prev };
+    DIAG.boots.push(b); DIAG.boots = DIAG.boots.slice(-20); lsSet("gs_boot", JSON.stringify(DIAG.boots));
+    var p = DIAG.prev;
+    if (p && !p.clean && STAGES.indexOf(p.stage) >= 0) {
+      var ft = String(p.form || "").split("|"), T = ft[0] ? typeDef(ft[0], ft[1] === "g" ? "n" : ft[1]) : null;
+      logCrash({ message: "إغلاق غير متوقع أثناء: " + STAGE_TXT[p.stage] + (T ? " · " + T.label : ""), stack: "" }, "تشغيل جديد للتطبيق", { disc: b.disc, nav: b.nav, heap: num(p.heap), at: okTs(p.t) ? p.t : null });
+    }
+  } catch (e) {}
+  diagHB("idle");
+}
+function diagPers(v) { var b = DIAG.boots[DIAG.boots.length - 1]; if (!b) return; b.pers = v; lsSet("gs_boot", JSON.stringify(DIAG.boots)); }
+/* عند الإغلاق الطبيعي يأتي pagehide ثم visibilitychange: closing يمنع النبضة التالية من محو clean */
+window.addEventListener("pagehide", function () { Draft.flush(); DIAG.closing = true; diagHB(null, true); });
+window.addEventListener("pageshow", function (ev) { if (ev && ev.persisted) { DIAG.closing = false; diagHB(); } });
+document.addEventListener("visibilitychange", function () {
+  if (document.hidden) { Draft.flush(); diagHB(); }
+  else { if ((DIAG.stage === "camera" || DIAG.stage === "gallery") && !CAM.on) DIAG.stage = FORM ? "form" : "idle"; diagHB(); }
+});
+var NAVTXT = { navigate: "فتح جديد", reload: "إعادة تحميل", back_forward: "رجوع من السجل", prerender: "تحميل مسبق" };
+function bootLine(b) {
+  var p = b.prev && typeof b.prev === "object" ? b.prev : null, parts = [NAVTXT[b.nav] || "تشغيل"];
+  if (b.disc) parts.push("أُعيد تحميل التطبيق لنقص الذاكرة");
+  if (p && !p.clean && STAGES.indexOf(p.stage) >= 0) parts.push("أُغلق أثناء " + STAGE_TXT[p.stage]);
+  else if (p && !p.clean) parts.push("أُغلق وهو في الخلفية بلا نموذج مفتوح");
+  else if (p) parts.push("أُغلق بشكل طبيعي");
+  parts.push(b.sa ? "مثبّت" : "في المتصفح");
+  if (b.pers === false) parts.push("الحفظ دون اتصال غير متاح");
+  return parts.join(" · ");
+}
+function crashLine(c) {
+  var x = c.x && typeof c.x === "object" ? c.x : null, extra = [];
+  if (x) { if (x.disc) extra.push("أُعيد تحميل التطبيق لنقص الذاكرة"); if (x.nav) extra.push(NAVTXT[x.nav] || ""); if (num(x.heap) != null) extra.push("الذاكرة المستخدمة " + f(num(x.heap)) + " ميغابايت"); }
+  return { when: tsDay(c.t) + " " + fmtTime(tsHM(c.t)), m: txt(c.m, 300) + (c.n ? " (" + c.n + " مرات)" : ""), w: [txt(c.w, 60)].concat(extra.filter(Boolean)).join(" · "), v: txt(c.v, 12), s: txt(c.s, 200) };
+}
+/* سجل الأعطال والتشغيلات على هذا الجوال بنص مفهوم. full = داخل «حسابي» (مع التشغيلات والإرسال)، وإلا داخل نتيجة «فحص النظام» */
+function crashLogHTML(full) {
+  if (!full) {
+    if (!CRASH.length) return "";
+    return '<details class="crashlog"><summary>أخطاء سُجّلت على هذا الجوال (' + CRASH.length + ")</summary>" + CRASH.slice().reverse().map(function (c) {
+      var L = crashLine(c);
+      return '<p><b>' + esc(L.m) + '</b></p><p class="muted"><span class="num">' + esc(L.when) + "</span> · " + esc(L.w) + " · الإصدار " + esc(L.v) + "</p>" + (L.s ? '<p class="num muted" dir="ltr">' + esc(L.s) + "</p>" : "");
+    }).join("") + '<button class="btn sm" type="button" data-act="clearCrash">مسح السجل</button></details>';
+  }
+  var h = '<div class="crashlog in-acc">';
+  h += CRASH.length ? '<h3>الأعطال (' + CRASH.length + ')</h3>' + CRASH.slice().reverse().map(function (c) { var L = crashLine(c); return '<div class="cl-row"><b>' + esc(L.m) + '</b><small><span class="num">' + esc(L.when) + "</span> · " + esc(L.w) + " · الإصدار " + esc(L.v) + "</small></div>"; }).join("") : '<p class="muted">لا أعطال مسجّلة على هذا الجوال.</p>';
+  var bs = DIAG.boots.slice(-8).reverse();
+  if (bs.length) h += "<h3>آخر مرات تشغيل التطبيق</h3>" + bs.map(function (b) { return '<div class="cl-row"><b>' + esc(bootLine(b)) + '</b><small class="num">' + esc(tsDay(b.t) + " " + fmtTime(tsHM(b.t))) + (num(b.mem) != null ? " · ذاكرة الجهاز " + esc(f(num(b.mem))) + " GB" : "") + "</small></div>"; }).join("");
+  return h + '<div class="ux-actions"><button class="btn sm pri" type="button" data-act="sendCrash">إرسال للمشرف</button>' + (CRASH.length ? '<button class="btn sm" type="button" data-act="clearCrash">مسح السجل</button>' : "") + "</div></div>";
+}
+/* ملخص نصي (≤ 2000 حرف) يُرسل رسالةً للمالك، أو لأول مشرف إن كان المرسل هو المالك */
+function crashText() {
+  var b = DIAG.boots[DIAG.boots.length - 1] || {}, out = ["سجل الأعطال · " + nameOf(S.uid) + " · الإصدار " + APP_VERSION,
+    "الجهاز: " + (num(navigator.deviceMemory) != null ? "ذاكرة " + num(navigator.deviceMemory) + " GB · " : "") + (b.sa ? "مثبّت" : "في المتصفح") + " · الحفظ دون اتصال " + (S.persistence === false ? "غير متاح" : S.persistence ? "يعمل" : "غير معروف")];
+  out.push("الأعطال: " + (CRASH.length ? "" : "لا يوجد"));
+  CRASH.slice().reverse().forEach(function (c) { var L = crashLine(c); out.push("- " + L.when + " · " + L.m + " · " + L.w); });
+  out.push("آخر مرات التشغيل:");
+  DIAG.boots.slice(-8).reverse().forEach(function (x) { out.push("- " + tsDay(x.t) + " " + fmtTime(tsHM(x.t)) + " · " + bootLine(x)); });
+  var t = out.join("\n"); return t.length > 2000 ? t.slice(0, 1997) + "…" : t;
+}
+function crashTarget() {
+  if (S.ownerUid && S.ownerUid !== S.uid) return S.ownerUid;
+  var ids = Object.keys(S.users).filter(function (k) { var u = S.users[k]; return k !== S.uid && u && u.role === "sup" && !u.selftest; });
+  return ids[0] || "";
 }
 function tsDay(ts) { return okTs(+ts) ? todayStr(new Date(+ts)) : ""; }
 function crashHTML(err) {
@@ -1279,11 +1372,17 @@ function entryCard(e, showDate) {
     (chips ? '<div class="chips">' + chips + "</div>" : "") + (txt.length ? '<div class="e-text">' + esc(txt.join("\n")) + "</div>" : "") + img +
     (rev && rev.c ? '<div class="rev-note"><b>' + esc(nameOf(rev.by)) + ":</b> " + esc(rev.c) + "</div>" : "") + (foot ? '<div class="e-foot">' + foot + "</div>" : "") + "</article>";
 }
+/* 3.8.0: ذاكرة الصور الكاملة بحد 12 صورة (الأقدم يُحذف). كانت تبقى كل صور الجلسة، حتى 650 KB نصاً لكل صورة */
+function photoPut(id, d) {
+  if (!id || !d) return;
+  delete S.photos[id]; S.photos[id] = d;
+  var ks = Object.keys(S.photos); while (ks.length > 12) delete S.photos[ks.shift()];
+}
 function loadPhotos(root) {
   (root || document).querySelectorAll("img[data-photo]").forEach(function (img) {
     var id = img.getAttribute("data-photo"); if (!id) return;
     if (S.photos[id]) { img.src = safeImg(S.photos[id]); return; }
-    S.db.collection("photos").doc(id).get().then(function (s) { if (s.exists) { S.photos[id] = s.data().data; img.src = safeImg(S.photos[id]); } }).catch(function () {});
+    S.db.collection("photos").doc(id).get().then(function (s) { if (s.exists) { photoPut(id, s.data().data); img.src = safeImg(s.data().data); } }).catch(function () {});
   });
 }
 
@@ -1311,7 +1410,7 @@ function timePicker(id, val) {
 }
 function readTime(id) { var el = $(id); if (!el) return ""; var h = +el.querySelector(".tp-h").value, m = +el.querySelector(".tp-m").value, ap = el.getAttribute("data-ap"); return pad(h % 12 + (ap === "pm" ? 12 : 0)) + ":" + pad(m); }
 function batchOptions(val) {
-  var list = sowBatches().filter(function (e) { return e.date<=S.date || e.id===val; }).slice().reverse();
+  var day = FORM && FORM.date || S.date, list = sowBatches().filter(function (e) { return e.date<=day || e.id===val; }).slice().reverse();
   return '<option value="">—</option>' + list.map(function (e) { return '<option value="' + esc(e.id) + '"' + (e.id === val ? " selected" : "") + ">" + esc(fmtShort(e.date) + " · " + (e.v.crop || "") + " · " + f(num(e.v.seeds)) + " بذرة · عمر " + daysBetween(e.date, todayStr()) + " يوم") + "</option>"; }).join("");
 }
 function gridHTML(fd, v) {
@@ -1336,7 +1435,7 @@ document.addEventListener("input", function (ev) { var t = ev.target; if (t && t
 function opts(fd) { return typeof fd.o === "function" ? fd.o() : fd.o; }
 function photoHTML(fd) {
   var sx = fd.side ? "_" + fd.side : "", e = FORM.e, cur = !fd.side && e && (e.thumb || e.photo);
-  return '<div class="f full" id="w_' + fd.k + '"><span>الصورة' + (fd.req ? ' <span class="req">*</span>' : " (اختياري)") + '</span><div class="photo-btns"><label class="btn" for="f_cam' + sx + '">' + ico("cam", 20) + '&nbsp;الكاميرا</label><label class="btn" for="f_gal' + sx + '">' + ico("gallery", 20) + "&nbsp;المعرض</label></div>" +
+  return '<div class="f full" id="w_' + fd.k + '"><span>الصورة' + (fd.req ? ' <span class="req">*</span>' : " (اختياري)") + '</span><div class="photo-btns"><button class="btn" type="button" data-act="cam" data-side="' + (fd.side || "") + '">' + ico("cam", 20) + '&nbsp;الكاميرا</button><label class="btn" for="f_gal' + sx + '" data-pick="gallery">' + ico("gallery", 20) + "&nbsp;المعرض</label></div>" +
     '<input type="file" accept="image/*" capture="environment" id="f_cam' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden><input type="file" accept="image/*" id="f_gal' + sx + '" class="photo-in" data-side="' + (fd.side || "") + '" hidden>' +
     '<img class="photo-prev" id="f_prev' + sx + '" alt="" ' + (cur ? (e.thumb ? 'src="' + safeImg(e.thumb) + '"' : 'data-photo="' + esc(e.photo) + '"') : "hidden") + "></div>";
 }
@@ -1374,17 +1473,24 @@ function buildFields(T, split) {
   return [shared[0]].concat(blocks, shared.slice(1));
 }
 /* forceSec: قسم التسجيل من صفحة دورة الزراعة (العدّ في المشتل، النقل والحصاد في الأبراج) دون تبديل القسم المعروض */
-function openForm(type, e, prefill, forceSec) {
-  var sec = e ? secOf(e) : (TYPES_G[type] ? "g" : (forceSec || S.sec)), vsec = sec === "g" ? S.sec : sec, T = typeDef(type, vsec);
+/* 3.8.0: opts = {date, ids, photos, lb, reason, restored} لاستعادة مسودة (التاريخ والمعرّفات الثابتة والصور من المسودة نفسها) */
+function openForm(type, e, prefill, forceSec, opts) {
+  if (FORM) Draft.flush();
+  var sec = opts && opts.sec ? opts.sec : e ? secOf(e) : (TYPES_G[type] ? "g" : (forceSec || S.sec)), vsec = opts && opts.vsec ? opts.vsec : sec === "g" ? S.sec : sec, T = typeDef(type, vsec);
   if (!T || !Array.isArray(T.fields)) { toast("نوع تسجيل غير معروف؛ لا يمكن فتحه"); return; }
-  FORM = { type: type, e: e, sec: sec, vsec: vsec, photos: {}, modeTouched: !!e, split: !!(T.split && !e), lockBatch: !e && !!(prefill && prefill.batch) };
+  var fdate = e ? e.date : (opts && okDay(opts.date) ? opts.date : S.date);
+  /* نموذج جديد بلا قيم مسبقة وله مسودة محفوظة بالمفتاح نفسه: يُكمل المسودة بدل أن يكتب فوقها */
+  if (!opts && !prefill && !(type === "waterOnly" && !e)) { var od = Draft.find(Draft.keyOf(type, sec, fdate, e)); if (od && od.kind === "form" && !od.queued) { Draft.open(od.k); return; } }
+  FORM = { type: type, e: e, sec: sec, vsec: vsec, date: fdate, photos: {}, modeTouched: !!e, split: !!(T.split && !e), lockBatch: opts && "lb" in opts ? !!opts.lb : !e && !!(prefill && prefill.batch), dirty: !!(opts && opts.restored) };
+  FORM.ids = Draft.ids(opts && opts.ids);
+  FORM.k = Draft.keyOf(type, sec, fdate, e);
   FORM.fields = buildFields(T, FORM.split);
   if(type==="waterOnly"&&!e){
     if(Shift.hasPending()){Shift.showPending();return;}
     const draft=Shift.draft(S.date);prefill=draft?.values||{waterMethod:"إدخال اللترات مباشرة"};
     FORM.waterId=draft?.id||S.db.collection("entries").doc().id;
   }
-  var v = e ? clone(e.v || {}) : (prefill || {});
+  var v = e ? Object.assign(clone(e.v || {}), opts && opts.values || {}) : (prefill || {});
   if(type === "refill" || type === "waterOnly") {
     FORM.flow = e && e.v.flowCalibration ? clone(e.v.flowCalibration) : {litres:num(cfg("flowLitres")),minutes:num(cfg("flowMinutes")),seconds:num(cfg("flowSeconds"))};
     FORM.fields = FORM.fields.slice();
@@ -1403,7 +1509,7 @@ function openForm(type, e, prefill, forceSec) {
   if(type==="xplant"&&e&&e.v.stockTracked===true)h+='<p class="help full">نقل مسجّل قبل الإصدار 3.4.0 ومرتبط برصيد الجرد: تصحيح عدده يحتاج اتصالاً، ولإلغائه صحّح العدد إلى صفر.</p>';
   if(isWorker()&&e&&e.review)h+='<p class="help full">حفظ التعديل يعيد السجل للمشرف مع السبب والقيم الجديدة.</p>';
   if(type === "refill" || type === "waterOnly")h += '<p class="help full">التعبئة مباشرة إلى خزان الري. أوقف الماء عند علامة الماسورة المثبتة في الموضع والعمق نفسيهما. احسب وقت جريان الماء فقط. الكمية تقديرية وتعتمد على ثبات التدفق. معايرة هذه العملية: '+esc(FORM.flow.litres)+' لتر / '+esc(FORM.flow.minutes)+' دقيقة و '+esc(FORM.flow.seconds)+' ثانية.</p><p class="help full" id="flowResult" aria-live="polite"></p>';
-  if(isWorker() && (e || S.date<todayStr()))h+='<label class="f full">سبب التعديل أو التسجيل المتأخر<input class="in" id="changeReason" maxlength="300"></label>';
+  if(isWorker() && (e || FORM.date<todayStr()))h+='<label class="f full">سبب التعديل أو التسجيل المتأخر<input class="in" id="changeReason" maxlength="300" value="'+esc(opts&&opts.reason||"")+'"></label>';
   if(type==="pump"){FORM.pressureSpecs=clone(normSpecs(e?.v.pressureSpecs)||{gauge1:Farm.gaugeSpec('gauge1'),gauge2:Farm.gaugeSpec('gauge2')});FORM.fields=FORM.fields.map(fd=>FORM.pressureSpecs[fd.k]?Object.assign({},fd,{l:FORM.pressureSpecs[fd.k].name+" · المثالي "+FORM.pressureSpecs[fd.k].ideal+" بار"}):fd);}
   if(['refill','waterOnly','mix','irr'].includes(type)&&!v.stockSource)v.stockSource=Farm.sourceDefault(type,!!e);
   if(type==="waterOnly"){
@@ -1427,21 +1533,42 @@ function openForm(type, e, prefill, forceSec) {
   form.addEventListener("submit", function (ev) { ev.preventDefault(); });
   var md = $("f_mode"); if (md) md.addEventListener("change", function () { if (FORM) FORM.modeTouched = true; });
   document.querySelectorAll(".photo-in").forEach(function (inp) { inp.addEventListener("change", onPhotoPick); });
+  /* المسودة: تُحفظ بعد 400 ms من آخر تغيير، وفوراً قبل فتح المعرض */
+  var mark = function () { if (FORM) { FORM.dirty = true; Draft.later(); } };
+  form.addEventListener("input", mark); form.addEventListener("change", mark);
+  var rs = $("changeReason"); if (rs) rs.addEventListener("input", mark);
+  $("sheetRoot").querySelectorAll('[data-pick="gallery"]').forEach(function (l) { l.addEventListener("click", function () { if (FORM && FORM.dirty) Draft.saveNow(); diagHB("gallery"); }); });
   if(type==="waterOnly"&&!e){
     function remember(){if(FORM?.waterId)Shift.remember(S.date,FORM.waterId,formValues());}
     form.addEventListener("input",remember); form.addEventListener("change",remember);
   }
   if (window.Cycle) Cycle.formInit(FORM);
   updForm(); loadPhotos($("sheetRoot"));
+  diagHB("form");
+  if (opts && opts.photos && opts.photos.length) Draft.loadPhotos(FORM);
 }
 function uniqueCrops() { var s = {}; S.meta.forEach(function (e) { if (e.v && e.v.crop) s[e.v.crop] = 1; }); return Object.keys(s); }
 function onPhotoPick(ev) {
   var file = ev.target.files && ev.target.files[0]; if (!file || !FORM) return;
-  var sd = ev.target.getAttribute("data-side") || "", pv = $("f_prev" + (sd ? "_" + sd : "")); pv.hidden = false; pv.style.opacity = .4;
-  shrink(file).then(function (r) { if (!FORM || !r.full) { if (pv) pv.style.opacity = 1; return; } FORM.photos[sd || "_"] = r; pv.src = r.thumb; pv.removeAttribute("data-photo"); pv.style.opacity = 1; });
+  var sd = ev.target.getAttribute("data-side") || "", pv = $("f_prev" + (sd ? "_" + sd : "")), fm = FORM; pv.hidden = false; pv.style.opacity = .4;
+  if (fm.dirty) Draft.saveNow();
+  diagHB("shrink");
+  shrink(file).then(function (r) {
+    ev.target.value = "";
+    if (FORM !== fm || !r.full) { if (pv) pv.style.opacity = 1; diagHB(FORM ? "form" : "idle"); return; }
+    setFormPhoto(sd, r); diagHB("form");
+  });
+}
+/* صورة جاهزة ({full, thumb}) من المعرض أو الكاميرا: تُضاف للنموذج والمعاينة وتُحفظ في المسودة فوراً */
+function setFormPhoto(sd, r) {
+  if (!FORM) return;
+  FORM.photos[sd || "_"] = r; FORM.dirty = true;
+  var pv = $("f_prev" + (sd ? "_" + sd : "")); if (pv) { pv.hidden = false; pv.src = r.thumb; pv.removeAttribute("data-photo"); pv.style.opacity = 1; }
+  Draft.putPhoto(FORM.k, sd || "_", r); Draft.saveNow();
 }
 function formValues() {
   var v = {};
+  if (!FORM) return v;
   FORM.fields.forEach(function (fd) {
     if (fd.t === "photo") return;
     if (fd.t === "grid") { gridKeysD(fd.k, dimOf(fd)).forEach(function (k) { var el = $("f_" + k); v[k] = el ? inVal(el).trim() : ""; }); return; }
@@ -1533,6 +1660,7 @@ function needOneOk(T, v) {
 function saveForm(btn) {
   if(!FORM || FORM.saving || btn.disabled)return;
   updForm();
+  if (FORM.dirty) Draft.saveNow();
   var type = FORM.type, e = FORM.e, T = typeDef(type, FORM.vsec), raw = formValues(), v = {}, miss = [], wasOther = false;
   var sideName = function (fd) { return fd.side ? SIDES[SK.indexOf(fd.side)] + ": " : ""; };
   FORM.fields.forEach(function (fd) {
@@ -1565,14 +1693,14 @@ function saveForm(btn) {
       if (!used) return;
       req.forEach(function (fd) { if (sv[fd.base] === "" || sv[fd.base] == null) miss.push(SIDES[si] + ": " + fd.l); });
       if (T.photo === "req" && !FORM.photos[sd]) miss.push(SIDES[si] + ": الصورة");
-      groups.push({ v: Object.assign({}, shared, sv, { side: SIDES[si] }), photo: FORM.photos[sd] });
+      groups.push({ sd: sd, v: Object.assign({}, shared, sv, { side: SIDES[si] }), photo: FORM.photos[sd] });
     });
     if (!groups.length) miss.push(T.photo === "req" ? "صورة جهة واحدة على الأقل" : "بيانات جهة واحدة على الأقل");
   } else {
     if (!needOneOk(T, e ? Object.assign({}, e.v, v) : v)) miss.push(type === "irr" ? "كمية الري لجهة واحدة على الأقل" : "قراءة واحدة على الأقل");
     if (T.photo === "req" && !FORM.photos._ && !(e && e.photo)) miss.push("الصورة");
   }
-  if(isWorker() && (e?.date||S.date)>todayStr())miss.push("لا يمكن تسجيل عملية بتاريخ مستقبلي");
+  if(isWorker() && (e?.date||FORM.date)>todayStr())miss.push("لا يمكن تسجيل عملية بتاريخ مستقبلي");
   if(window.Cycle)Cycle.validate(type,v,miss,FORM);
   Farm.validateEntry(type,v,miss);
   if(type==="waterOnly"&&!(num(v.waterAdd)>0))miss.push("كمية الماء المضافة يجب أن تكون موجبة");
@@ -1584,6 +1712,8 @@ function saveForm(btn) {
   if (miss.length) { kpHide();var errorBox=$("formErrors");errorBox.hidden=false;errorBox.textContent="لم يُحفظ التسجيل. صحح التالي: "+Array.from(new Set(miss)).join("، ");errorBox.scrollIntoView({block:"center"});return; }
   $("formErrors").hidden=true;
   btn.disabled = true; btn.textContent = "جارٍ الحفظ…";
+  /* المسودة تبقى حتى يؤكد الخادم الحفظ */
+  FORM.queued = true; if (!(type==="waterOnly"&&!e)) { FORM.dirty = true; Draft.queue(FORM); }
   if(type==="waterOnly"&&!e){
     Farm.setStockTime(null,type,S.date,v);
     try{Shift.enqueue(FORM.waterId,{type,sec:"t",date:S.date,time:v.time,ts:Date.now(),by:S.uid,v},reason?.value||"");closeSheet();Shift.flush();render();}
@@ -1593,45 +1723,342 @@ function saveForm(btn) {
   /* نقل 3.3.0 المتتبَّع برصيد الجرد يُصحَّح داخل transaction. النقل الجديد تسجيل عادي (يُحفظ بدون إنترنت) */
   if(type==="xplant"&&e&&e.v.stockTracked===true){
     const submitted=FORM;submitted.saving=true;
-    GSUI.commit(Farm.saveMovement(submitted,v,reason?.value.trim()||""),btn,()=>{if(FORM===submitted)closeSheet();toast(e&&isWorker()&&e.review?"أُرسل طلب التصحيح":"أكد الخادم حفظ النقل");}).finally(()=>{submitted.saving=false;});return;
+    diagHB("saving");
+    GSUI.commit(Farm.saveMovement(submitted,v,reason?.value.trim()||""),btn,()=>{Draft.drop(submitted.k);if(FORM===submitted)closeSheet();toast(e&&isWorker()&&e.review?"أُرسل طلب التصحيح":"أكد الخادم حفظ النقل");}).finally(()=>{submitted.saving=false;if(FORM===submitted)diagHB("form");});return;
   }
-  var wb = S.db.batch(), date = e ? e.date : S.date, col = S.db.collection("entries");
-  var putPhoto = function (ph) { var pref = S.db.collection("photos").doc(); wb.set(pref, { data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec }); S.photos[pref.id] = ph.full; return pref.id; };
+  /* 3.8.0: المعرّفات مولّدة عند فتح النموذج (ومحفوظة في المسودة)، فإعادة الحفظ بعد الاستعادة لا تكرر التسجيل ولا الصورة */
+  var wb = S.db.batch(), date = FORM.date, col = S.db.collection("entries"), ids = FORM.ids;
+  var putPhoto = function (ph, pid) { var pref = S.db.collection("photos").doc(pid); wb.set(pref, { data: ph.full, by: S.uid, ts: Date.now(), sec: FORM.sec }); photoPut(pref.id, ph.full); return pref.id; };
   if (type === "batt") { v.start = hmToTs(date, v.time); v.end = v.endTime ? hmToTs(date, v.endTime, v.start) : null; delete v.endTime; }
   Farm.setStockTime(e,type,date,v);
   if (e) {
     var nv = Object.assign(clone(e.v || {}), v), up = { v: nv, time: nv.time };
-    if (FORM.photos._) { up.photo = putPhoto(FORM.photos._); up.thumb = FORM.photos._.thumb; }
+    if (FORM.photos._) { up.photo = putPhoto(FORM.photos._, ids.photo); up.thumb = FORM.photos._.thumb; }
     if (type === "note" && nv.cat === NOTE_NONE) up.open = false;
     if(reason) Farm.audit(wb,e.id,e,nv,reason.value);
     if(!(isWorker() && e.review))wb.update(col.doc(e.id), up);
   } else if (FORM.split) {
-    var grp = col.doc().id;
-    groups.forEach(function (g) { var d = { type: type, sec: FORM.sec, date: date, time: g.v.time, ts: Date.now(), by: S.uid, v: g.v, grp: grp }; if (g.photo) { d.photo = putPhoto(g.photo); d.thumb = g.photo.thumb; } var ref=col.doc();if(reason)Farm.audit(wb,ref.id,null,d.v,reason.value);wb.set(ref,d); });
+    var grp = ids.grp;
+    groups.forEach(function (g) { var d = { type: type, sec: FORM.sec, date: date, time: g.v.time, ts: Date.now(), by: S.uid, v: g.v, grp: grp }; if (g.photo) { d.photo = putPhoto(g.photo, ids.photos[g.sd]); d.thumb = g.photo.thumb; } var ref=col.doc(ids.docs[g.sd]);if(reason)Farm.audit(wb,ref.id,null,d.v,reason.value);wb.set(ref,d); });
   } else {
     var d = { type: type, sec: FORM.sec, date: date, time: v.time, ts: Date.now(), by: S.uid, v: v };
-    if (FORM.photos._) { d.photo = putPhoto(FORM.photos._); d.thumb = FORM.photos._.thumb; }
+    if (FORM.photos._) { d.photo = putPhoto(FORM.photos._, ids.photo); d.thumb = FORM.photos._.thumb; }
     if (type === "note") d.open = v.cat !== NOTE_NONE;
-    var ref=col.doc();if(reason)Farm.audit(wb,ref.id,null,d.v,reason.value);wb.set(ref,d);
+    var ref=col.doc(ids.doc);if(reason)Farm.audit(wb,ref.id,null,d.v,reason.value);wb.set(ref,d);
   }
   if (wasOther && isSup() && v.cat && noteCats().indexOf(v.cat) < 0) wb.update(S.db.collection("config").doc("settings"), { noteCats: (Array.isArray(S.settings.noteCats) ? S.settings.noteCats : []).concat([v.cat]) });
   /* الصورة والتسجيل يُحفظان معاً أو لا يُحفظ أيٌّ منهما */
   var submitted=FORM,where=FORM.sec==='g'?'':' في '+SECS[FORM.sec].name;
-  submitted.saving=true;
-  GSUI.commit(wb.commit(),btn,function(){submitted.saving=false;if(FORM===submitted)closeSheet();toast(e&&isWorker()&&e.review?'أُرسل طلب التصحيح للمشرف':'تم تأكيد الحفظ'+where);}).then(function(){submitted.saving=false;});
+  submitted.saving=true; diagHB("saving");
+  var cp = wb.commit().catch(function (err) { logCrash(err, "الحفظ"); throw err; });
+  GSUI.commit(cp,btn,function(){submitted.saving=false;Draft.drop(submitted.k);if(FORM===submitted)closeSheet();toast(e&&isWorker()&&e.review?'أُرسل طلب التصحيح للمشرف':'تم تأكيد الحفظ'+where);}).then(function(){submitted.saving=false;if(FORM===submitted)diagHB("form");});
 }
 function hmToTs(date, hm, after) { var d = new Date(date + "T" + hm + ":00+03:00").getTime(); if (after && d < after) d += 864e5; return d; }
-function shrink(file) {
+/* 3.8.0: تصغير الصورة دون فك الصورة الأصلية كاملة في الذاكرة (صورة 12–48 ميغابكسل كانت تأخذ 48–190 MB دفعة واحدة):
+   createImageBitmap يفك الصورة مصغّرة مباشرة، ثم canvas بالحجم النهائي فقط وترميز واحد بجودة محسوبة. الاحتياط: الطريقة القديمة */
+var PH_FULL = 1100, PH_THUMB = 240, PH_LIM = 650000, TH_LIM = 30000;
+function encodeTo(c, q, lim) {
+  var out = c.toDataURL("image/jpeg", q);
+  if (out.length > lim) { q = Math.max(.3, q * lim / out.length * .92); out = c.toDataURL("image/jpeg", q); }
+  while (out.length > lim && q > .3) { q -= .1; out = c.toDataURL("image/jpeg", q); }
+  return out;
+}
+function canvasOf(src, sw, sh, max) {
+  var r = Math.min(1, max / Math.max(sw, sh)), c = document.createElement("canvas");
+  c.width = Math.max(1, Math.round(sw * r)); c.height = Math.max(1, Math.round(sh * r));
+  c.getContext("2d").drawImage(src, 0, 0, c.width, c.height); return c;
+}
+function freeCanvas(c) { try { c.width = 0; c.height = 0; } catch (e) {} }
+/* صورة جاهزة {full, thumb} من مصدر قابل للرسم (bitmap أو video) */
+function photoFrom(src, w, h) {
+  var c = canvasOf(src, w, h, PH_FULL), full = encodeTo(c, .72, PH_LIM);
+  var t = canvasOf(c, c.width, c.height, PH_THUMB), thumb = encodeTo(t, .6, TH_LIM);
+  freeCanvas(c); freeCanvas(t);
+  return { full: full, thumb: thumb };
+}
+function shrinkOld(file) {
   return new Promise(function (res) {
     var img = new Image(), u = URL.createObjectURL(file);
-    img.onload = function () {
-      var draw = function (m, q, lim) { var r = Math.min(1, m / Math.max(img.width, img.height)), c = document.createElement("canvas"); c.width = Math.round(img.width * r); c.height = Math.round(img.height * r); c.getContext("2d").drawImage(img, 0, 0, c.width, c.height); var out = c.toDataURL("image/jpeg", q); while (out.length > lim && q > .3) { q -= .1; out = c.toDataURL("image/jpeg", q); } return out; };
-      var full = draw(1100, .72, 650000), thumb = draw(240, .6, 30000); URL.revokeObjectURL(u); res({ full: full, thumb: thumb });
-    };
-    img.onerror = function () { res({ full: null, thumb: null }); };
+    img.onload = function () { var r = { full: null, thumb: null }; try { r = photoFrom(img, img.naturalWidth || img.width, img.naturalHeight || img.height); } catch (e) { logCrash(e, "تجهيز الصورة"); } URL.revokeObjectURL(u); img.src = ""; res(r); };
+    img.onerror = function () { URL.revokeObjectURL(u); res({ full: null, thumb: null }); };
     img.src = u;
   });
 }
+function shrink(file) {
+  if (typeof createImageBitmap !== "function" || !file) return shrinkOld(file);
+  /* العرض المطلوب = PH_FULL: الصورة الطولية تأتي أطول قليلاً ثم تُصغَّر في canvas بالحجم النهائي */
+  return createImageBitmap(file, { resizeWidth: PH_FULL, resizeQuality: "medium" }).then(function (bm) {
+    var r;
+    try { r = photoFrom(bm, bm.width, bm.height); } finally { try { bm.close(); } catch (e) {} }
+    return r;
+  }).catch(function () { return shrinkOld(file); });
+}
+
+/* ================= 3.8.0 · الكاميرا داخل التطبيق =================
+   زر «الكاميرا» كان يفتح تطبيق الكاميرا، وجوالات 4GB تقتل Chrome في الخلفية فيعود العامل لشاشة الجوال ويضيع النموذج.
+   الآن طبقة فوق النموذج (النموذج يبقى في الصفحة). إن لم تتوفر الكاميرا أو رُفض الإذن: تُحفظ المسودة أولاً ثم الكاميرا الخارجية */
+var CAM = { on: false, el: null, stream: null, side: "" };
+function camStop(st) { try { (st || CAM.stream).getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} }
+function openCam(side) {
+  if (!FORM) return;
+  if (FORM.dirty) Draft.saveNow();
+  var md = navigator.mediaDevices;
+  if (!md || typeof md.getUserMedia !== "function") { camExternal(side); return; }
+  if (CAM.on) camClose();
+  kpHide();
+  var el = document.createElement("div"); el.className = "cam"; el.setAttribute("role", "dialog"); el.setAttribute("aria-label", "الكاميرا");
+  el.innerHTML = '<video playsinline autoplay muted></video><p class="cam-msg" role="status">جارٍ تشغيل الكاميرا…</p><button type="button" class="cam-x" data-act="camClose" aria-label="إغلاق الكاميرا">✕</button><button type="button" class="cam-shot" data-act="camShot" aria-label="التقاط الصورة"><i></i></button>';
+  $("sheetRoot").appendChild(el);
+  CAM = { on: true, el: el, stream: null, side: side || "" };
+  diagHB("camera");
+  md.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false }).then(function (st) {
+    if (!CAM.on || CAM.el !== el) { camStop(st); return; }
+    CAM.stream = st; var v = el.querySelector("video"); v.srcObject = st;
+    var p = v.play(); if (p && p.catch) p.catch(function () {});
+    v.addEventListener("loadedmetadata", function () { var m = el.querySelector(".cam-msg"); if (m) m.hidden = true; }, { once: true });
+  }).catch(function () {
+    if (CAM.el !== el) return;
+    camClose(); camExternal(side);
+  });
+}
+function camExternal(side) {
+  if (FORM) { FORM.dirty = FORM.dirty || Object.keys(FORM.photos).length > 0; Draft.saveNow(true); }
+  toast("إن أُغلق التطبيق أثناء التصوير يُستعاد النموذج عند فتحه");
+  diagHB("camera");
+  var inp = $("f_cam" + (side ? "_" + side : "")); if (inp) inp.click();
+}
+function camClose() {
+  var el = CAM.el; camStop(); CAM = { on: false, el: null, stream: null, side: "" };
+  if (el) { var v = el.querySelector("video"); if (v) { try { v.pause(); v.srcObject = null; } catch (e) {} } el.remove(); }
+  if (DIAG.stage === "camera") diagHB(FORM ? "form" : "idle");
+}
+function camShot(btn) {
+  var el = CAM.el; if (!el || !FORM) return;
+  var v = el.querySelector("video"), w = v && v.videoWidth, h = v && v.videoHeight;
+  if (!w || !h) { toast("الكاميرا لم تجهز بعد"); return; }
+  if (btn) btn.disabled = true;
+  var side = CAM.side, r;
+  try { r = photoFrom(v, w, h); } catch (e) { logCrash(e, "التقاط الصورة"); r = null; }
+  camClose();
+  if (!r || !r.full) { toast("تعذّر التقاط الصورة. حاول مرة أخرى"); return; }
+  setFormPhoto(side, r);
+}
+
+/* ================= 3.8.0 · المسودات التلقائية =================
+   كل نموذج تسجيل يُحفظ مسودة على الجوال مع كل تغيير، ويبقى حتى يؤكد الخادم الحفظ.
+   المفتاح: النوع|القسم|التاريخ|معرّف التسجيل أو new. القيم في localStorage (gs_draft1:<uid>)، والصور في IndexedDB (gs-drafts) لأن localStorage لا يتسعها.
+   النماذج الأخرى (الحمولة، الصيانة، المهمة، الجرد، التكلفة والمبيعات، الوصفات) بـ Draft.bindSheet: قيم الخانات فقط. */
+var Draft = (function () {
+  var MAX = 10, AGE = 7 * 864e5, timer = 0, BS = null, PEND = [], resumed = "", ready = false;
+  var LK = function () { return "gs_draft1:" + (S.uid || ""); };
+  function load() { try { var m = JSON.parse(localStorage.getItem(LK()) || "{}"); return m && typeof m === "object" && !Array.isArray(m) ? m : {}; } catch (e) { return {}; } }
+  function okRec(d) { return d && typeof d === "object" && typeof d.k === "string" && okTs(d.at); }
+  function store(m) {
+    var now = Date.now(), ks = Object.keys(m).filter(function (k) { var d = m[k]; if (!okRec(d) || now - d.at > AGE) { dropPhotos(k, d); return false; } return true; });
+    ks.sort(function (a, b) { return m[b].at - m[a].at; });
+    var out = {}; ks.forEach(function (k, i) { if (i < MAX) out[k] = m[k]; else dropPhotos(k, m[k]); });
+    try { localStorage.setItem(LK(), JSON.stringify(out)); } catch (e) {}
+    return out;
+  }
+  /* IndexedDB للصور. كل وصول داخل try/catch: التطبيق يعمل إن فشل التخزين */
+  var dbp = null;
+  function idb() {
+    if (dbp) return dbp;
+    dbp = new Promise(function (res, rej) {
+      try { var r = indexedDB.open("gs-drafts", 1); r.onupgradeneeded = function () { try { r.result.createObjectStore("photos"); } catch (e) {} }; r.onsuccess = function () { res(r.result); }; r.onerror = function () { rej(r.error); }; }
+      catch (e) { rej(e); }
+    });
+    dbp.catch(function () { dbp = null; });
+    return dbp;
+  }
+  function tx(mode, fn) { return idb().then(function (db) { return new Promise(function (res, rej) { try { var t = db.transaction("photos", mode), st = t.objectStore("photos"), out = fn(st); t.oncomplete = function () { res(out && "result" in out ? out.result : undefined); }; t.onerror = function () { rej(t.error); }; t.onabort = function () { rej(t.error); }; } catch (e) { rej(e); } }); }); }
+  var pk = function (k, side) { return (S.uid || "") + "|" + k + ":" + side; };
+  function putPhoto(k, side, ph) { if (!k) return Promise.resolve(); return tx("readwrite", function (st) { st.put({ full: ph.full, thumb: ph.thumb }, pk(k, side)); }).catch(function () {}); }
+  function getPhoto(k, side) { return tx("readonly", function (st) { return st.get(pk(k, side)); }).catch(function () { return null; }); }
+  function dropPhotos(k, d) { var sides = d && Array.isArray(d.photos) ? d.photos : ["_", "r", "l"]; if (!sides.length) return; tx("readwrite", function (st) { sides.forEach(function (sd) { st.delete(pk(k, String(sd))); }); }).catch(function () {}); }
+
+  function keyOf(type, sec, date, e) { return type + "|" + sec + "|" + date + "|" + (e ? e.id : "new"); }
+  function newId(col) { return S.db.collection(col).doc().id; }
+  function ids(o) {
+    var okI = function (x) { return typeof x === "string" && /^[A-Za-z0-9]{10,40}$/.test(x) ? x : ""; };
+    o = o && typeof o === "object" ? o : {};
+    var d = o.docs || {}, p = o.photos || {};
+    return { doc: okI(o.doc) || newId("entries"), grp: okI(o.grp) || newId("entries"), docs: { r: okI(d.r) || newId("entries"), l: okI(d.l) || newId("entries") }, photo: okI(o.photo) || newId("photos"), photos: { r: okI(p.r) || newId("photos"), l: okI(p.l) || newId("photos") } };
+  }
+  function find(k) { var d = load()[k]; return okRec(d) ? d : null; }
+  /* النموذج المفتوح ← مسودة */
+  function saveNow(force) {
+    clearTimeout(timer); timer = 0;
+    try {
+      if (FORM && FORM.k && $("entryForm") && (FORM.dirty || force) && !(FORM.type === "waterOnly" && !FORM.e)) {
+        var m = load(), rs = $("changeReason");
+        m[FORM.k] = { k: FORM.k, kind: "form", type: FORM.type, sec: FORM.sec, vsec: FORM.vsec, date: FORM.date, eid: FORM.e ? FORM.e.id : "", values: formValues(), reason: rs ? rs.value : "", ids: FORM.ids, at: Date.now(), photos: Object.keys(FORM.photos), queued: !!FORM.queued, lb: !!FORM.lockBatch };
+        store(m);
+      }
+      if (BS && BS.dirty && BS.root && BS.root.isConnected) {
+        var m2 = load(), extra = null;
+        try { extra = BS.o.save ? BS.o.save() : null; } catch (e) { extra = null; }
+        m2[BS.key] = { k: BS.key, kind: "sheet", title: BS.o.title || "", sec: BS.o.sec || "", vals: sheetVals(BS.root), extra: extra, at: Date.now() };
+        store(m2);
+      }
+    } catch (e) { logCrash(e, "حفظ المسودة"); }
+  }
+  function later() { clearTimeout(timer); timer = setTimeout(saveNow, 400); }
+  /* ضُغط «حفظ»: المسودة تأخذ مفتاحاً خاصاً بمعرّف التسجيل، فنموذج جديد من النوع نفسه لا يكتب فوقها قبل تأكيد الخادم */
+  function queue(fm) {
+    if (!fm || fm.e || /\|q:/.test(fm.k)) { saveNow(true); return; }
+    var old = fm.k, m = load(), d = m[old];
+    if (d) { delete m[old]; store(m); dropPhotos(old, d); }
+    fm.k = fm.type + "|" + fm.sec + "|" + fm.date + "|q:" + fm.ids.doc;
+    Object.keys(fm.photos).forEach(function (sd) { putPhoto(fm.k, sd, fm.photos[sd]); });
+    saveNow(true);
+  }
+  function flush() { if (timer || (FORM && FORM.dirty) || (BS && BS.dirty)) saveNow(); }
+  function drop(k) {
+    if (!k) return;
+    if (FORM && FORM.k === k) { FORM.dirty = false; clearTimeout(timer); timer = 0; }
+    if (BS && BS.key === k) { BS.dirty = false; clearTimeout(timer); timer = 0; }
+    var m = load(), d = m[k]; if (d) { delete m[k]; store(m); dropPhotos(k, d); }
+    PEND = PEND.filter(function (x) { return x.k !== k; });
+  }
+  /* --- نماذج أخرى: قيم الخانات بالـ id (أو name) --- */
+  function fieldsOf(root) { return Array.prototype.filter.call(root.querySelectorAll("input,select,textarea"), function (el) { return (el.id || el.name) && el.type !== "file" && el.type !== "password"; }); }
+  function sheetVals(root) {
+    var o = {};
+    fieldsOf(root).forEach(function (el) { var k = el.id ? "#" + el.id : "@" + el.name + (el.type === "radio" ? "=" + el.value : ""); o[k] = el.type === "checkbox" || el.type === "radio" ? !!el.checked : el.value; });
+    return o;
+  }
+  function applyVals(root, o) {
+    fieldsOf(root).forEach(function (el) {
+      var k = el.id ? "#" + el.id : "@" + el.name + (el.type === "radio" ? "=" + el.value : ""); if (!(k in o)) return;
+      if (el.type === "checkbox" || el.type === "radio") el.checked = !!o[k]; else el.value = String(o[k] == null ? "" : o[k]);
+    });
+    fieldsOf(root).forEach(function (el) {
+      var k = el.id ? "#" + el.id : "@" + el.name + (el.type === "radio" ? "=" + el.value : "");
+      if (!(k in o) || (el.type === "radio" && !el.checked)) return;
+      el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+  /* يُستدعى بعد openSheet. o = {title, sec, save(): extra, load(extra)}. إن وُجدت مسودة لهذا المفتاح تُعاد قيمها */
+  function bindSheet(rootEl, key, o) {
+    var root = rootEl && (rootEl.querySelector(".sheet") || rootEl); if (!root || !key) return;
+    o = o || {}; BS = { key: key, root: root, dirty: false, o: o };
+    var d = find(key);
+    if (d && d.kind === "sheet") {
+      try { if (o.load && d.extra) o.load(d.extra); applyVals(root, d.vals || {}); } catch (e) { logCrash(e, "استعادة المسودة"); }
+      BS.dirty = true; toast("استُعيد التسجيل الذي لم يُحفظ");
+    }
+    var mark = function () { if (BS && BS.root === root) { BS.dirty = true; later(); } };
+    root.addEventListener("input", mark); root.addEventListener("change", mark);
+    root.addEventListener("click", function (ev) { if (ev.target.closest && ev.target.closest("button:not([type=submit]):not([data-act=close]):not([data-cy=ledger-save]):not([data-act=saveRecipe])") && ev.target.closest("form,.fgrid")) mark(); });
+  }
+  function unbind() { if (BS) { if (BS.dirty) saveNow(); BS = null; } }
+  function sheetDirty() { return !!((FORM && FORM.dirty && $("entryForm")) || (BS && BS.dirty && BS.root && BS.root.isConnected)); }
+  function curKey() { return FORM && $("entryForm") ? FORM.k : BS ? BS.key : ""; }
+
+  /* --- الاستعادة بعد التشغيل --- */
+  function savedAlready(d) {
+    if (d.kind !== "form") return Promise.resolve(false);
+    var col = S.db.collection("entries");
+    var check = function (id) {
+      var ref = col.doc(id);
+      return ref.get({ source: "cache" }).then(function (s) { if (s.exists) return s; throw 0; }).catch(function () { return navigator.onLine ? ref.get() : null; }).catch(function () { return null; });
+    };
+    if (!d.eid) {
+      var I = d.ids || {}, list = [I.doc].concat(I.docs ? [I.docs.r, I.docs.l] : []).filter(Boolean);
+      return Promise.all(list.map(check)).then(function (r) { return r.some(function (s) { return s && s.exists; }); });
+    }
+    /* تعديل تسجيل موجود: حُذف التسجيل ⇒ لا معنى للمسودة. محفوظ إن طابقت قيمه قيم المسودة */
+    return check(d.eid).then(function (s) {
+      if (!s) return false; if (!s.exists) return true;
+      var v = (s.data() || {}).v || {}, vals = d.values || {};
+      return Object.keys(vals).every(function (k) { var a = vals[k]; if (a === "" || a == null) return true; var b = v[k], na = num(a); return na != null && typeof b === "number" ? na === b : String(a) === String(b == null ? "" : b); });
+    });
+  }
+  function resume() {
+    if (!S.uid || resumed === S.uid) return; resumed = S.uid; ready = false; PEND = [];
+    var m = store(load()), list = Object.keys(m).map(function (k) { return m[k]; });
+    if (!list.length) { ready = true; return; }
+    Promise.all(list.map(function (d) { return savedAlready(d).catch(function () { return false; }); })).then(function (saved) {
+      var keep = [];
+      list.forEach(function (d, i) { if (saved[i]) drop(d.k); else keep.push(d); });
+      keep.sort(function (a, b) { return b.at - a.at; });
+      /* آخر نبضة قبل هذا التشغيل كانت داخل نموذج (أو تصوير أو حفظ) يطابق مسودة ⇒ يُفتح النموذج تلقائياً */
+      var p = DIAG.prev, auto = null;
+      if (p && STAGES.indexOf(p.stage) >= 0 && !NAV.sheet) auto = keep.filter(function (d) { return d.kind === "form" && d.type + "|" + d.sec === p.form; })[0] || null;
+      PEND = keep.filter(function (d) { return d !== auto; }); ready = true;
+      if (auto) { DIAG.prev = null; open(auto.k); }
+      render();
+    });
+  }
+  function open(k) {
+    var d = find(k); if (!d) { PEND = PEND.filter(function (x) { return x.k !== k; }); render(); return; }
+    PEND = PEND.filter(function (x) { return x.k !== k; });
+    if (d.kind === "sheet") { reopen(d); return; }
+    var go = function (e) {
+      if (d.eid && !e) { drop(k); toast("التسجيل الأصلي لم يعد موجوداً، فحُذفت المسودة"); render(); return; }
+      if (NAV.sheet) closeSheet();
+      openForm(d.type, e || null, e ? null : (d.values || {}), d.sec, { sec: d.sec, vsec: d.vsec, date: d.date, ids: d.ids, photos: d.photos, lb: d.lb, reason: d.reason, values: d.values, restored: true });
+      if (FORM && FORM.k === k) toast("استُعيد التسجيل الذي لم يُحفظ");
+    };
+    if (!d.eid) { go(null); return; }
+    var e = S.entries.filter(function (x) { return x.id === d.eid; })[0] || S.meta.filter(function (x) { return x.id === d.eid; })[0] || S.hist.filter(function (x) { return x.id === d.eid; })[0];
+    if (e) { go(e); return; }
+    S.db.collection("entries").doc(d.eid).get().then(function (s) { go(s.exists ? entryOf(s) : null); }).catch(function () { toast("تعذّر فتح التسجيل الأصلي الآن"); PEND.unshift(d); render(); });
+  }
+  function reopen(d) {
+    if (NAV.sheet) closeSheet();
+    var k = d.k, ok = false;
+    try {
+      if (k.indexOf("farm:") === 0 && window.Farm && Farm.reopen) ok = Farm.reopen(k);
+      else if (k.indexOf("cy:") === 0 && window.Cycle && Cycle.reopen) ok = Cycle.reopen(k);
+      else if (k.indexOf("rcp:") === 0) { var rid = k.slice(4), r = rid === "new" ? null : S.recipes.filter(function (x) { return x.id === rid; })[0]; if (rid === "new" || r) { openRecipe(r || null); ok = true; } }
+    } catch (e) { logCrash(e, "فتح المسودة"); }
+    if (ok === false) { toast("لا يمكن فتح هذا النموذج الآن"); PEND.unshift(d); render(); }
+  }
+  function loadPhotos(fm) {
+    var sides = []; try { sides = (find(fm.k) || {}).photos || []; } catch (e) {}
+    sides.forEach(function (sd) {
+      getPhoto(fm.k, sd).then(function (ph) {
+        if (!ph || FORM !== fm || !safeImg(ph.full) || !safeImg(ph.thumb)) return;
+        fm.photos[sd] = { full: ph.full, thumb: ph.thumb };
+        var pv = $("f_prev" + (sd === "_" ? "" : "_" + sd)); if (pv) { pv.hidden = false; pv.src = ph.thumb; pv.removeAttribute("data-photo"); }
+      });
+    });
+  }
+  /* شريط «تسجيل لم يُحفظ» أعلى اللوحة */
+  function label(d) {
+    if (d.kind === "sheet") return txt(d.title, 60) || "نموذج";
+    var T = typeDef(d.type, d.vsec || d.sec); return T ? T.label : "تسجيل";
+  }
+  /* كل المسودات على الجوال، عدا النموذج المفتوح، والمحفوظ الذي ينتظر تأكيد الخادم في هذه الجلسة (تتابعه رسالة حالة الإرسال) */
+  function bar() {
+    if (!ready) return "";
+    var cur = curKey(), m = load(), inPend = function (k) { return PEND.some(function (x) { return x.k === k; }); };
+    var L = Object.keys(m).map(function (k) { return m[k]; }).filter(function (d) { return okRec(d) && d.k !== cur && (!d.queued || inPend(d.k)); }).sort(function (a, b) { return b.at - a.at; });
+    if (!L.length) return "";
+    return '<div class="dr-bar" role="region" aria-label="تسجيلات لم تُحفظ">' + L.slice(0, 4).map(function (d) {
+      var sec = SECS[d.sec] ? SECS[d.sec].name : d.sec === "g" ? "المعدات" : "", when = (okDay(d.date) && d.date !== todayStr() ? fmtShort(d.date) + " · " : "") + fmtTime(tsHM(d.at));
+      return '<div class="dr-row"><div class="dr-t"><b>تسجيل لم يُحفظ: ' + esc(label(d)) + "</b><small>" + esc([sec, when].filter(Boolean).join(" · ")) + '</small></div><button type="button" class="btn sm pri" data-act="draftGo" data-id="' + esc(d.k) + '">متابعة</button><button type="button" class="btn sm" data-act="draftDel" data-id="' + esc(d.k) + '">حذف</button></div>';
+    }).join("") + (L.length > 4 ? '<p class="muted">و' + esc(Board.pl(L.length - 4, "تسجيل آخر", "تسجيلان آخران", "تسجيلات أخرى", "تسجيلاً آخر")) + "</p>" : "") + "</div>";
+  }
+  return { keyOf: keyOf, ids: ids, find: find, saveNow: saveNow, later: later, queue: queue, flush: flush, drop: drop, putPhoto: putPhoto, loadPhotos: loadPhotos, bindSheet: bindSheet, unbind: unbind, sheetDirty: sheetDirty, curKey: curKey, resume: resume, open: open, bar: bar, pending: function () { return PEND.slice(); } };
+})();
+/* شريط «لديك بيانات لم تُحفظ» داخل النافذة (زر الرجوع على نموذج فيه تغييرات) */
+function unsavedShow() {
+  Draft.saveNow();
+  var sh = $("sheetRoot").querySelector(".sheet"); if (!sh) { closeSheet(); return; }
+  var b = $("unsavedBar");
+  if (!b) {
+    b = document.createElement("div"); b.id = "unsavedBar"; b.className = "unsaved"; b.setAttribute("role", "alertdialog"); b.setAttribute("aria-label", "بيانات لم تُحفظ");
+    b.innerHTML = '<p><b>لديك بيانات لم تُحفظ</b><small>محفوظة مسودة على هذا الجوال</small></p><div class="unsaved-b"><button type="button" class="btn sm" data-act="unsKeep">متابعة الكتابة</button><button type="button" class="btn sm pri" data-act="unsClose">إغلاق والاحتفاظ بالمسودة</button><button type="button" class="btn sm danger" data-act="unsDrop">تجاهل وحذف</button></div>';
+    sh.appendChild(b);
+  }
+  b.hidden = false;
+}
+function unsavedHide() { var b = $("unsavedBar"); if (b) b.hidden = true; }
+function unsavedClose() { Draft.saveNow(); closeSheet(); }
+function unsavedDrop() { var k = Draft.curKey(); Draft.drop(k); closeSheet(); }
 
 /* ================= calculator ================= */
 var CALC = { open: false, mode: "refill", stage: "ec", res: null };
@@ -2047,6 +2474,9 @@ function openRecipe(r) {
     '<div class="full"><h3 style="margin-bottom:8px">المواد وكمياتها</h3><datalist id="ferts">' + FERTS.map(function (x) { return '<option value="' + x + '">'; }).join("") + '</datalist><div id="riList">' + items.map(riRow).join("") + '</div><button class="btn sm" type="button" data-act="addRi">+ إضافة مادة</button></div>' +
     '<label class="f full" for="r_notes">ملاحظات (التركيز بالعناصر ppm، المورد، رقم التشغيلة…)<textarea class="in" id="r_notes">' + esc(r ? r.notes : "") + "</textarea></label>" +
     '<p id="formErrors" class="banner warn full" role="alert" hidden></p></form><div class="sheet-actions">' + (r ? '<button class="btn danger" type="button" data-act="delRecipe" data-id="' + esc(r.id) + '">حذف</button>' : "") + '<button class="btn pri" type="button" data-act="saveRecipe" data-id="' + (r ? r.id : "") + '">حفظ الوصفة</button></div></div></div>');
+  Draft.bindSheet($("sheetRoot"), "rcp:" + (r ? r.id : "new"), { title: r ? "تعديل وصفة" : "وصفة تحضير عبوة مركّزة",
+    save: function () { return { items: Array.prototype.map.call(document.querySelectorAll("#riList .ri"), function (x) { return { name: x.querySelector('[data-ri="name"]').value, qty: x.querySelector('[data-ri="qty"]').value, unit: x.querySelector('[data-ri="unit"]').value }; }) }; },
+    load: function (x) { var L = x && Array.isArray(x.items) ? x.items.slice(0, 40) : []; if (L.length) $("riList").innerHTML = L.map(function (it) { return riRow({ name: txt(it && it.name, 80), qty: txt(it && it.qty, 20), unit: ["غ", "كغ", "مل", "لتر"].indexOf(it && it.unit) >= 0 ? it.unit : "غ" }); }).join(""); } });
 }
 function riRow(it) { return '<div class="ri"><input class="in" list="ferts" aria-label="اسم المادة" placeholder="اسم المادة" data-ri="name" value="' + esc(it.name) + '"><input class="in num" ' + KPA() + ' aria-label="الكمية" placeholder="الكمية" data-ri="qty" value="' + esc(it.qty) + '"><select class="in" aria-label="الوحدة" data-ri="unit">' + ["غ", "كغ", "مل", "لتر"].map(function (u) { return "<option" + (it.unit === u ? " selected" : "") + ">" + u + "</option>"; }).join("") + '</select><button class="iconbtn" type="button" data-act="rmRi" aria-label="حذف السطر">✕</button></div>'; }
 function openNewUser() {
@@ -2086,7 +2516,9 @@ function accPrefs() {
 function openAccount() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("حسابي") +
     '<div class="card"><dl class="kv"><dt>الاسم</dt><dd>' + esc(nameOf(S.uid)) + '</dd><dt>الدخول</dt><dd class="num">' + esc(showLogin(S.user.email)) + "</dd><dt>الصلاحية</dt><dd>" + (isSup() ? "مشرف" : "عامل") + "</dd></dl></div>" +
+    (S.persistence === false ? '<p class="banner warn" style="margin-top:12px">الحفظ دون اتصال غير متاح على هذا الجوال: لا تغلق التطبيق قبل رسالة «تم تأكيد الحفظ».</p>' : "") +
     accPrefs() +
+    '<details class="fold acc-crash" style="margin-top:14px"><summary><span class="fold-t">سجل الأعطال على هذا الجوال</span>' + (CRASH.length ? '<span class="pill warn">' + CRASH.length + "</span>" : "") + '<span class="fold-i" aria-hidden="true"></span></summary><div class="fold-b">' + crashLogHTML(true) + "</div></details>" +
     '<form class="fgrid" id="pwForm" style="margin-top:14px" novalidate><label class="f full" for="p_new">تغيير كلمة المرور<input class="in" id="p_new" type="password" dir="ltr" autocomplete="new-password" placeholder="كلمة المرور الجديدة"></label><button class="btn full" type="button" data-act="changePw">حفظ كلمة المرور</button></form>' +
     (showLogin(S.user.email) !== S.user.email ? "" : '<form class="fgrid" style="margin-top:14px" novalidate><label class="f full" for="e_new">تغيير البريد الإلكتروني<input class="in" id="e_new" type="email" dir="ltr" autocomplete="email" placeholder="البريد الجديد"></label><button class="btn full" type="button" data-act="changeEmail">إرسال رابط التأكيد</button><p class="muted full" style="font-size:12.5px;margin:0">يصل رابط تأكيد إلى البريد الجديد، وبعد فتحه يتغيّر بريد الدخول. سجّل الدخول بعدها بالبريد الجديد.</p></form>') +
     '<div class="f full" style="margin-top:14px"><span>لوحة الأرقام في خانات القياس</span><div class="seg" id="kp_on" role="group"><button type="button" data-v="1" aria-pressed="' + kpOn() + '">لوحة GREEN SIDE الكبيرة</button><button type="button" data-v="0" aria-pressed="' + !kpOn() + '">لوحة الجوال</button></div></div>' +
@@ -2114,7 +2546,7 @@ function kpBuild() {
 function kpShow(el) {
   if(el.disabled || el.hasAttribute("data-computed"))return;
   kpBuild(); KP.el.querySelector('[data-k="."]').disabled=el.hasAttribute("data-integer"); KP.inp = el; el.setAttribute("inputmode", "none"); el.setAttribute("readonly", "");
-  if (!NAV.kp) { NAV.kp = true; try { history.pushState({ gs: "kp" }, ""); } catch (x) {} }
+  NAV.kp = true;
   var lab = el.closest("label"), t = el.getAttribute("aria-label") || "";
   if (!t && lab) { var n0 = lab.firstChild; t = n0 && n0.nodeType === 3 ? n0.textContent : ((lab.querySelector(":scope > span") || {}).textContent || ""); }
   var u = el.parentNode.querySelector(".u"); KP.unit = u ? u.textContent : "";
@@ -2123,9 +2555,9 @@ function kpShow(el) {
   setTimeout(function () { if (KP.inp !== el) return; try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (x) { el.scrollIntoView(); } }, 80);
 }
 function kpVal() { if (KP.inp) $("kpV").textContent = (KP.inp.value || "—") + (KP.inp.value && KP.unit ? " " + KP.unit : ""); }
-function kpHide(noHist) {
+function kpHide() {
   if (KP.el && !KP.el.hidden) { KP.el.hidden = true; KP.inp = null; document.documentElement.classList.remove("kp-open"); repaint(); }
-  if (NAV.kp) { NAV.kp = false; if (!noHist) { NAV.ignore++; history.back(); } }
+  NAV.kp = false;
 }
 function kpKey(k) {
   var el = KP.inp; if (!el || el.disabled || el.hasAttribute("data-computed") || !document.body.contains(el)) { kpHide(); return; }
@@ -2373,6 +2805,19 @@ document.addEventListener("click", function (ev) {
       S.user.verifyBeforeUpdateEmail(ne).then(function () { toast("أُرسل رابط التأكيد إلى " + ne + " · افتحه ثم سجّل الدخول بالبريد الجديد"); closeSheet(); }).catch(fail); break;
     case "changePw": var np = $("p_new").value; if (np.length < 6) { toast("كلمة المرور 6 أحرف أو أكثر"); return; } b.disabled = true; S.user.updatePassword(np).then(function () { toast("تم تغيير كلمة المرور"); closeSheet(); }).catch(fail); break;
     case "close": closeSheet(); break;
+    case "cam": openCam(b.getAttribute("data-side") || ""); break;
+    case "camClose": camClose(); break;
+    case "camShot": camShot(b); break;
+    case "unsKeep": unsavedHide(); break;
+    case "unsClose": unsavedClose(); break;
+    case "unsDrop": unsavedDrop(); break;
+    case "draftGo": Draft.open(id); break;
+    case "draftDel": if (!armDelete(b, "d:" + id)) return; Draft.drop(id); render(true); toast("حُذفت المسودة"); break;
+    case "sendCrash": {
+      var to = crashTarget(); if (!to) { toast("لا يوجد مشرف لإرسال السجل إليه"); return; }
+      GSUI.commit(db.collection("farmMessages").add({ by: S.uid, audience: to, task: "", body: crashText(), created: firebase.firestore.FieldValue.serverTimestamp() }), b, function () { b.textContent = "أُرسل السجل"; toast("أُرسل سجل الأعطال إلى " + nameOf(to)); });
+      break;
+    }
     case "copyCred": copyCred(); break;
     case "switchSec": switchSec(b.getAttribute("data-s")); break;
     case "sub": var sk = b.getAttribute("data-k"), sv = b.getAttribute("data-v"); SUB[sk] = sv; lsSet("gs_sub_" + sk, sv); render(true); var stb = document.querySelector("#view .subtabs"); if (stb && stb.getBoundingClientRect().top < $("top").offsetHeight) window.scrollTo(0, Math.max(0, stb.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10)); break;
@@ -2381,7 +2826,7 @@ document.addEventListener("click", function (ev) {
     case "goTasks": var ts = $("tasksSec"); if (ts) window.scrollTo({ top: ts.getBoundingClientRect().top + window.scrollY - $("top").offsetHeight - 10, behavior: "smooth" }); break;
     case "goTab": setTab(b.getAttribute("data-t")); break;
     case "reloadApp": hardReload(true); break;
-    case "clearCrash": CRASH = []; lsSet("gs_errs", "[]"); var cl = b.closest(".crashlog"); if (cl) cl.remove(); break;
+    case "clearCrash": { CRASH = []; lsSet("gs_errs", "[]"); var cl = b.closest(".crashlog"); if (cl && cl.classList.contains("in-acc")) cl.outerHTML = crashLogHTML(true); else if (cl) cl.remove(); break; }
     case "schDel": var sd1 = b.getAttribute("data-sec"), ty1 = b.getAttribute("data-type"), tt1 = b.getAttribute("data-t"); schDelete(sd1, ty1, tt1).catch(fail); toast("حُذف موعد " + fmtTime(tt1)); break;
     case "schToggle": if (isSup()) schToggle(b.getAttribute("data-sec"), b.getAttribute("data-type")).catch(fail); break;
     case "schStep": if (isSup()) schStep(b.getAttribute("data-sec"), b.getAttribute("data-type"), +b.getAttribute("data-d")).catch(fail); break;
@@ -2420,7 +2865,7 @@ document.addEventListener("click", function (ev) {
     case "new": openForm(b.getAttribute("data-type")); break;
     case "edit": var e1 = findEntry(id); if (e1) openForm(e1.type, e1); break;
     case "save": saveForm(b); break;
-    case "del": if (!armDelete(b, id)) return; GSUI.commit(db.collection("entries").doc(id).delete(),b,function(){closeSheet();toast("تم الحذف");}); break;
+    case "del": if (!armDelete(b, id)) return; var dk = FORM && FORM.k; GSUI.commit(db.collection("entries").doc(id).delete(),b,function(){Draft.drop(dk);closeSheet();toast("تم الحذف");}); break;
     case "move": var em = findEntry(id); if (!em) return; var to = secOf(em) === "n" ? "t" : "n"; db.collection("entries").doc(id).update({ sec: to }).then(function () { toast("نُقل التسجيل إلى " + SECS[to].name); }).catch(fail); break;
     case "approve": db.collection("entries").doc(id).update({ review: { s: "ok", by: S.uid, at: Date.now(), c: "" } }).catch(fail); break;
     case "flag": openFlag(id); break;
@@ -2462,15 +2907,17 @@ document.addEventListener("click", function (ev) {
       d.ts = previousRecipe ? previousRecipe.ts : Date.now();
       d.by = previousRecipe ? previousRecipe.by : S.uid;
       if (previousRecipe) d.editedBy = S.uid;
+      var rk = "rcp:" + (id || "new");
       GSUI.commit(recipeForm._ref.set(d), b, function () {
+        Draft.drop(rk);
         if ($("recForm") === recipeForm) closeSheet();
         toast("أكّد الخادم حفظ الوصفة");
       });
       break;
-    case "delRecipe": if (!armDelete(b, id)) return; db.collection("recipes").doc(id).delete().catch(fail); closeSheet(); break;
+    case "delRecipe": if (!armDelete(b, id)) return; Draft.drop("rcp:" + id); db.collection("recipes").doc(id).delete().catch(fail); closeSheet(); break;
     case "newUser": openNewUser(); break;
     case "selfTest": runSelfTest(); break;
-    case "goBack": history.back(); break;
+    case "goBack": if (NAV.tabs.length || S.tab !== "today") navBack(); break;
     case "createUser": createUser(b); break;
     case "setRole": db.collection("users").doc(id).update({ role: b.getAttribute("data-r") }).then(function () { toast("تم تحديث الصلاحية"); }).catch(fail); break;
     case "saveSec":

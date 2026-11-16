@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.7.0 — unified workspace, existing member/entry permissions. التقارير (RPT) في آخر الملف. */
+/* GREEN SIDE 3.8.0 — unified workspace, existing member/entry permissions. التقارير (RPT) في آخر الملف. */
 var GSUI=(function(){
 'use strict';
 var care={uid:null,rows:[],ready:false,error:'',off:null,revision:0},cache={},pending=0,group='all',search='',review='all';

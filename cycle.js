@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.7.0 — دورة الزراعة: كل دفعة من البذرة إلى الحصاد في مكان واحد، والتكاليف والمبيعات للمالك.
+/* GREEN SIDE 3.8.0 — دورة الزراعة: كل دفعة من البذرة إلى الحصاد في مكان واحد، والتكاليف والمبيعات للمالك.
    الدفعة = تسجيل بذر (sow). المراحل تُحسب من التسجيلات المرتبطة بها (v.batch):
    «عدّ» count (العامل يسجّله) ← «نقل» xplant (تسجيل عادي يعمل بدون إنترنت) ← «حصاد» harvest (v.final=true يُقفل الدفعة).
    الدفعات القديمة (cropBalances من 3.3.0): جرد المشرف يُعامل كأول «عدّ» بتاريخ اعتماده، والنقل المتتبَّع يُخصم منه كما كان. */
@@ -480,6 +480,7 @@ function costForm(o){
   '<label class="f full" id="cyOneW" for="cy_batch"'+(target==='one'?'':' hidden')+'><span>الدفعة</span><select class="in" id="cy_batch">'+batchChoices(LF.batch)+'</select></label>'+
   '<div class="cy-split full" id="cySplit" aria-live="polite"></div>','حفظ التكلفة',old?.id);
  wire();
+ bindDraft('cy:cost:'+(old?.id||'')+':'+(o.source||'')+':'+(o.batch||''),old?'تعديل تكلفة':'تكلفة جديدة');
 }
 function saleForm(o){
  if(!owner())return;o=o||{};
@@ -491,6 +492,19 @@ function saleForm(o){
   '<label class="f" for="cy_kg"><span>الوزن المبيع</span><div class="unitwrap"><input class="in num" id="cy_kg" inputmode="decimal" autocomplete="off" value="'+E(old&&kgOf(old.kg)!=null?old.kg:'')+'"><span class="u">كغ</span></div></label>'+
   '<label class="f" for="cy_memo"><span>المشتري أو السوق</span><input class="in" id="cy_memo" maxlength="500" value="'+E(old?.memo||'')+'"></label><div class="cy-split full" id="cySplit" aria-live="polite"></div>','حفظ المبيعات',old?.id);
  wire();
+ bindDraft('cy:sale:'+(old?.id||'')+':'+(o.batch||''),old?'تعديل مبيعات':'مبيعات');
+}
+/* 3.8.0: مسودة تلقائية للقيد. البند (أزرار الأيقونات) يُحفظ مع القيم لأنه ليس خانة إدخال */
+function bindDraft(key,title){
+ Draft.bindSheet($('sheetRoot'),key,{title,save:()=>({cat:LF?.cat||''}),load:x=>{if(!LF||LF.kind==='مبيعات'||!x||!x.cat)return;const b=[...document.querySelectorAll('#sheetRoot [data-cy="cat"]')].find(y=>y.dataset.id===x.cat);if(b){LF.cat=x.cat;b.parentNode.querySelectorAll('button').forEach(y=>y.setAttribute('aria-pressed',String(y===b)));}}});
+ if(LF)LF.dk=key;
+}
+function reopen(k){
+ if(!owner())return false;
+ const p=k.split(':');
+ if(p[1]==='cost'){costForm({id:p[2]||'',source:p[3]||'',batch:p[4]||''});return true;}
+ if(p[1]==='sale'){saleForm({id:p[2]||'',batch:p[3]||''});return true;}
+ return false;
 }
 function wire(){
  const f0=$('cyForm');if(!f0)return;
@@ -530,12 +544,12 @@ function saveLedger(btn){
  const col=S.db.collection('farmLedger'),ref=LF.id?col.doc(LF.id):LF.source?col.doc('water_'+LF.source):col.doc();
  const rec={kind:LF.kind,category:LF.kind==='مبيعات'?'مبيعات':LF.cat,amount:amt,date,by:S.uid,memo,source:LF.source||'',basis:p.basis,allocation:p.allocation,created:LF.old?.created||firebase.firestore.FieldValue.serverTimestamp()};
  if(kg!=null)rec.kg=kg;
- const done=LF;GSUI.commit(ref.set(rec),btn,()=>{if(LF===done)closeSheet();toast(done.kind==='مبيعات'?'حُفظت المبيعات':'حُفظت التكلفة');});
+ const done=LF;Draft.saveNow();GSUI.commit(ref.set(rec),btn,()=>{if(done.dk)Draft.drop(done.dk);if(LF===done)closeSheet();toast(done.kind==='مبيعات'?'حُفظت المبيعات':'حُفظت التكلفة');});
 }
 function delLedger(btn,id){
  if(!owner()||btn.disabled)return;
  if(btn.dataset.sure!=='1'){btn.dataset.sure='1';btn.textContent='تأكيد الحذف';return;}
- GSUI.commit(S.db.collection('farmLedger').doc(id).delete(),btn,()=>{closeSheet();toast('حُذف القيد');});
+ const dk=LF?.dk;GSUI.commit(S.db.collection('farmLedger').doc(id).delete(),btn,()=>{if(dk)Draft.drop(dk);closeSheet();toast('حُذف القيد');});
 }
 function editLedger(id){
  const l=Farm.ledger().find(x=>x.id===id);if(!l)return;
@@ -580,7 +594,7 @@ document.addEventListener('click',ev=>{
  }
  }catch(err){toast(errMsg(err));}
 });
-return {view,now,get,all,active,autoAlloc,costForm,saleForm,open,formSub,formNote,formInit,formUpdate,validate,money,
+return {view,now,get,all,active,autoAlloc,costForm,saleForm,reopen,open,formSub,formNote,formInit,formUpdate,validate,money,
  openBatch:id=>{batchID=id;go('batch');},setTab:t=>{tab=t;},
  linkForm,_test:{build,batch,autoAlloc,money,allocText,status,stepState,simulate}};
 })();

@@ -1856,3 +1856,44 @@ button.al-opt-ic,.al-opt-t[role=button]{cursor:pointer}
 .dy-sens>div.h{padding:2px 0 4px;font-size:11px;color:var(--muted)}
 .dy-sens>div.h b{font-family:var(--f-body);font-size:11px;font-weight:600;color:var(--muted)}
 .dy-sens>div>b{min-width:46px}
+
+/* ===== 3.8.0 · الكاميرا داخل التطبيق: طبقة كاملة الشاشة فوق النموذج (النموذج يبقى خلفها). فاتح وداكن متطابقان ===== */
+.cam{position:fixed;inset:0;z-index:120;background:#000;color:#fff;display:block;touch-action:none}
+.cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+.cam-msg{position:absolute;top:45%;left:0;right:0;text-align:center;font-size:14px;color:rgba(255,255,255,.85);margin:0}
+.cam-msg[hidden]{display:none}
+.cam-x{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));right:14px;width:44px;height:44px;border-radius:50%;border:0;background:rgba(0,0,0,.45);color:#fff;font-size:20px;line-height:44px;padding:0;cursor:pointer}
+.cam-shot{position:absolute;left:50%;bottom:calc(28px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);width:72px;height:72px;border-radius:50%;border:4px solid #fff;background:transparent;padding:0;cursor:pointer;display:grid;place-items:center}
+.cam-shot i{display:block;width:56px;height:56px;border-radius:50%;background:#fff;transition:transform .1s}
+.cam-shot:active i{transform:scale(.88)}
+.cam-shot:disabled{opacity:.5}
+.cam-x:focus-visible,.cam-shot:focus-visible{outline:3px solid #8bd5ad;outline-offset:3px}
+
+/* ===== 3.8.0 · شريط «لديك بيانات لم تُحفظ» أسفل النافذة (زر الرجوع على نموذج فيه تغييرات) ===== */
+.unsaved{position:-webkit-sticky;position:sticky;bottom:0;z-index:5;margin:12px -16px 0;background:var(--surface);border-top:2px solid var(--warn);box-shadow:0 -8px 24px rgba(0,0,0,.14);padding:12px 16px calc(12px + env(safe-area-inset-bottom,0px));animation:us-in .18s ease-out}
+@keyframes us-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+.unsaved[hidden]{display:none}
+.unsaved p{margin:0 0 10px;display:flex;flex-direction:column;gap:2px}
+.unsaved p b{font-size:15px;color:var(--ink)}
+.unsaved p small{font-size:12.5px;color:var(--muted)}
+.unsaved-b{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.unsaved-b .btn{min-height:44px;margin:0;justify-content:center;text-align:center;white-space:normal;line-height:1.3}
+.unsaved-b .btn.pri{grid-column:1 / -1;order:-1}
+
+/* ===== 3.8.0 · شريط «تسجيل لم يُحفظ» أعلى اللوحة ===== */
+.dr-bar{display:flex;flex-direction:column;gap:6px;margin-top:14px}
+.dr-row{display:flex;align-items:center;gap:8px;background:var(--surface);color:var(--ink);border-radius:14px;padding:8px 10px;min-height:52px;box-shadow:0 1px 2px rgba(0,0,0,.08);border-inline-start:4px solid var(--warn)}
+.dr-t{flex:1;min-width:0;display:flex;flex-direction:column;font-size:14px;line-height:1.4}
+.dr-t b{font-weight:700;overflow-wrap:anywhere}
+.dr-t small{font-size:12px;color:var(--muted)}
+.dr-row .btn{flex:none;margin:0;min-height:38px}
+.dr-bar>p{margin:0;font-size:12.5px;color:var(--hero-ink);opacity:.9}
+
+/* ===== 3.8.0 · سجل الأعطال في «حسابي» ===== */
+.acc-crash .fold-b{padding-top:4px}
+.crashlog.in-acc{margin-top:0;font-size:13px}
+.crashlog.in-acc h3{font-size:13.5px;margin:10px 0 6px;color:var(--muted);font-weight:600}
+.crashlog.in-acc .cl-row{display:flex;flex-direction:column;gap:2px;padding:8px 0;border-bottom:1px solid var(--line)}
+.crashlog.in-acc .cl-row b{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
+.crashlog.in-acc .cl-row small{font-size:12px;color:var(--muted)}
+.crashlog.in-acc .ux-actions{margin-top:10px}
