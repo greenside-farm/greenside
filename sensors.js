@@ -1,4 +1,4 @@
-/* GREEN SIDE — صفحة الحساسات (الإصدار 3.0.0؛ مؤشرات التقارير 3.7.0؛ تخفيف الذاكرة 3.8.0)
+/* GREEN SIDE — صفحة الحساسات (الإصدار 3.0.0؛ مؤشرات التقارير 3.7.0؛ تخفيف الذاكرة 3.8.0؛ ثبات الصفحة 3.8.1)
    العامل: حالة الأجواء الآن، القراءات الحالية مع المقارنة بأمس في نفس الوقت، ملخص الليلة الماضية، والرسم لليوم أو آخر 7 أيام. المشرف: إضافةً لذلك تحليل البيئة (VPD، ساعات الحدود، الإجهاد الحراري،
    خطر الأمراض، النهار والليل، DLI)، أداء التبريد بين الخلايا والمراوح، السجل حتى 30 يوماً، جدول القراءات، والتصدير.
    تقرأ قراءات حساسات Tuya من مشروع Firebase منفصل (green-side-sensors) يكتب فيه "جامع" Google Apps Script كل 15 دقيقة.
@@ -612,7 +612,7 @@ var SENS = (function () {
     }).join('');
   }
   function overviewDetails(id, title, body) {
-    return '<details class="overview-details"><summary>' + E(title) + '</summary><div id="' + id + '" class="overview-body">' + body + '</div></details>';
+    return '<details class="overview-details" data-keep="ov-' + id + '"><summary>' + E(title) + '</summary><div id="' + id + '" class="overview-body">' + body + '</div></details>';
   }
 
   /* ================= الصفحة: تبويبات الآن · الرسم البياني · التحليل ================= */

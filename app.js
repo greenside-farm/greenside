@@ -1,9 +1,9 @@
-/* GREEN SIDE 3.8.0 — متابعة المشتل والأبراج في البيت المحمي
+/* GREEN SIDE 3.8.1 — متابعة المشتل والأبراج في البيت المحمي
    البيانات في Firebase Firestore، والدخول عبر Firebase Authentication.
    القسمان: n = المشتل (نظام مفتوح)، t = الأبراج (نظام مغلق). المعدات: g.
    لإضافة نوع تسجيل: أضفه في TYPES_N أو TYPES_T وأضف اسمه إلى ORDER. */
 "use strict";
-var APP_VERSION = "3.8.0";
+var APP_VERSION = "3.8.1";
 
 /* ================= constants ================= */
 var SECS = { n: { name: "المشتل", icon: "🌱", sys: "نظام مفتوح" }, t: { name: "الأبراج", icon: "🗼", sys: "نظام مغلق" } };
@@ -405,8 +405,8 @@ function errMsg(e) {
   if (!c && e && typeof e.message === "string" && /[؀-ۿ]/.test(e.message)) return e.message;
   var known = {
     "auth/invalid-credential": "اسم المستخدم أو كلمة المرور غير صحيحة.", "auth/wrong-password": "كلمة المرور غير صحيحة.", "auth/user-not-found": "لا يوجد حساب بهذا الاسم.",
-    "auth/invalid-email": "اكتب اسم مستخدم أو بريداً صحيحاً.", "auth/too-many-requests": "محاولات كثيرة. انتظر قليلاً ثم حاول.", "auth/network-request-failed": "لا يوجد اتصال بالإنترنت.",
-    "auth/email-already-in-use": "اسم المستخدم مستخدم من قبل.", "auth/weak-password": "كلمة المرور قصيرة. استخدم 6 أحرف أو أكثر.", "auth/requires-recent-login": "سجّل الخروج ثم الدخول من جديد، ثم أعد المحاولة.", "auth/email-already-exists": "هذا البريد مستخدم في حساب آخر.",
+    "auth/invalid-email": "اكتب اسم مستخدم أو بريداً صحيحاً.", "auth/too-many-requests": "محاولات كثيرة. انتظر دقائق ثم أعد المحاولة.", "auth/network-request-failed": "لا يوجد اتصال بالإنترنت.",
+    "auth/email-already-in-use": "اسم المستخدم مستخدم من قبل.", "auth/weak-password": "كلمة المرور قصيرة. استخدم 6 أحرف أو أكثر.", "auth/requires-recent-login": "أدخل كلمة المرور الحالية ثم أعد المحاولة.", "auth/email-already-exists": "هذا البريد مستخدم في حساب آخر.",
     "permission-denied": "ليس لديك صلاحية لهذا الإجراء.", "unavailable": "لا يوجد اتصال بالخادم حالياً.",
     "not-found": "لم يعد هذا السجل موجوداً. ربما حُذف من جهاز آخر.", "resource-exhausted": "تجاوز التطبيق حد الاستخدام اليومي. حاول لاحقاً.",
     "unauthenticated": "انتهت الجلسة. سجّل الدخول من جديد.", "failed-precondition": "تعذّر تنفيذ الطلب الآن. أعد المحاولة بعد قليل، وإن تكرر فأبلغ المالك.",
@@ -587,11 +587,17 @@ function setTab(t, fromPop, y, fromBar) {
   if (fromPop) restoreScroll(t, y || 0); else window.scrollTo(0, 0);
   diagHB();
 }
+/* 3.8.1: يوقف صف اقتراحات الكتابة (التاريخ والكلمات المحفوظة) فوق لوحة المفاتيح في الخانات النصية. لا يُلمس ما له autocomplete صريح (الدخول وكلمة المرور والبريد) */
+function noAC(root) {
+  if (!root || !root.querySelectorAll) return;
+  var L = root.querySelectorAll('input:not([type=password]):not([type=email]):not([type=hidden]):not([type=file]):not([type=checkbox]):not([type=radio]):not([type=date]), textarea');
+  for (var i = 0; i < L.length; i++) if (!L[i].hasAttribute("autocomplete")) L[i].setAttribute("autocomplete", "off");
+}
 function openSheet(html) {
   if (NAV.kp) kpHide();
   if (CAM.on) camClose();
   Draft.unbind();
-  $("sheetRoot").innerHTML = html;
+  $("sheetRoot").innerHTML = html; noAC($("sheetRoot"));
   document.documentElement.classList.add("lock");
   NAV.sheet = true;
   var sh = $("sheetRoot").querySelector(".sheet"); if (sh) sh.scrollTop = 0;
@@ -932,8 +938,39 @@ function renderNow(force) {
   if (MAIN_TABS.indexOf(S.tab) < 0 && S.tab !== "chat" && NAV.tabs.length) html = '<div class="backbar"><button class="backbtn" type="button" data-act="goBack">' + Board.icon("back", 18, 2.2) + "<span>رجوع</span></button></div>" + html;
   var run = function () { if (!after) return; try { after(); } catch (err) { logCrash(err, "تجهيز صفحة " + S.tab); } };
   if (!force && html === v.__h && v.firstElementChild) { run(); applyRestore(); return; }
-  v.innerHTML = html; v.__h = html; run();
+  /* 3.8.1: الاستبدال الصامت (تغيّر نص «منذ دقائق» أو وصول بيانات) لا يطوي ما فتحه المستخدم ولا يحرّك موضع القراءة */
+  var anchor = null;
+  if (force) OPEN.clear(); else { keepSnap(v); if (!NAV.restore && window.scrollY > 0) anchor = pickAnchor(v); }
+  v.innerHTML = html; v.__h = html; noAC(v);
+  if (!force) keepApply(v);
+  run();
   loadPhotos(v); applyRestore();
+  if (anchor) fixAnchor(v, anchor);
+}
+/* ===== 3.8.1 · ثبات الصفحة عند التحديث الصامت =====
+   OPEN: مفاتيح <details data-keep> المفتوحة. المرساة: أول بطاقة (أو شريط الرأس) ظاهرة تحت الشريط العلوي، يُعاد تمرير الصفحة بعد الرسم لتبقى في موضعها ===== */
+var OPEN = new Set();
+function keepSnap(v) { v.querySelectorAll("details[data-keep]").forEach(function (d) { var k = d.getAttribute("data-keep"); if (d.open) OPEN.add(k); else OPEN["delete"](k); }); }
+function keepApply(v) { if (!OPEN.size) return; v.querySelectorAll("details[data-keep]").forEach(function (d) { if (OPEN.has(d.getAttribute("data-keep"))) d.open = true; }); }
+document.addEventListener("toggle", function (e) { var d = e.target; if (d && d.matches && d.matches("details[data-keep]")) { var k = d.getAttribute("data-keep"); if (d.open) OPEN.add(k); else OPEN["delete"](k); } }, true);
+function anchorKey(el) { return el.classList.contains("bd-band") ? "band" : el.getAttribute("data-card"); }
+function anchorList(v, key) { return Array.prototype.filter.call(v.querySelectorAll("[data-card], .bd-band"), function (el) { return anchorKey(el) === key; }); }
+function pickAnchor(v) {
+  try {
+    var tp = $("top"), hb = tp ? tp.getBoundingClientRect().bottom : 0, all = v.querySelectorAll("[data-card], .bd-band");
+    for (var i = 0; i < all.length; i++) {
+      var r = all[i].getBoundingClientRect();
+      if (r.bottom > hb + 1) { var key = anchorKey(all[i]); return { key: key, n: anchorList(v, key).indexOf(all[i]), top: r.top }; }
+    }
+  } catch (e) {}
+  return null;
+}
+function fixAnchor(v, a) {
+  try {
+    var el = anchorList(v, a.key)[a.n]; if (!el) return;
+    var d = el.getBoundingClientRect().top - a.top;
+    if (Math.abs(d) >= 1) window.scrollTo({ top: Math.max(0, window.scrollY + d), behavior: "instant" });
+  } catch (e) {}
 }
 /* ===== شبكة أمان العرض: خطأ في صفحة لا يترك الشاشة بيضاء. يُعرض ما حدث مع طريق للرجوع، ويُحفظ آخر 20 خطأ على الجوال (تظهر في «فحص النظام») ===== */
 var CRASH = [];
@@ -1361,6 +1398,7 @@ function entryCard(e, showDate) {
     (Farm.pendingChange(e.id)?'<span class="pill warn">أُعيد للمراجعة</span>':rev ? (rev.s === "ok" ? '<span class="pill ok" title="تمت المراجعة">✓ معتمد</span>' : '<span class="pill warn">'+'مطلوب تصحيح'+'</span>') : '<span class="pill n">بانتظار المراجعة</span>');
   if (isSup()) {
     if (!Farm.pendingChange(e.id) && (!rev || rev.s !== "ok")) foot += '<button class="btn sm ok" data-act="approve" data-id="' + esc(e.id) + '">اعتماد</button>';
+    if (rev && rev.s === "flag") foot += '<button class="btn sm ok" data-act="unflag" data-ok="1" data-id="' + esc(e.id) + '">إلغاء الإرجاع واعتماد</button><button class="btn sm" data-act="unflag" data-id="' + esc(e.id) + '">إلغاء الإرجاع فقط</button>';
     if(!Farm.pendingChange(e.id))foot += '<button class="btn sm warn" data-act="flag" data-id="' + esc(e.id) + '">إعادة للتصحيح</button>';
     if (e.type === "note" && !noneNote) foot += '<button class="btn sm" data-act="toggleNote" data-id="' + esc(e.id) + '">' + (e.open ? "تم الحل" : "إعادة فتح") + "</button>";
   }
@@ -1455,9 +1493,9 @@ function fieldHTML(fd, v) {
     return out + '<div class="f ' + (fd.w || "") + '" id="w_' + fd.k + '"><span>' + esc(fd.l) + '</span><input type="hidden" id="' + id + '" value="' + esc(val) + '"><div class="cy-chips" role="group" aria-label="' + esc(fd.l) + '">' + co.map(function (x) { return '<button type="button" data-chip="' + id + '" data-v="' + esc(x) + '" aria-pressed="' + (x === val) + '">' + esc(x) + "</button>"; }).join("") + "</div></div>"; }
   else if (fd.t === "chk") return out + '<label class="cy-check ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><input type="checkbox" id="' + id + '"' + (val === true || val === "1" ? " checked" : "") + '><span>' + esc(fd.l) + (fd.hint ? "<small>" + esc(fd.hint) + "</small>" : "") + "</span></label>";
   else if (fd.t === "calc") return out + '<div class="f ' + (fd.w || "") + '" id="w_' + fd.k + '"><span>' + esc(fd.l) + '</span><div class="cy-calc"><span id="cv_' + fd.k + '"><b>—</b></span><small id="ch_' + fd.k + '"></small></div><input type="hidden" id="' + id + '" value="' + esc(val) + '"></div>';
-  else if (fd.t === "ta") inp = '<textarea class="in" id="' + id + '">' + esc(val) + "</textarea>";
+  else if (fd.t === "ta") inp = '<textarea class="in" id="' + id + '" autocomplete="off">' + esc(val) + "</textarea>";
   else if (fd.t === "t") inp = (fd.opt && !val ? '<span class="muted" style="font-size:12.5px"><input type="checkbox" id="on_' + fd.k + '"> تسجيل هذا الوقت</span>' : "") + timePicker(id, val || (fd.k === "time" && FORM.e ? FORM.e.time : ""));
-  else if (fd.t === "x") inp = '<input class="in" id="' + id + '" enterkeyhint="next" value="' + esc(val) + '"' + (fd.list ? ' list="dl_' + fd.list + '"' : "") + (fd.ph ? ' placeholder="' + esc(fd.ph) + '"' : "") + ">";
+  else if (fd.t === "x") inp = '<input class="in" id="' + id + '" enterkeyhint="next" autocomplete="off" value="' + esc(val) + '"' + (fd.list ? ' list="dl_' + fd.list + '"' : "") + (fd.ph ? ' placeholder="' + esc(fd.ph) + '"' : "") + ">";
   else inp = '<div class="unitwrap"><input class="in num' + (fd.big ? " cy-bigin" : "") + '" id="' + id + '" ' + KPA() + ' autocomplete="off"' + (fd.integer ? ' data-integer="1"' : '') + (fd.sep ? ' data-sep="1"' : '') + ' value="' + esc(fd.sep && num(val) != null ? f(num(val)) : val) + '"><span class="u">' + unitOf(fd) + "</span></div>";
   out += '<label class="f ' + (fd.w || "") + '" id="w_' + fd.k + '" for="' + id + '"><span>' + esc(fd.l) + (fd.req ? ' <span class="req">*</span>' : "") + "</span>" + inp + (fd.c || fd.comp ? '<span class="hint" id="h_' + fd.k + '"></span>' : "") + "</label>";
   return out;
@@ -2245,6 +2283,16 @@ function findEntry(id) {
   var hit = function (a) { return (a || []).filter(function (x) { return x.id === id; })[0]; };
   return hit(S.entries) || hit(S.openNotes) || hit(S.meta) || hit(S.hist) || (window.Rec && Rec.find ? Rec.find(id) : null) || null;
 }
+/* 3.8.1 · إلغاء الإرجاع: السبب المعتاد «لا يوجد خطأ»، فللمشرف زران: «إلغاء الإرجاع واعتماد» (كتابة واحدة بمسار الاعتماد نفسه)
+   و«إلغاء الإرجاع فقط» (يحذف review فيعود التسجيل بانتظار المراجعة). لا يُسمح والعامل أرسل تصحيحاً معلّقاً */
+function openUnflag(id, ok) {
+  var e = findEntry(id);
+  if (!e || !e.review || e.review.s !== "flag") { toast("لم يعد هذا التسجيل معاداً للتصحيح"); return; }
+  if (Farm.pendingChange(id)) { toast("العامل أرسل تصحيحاً لهذا التسجيل؛ اعتمده أو ارفضه أولاً"); return; }
+  openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead(ok ? "إلغاء الإرجاع واعتماد؟" : "إلغاء الإرجاع؟") +
+    '<p class="help">' + esc(ok ? "يُلغى الإرجاع ويُعتمد التسجيل، ويختفي من تنبيه العامل." : "يعود التسجيل بانتظار المراجعة ويختفي من تنبيه العامل.") + "</p>" +
+    '<div class="sheet-actions"><button class="btn ' + (ok ? "ok" : "pri") + '" type="button" data-act="unflagGo" data-ok="' + (ok ? "1" : "") + '" data-id="' + esc(id) + '">' + (ok ? "إلغاء الإرجاع واعتماد" : "إلغاء الإرجاع") + '</button><button class="btn" type="button" data-act="close">تراجع</button></div></div></div>');
+}
 function openFlag(id) {
   var e = findEntry(id);
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("ملاحظة المشرف") + '<label class="f" for="flagTxt">اكتب ما يجب تصحيحه أو متابعته<textarea class="in" id="flagTxt">' + esc(e && e.review && e.review.c || "") + "</textarea></label>" +
@@ -2513,14 +2561,23 @@ function accPrefs() {
     (isSup() ? '<button type="button" class="acc-row" data-bd="customize">' + I("sliders", 20) + "<span>تخصيص اللوحة</span>" + ch + "</button>" +
       '<button type="button" class="acc-row" data-bd="tab" data-t="sup">' + I("settings", 20) + "<span>الإعدادات</span>" + ch + "</button>" : "") + "</div>";
 }
+/* 3.8.1: تغيير البريد وكلمة المرور بإعادة المصادقة بكلمة المرور الحالية، فلا حاجة لتسجيل الخروج. رسالة «غير صحيحة» خاصة بهذه الحالة (رسالة الدخول لها نص آخر) */
+function reauth(pw) {
+  return S.user.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(S.user.email, pw)).catch(function (e) {
+    var c = e && e.code;
+    if (c === "auth/wrong-password" || c === "auth/invalid-credential" || c === "auth/invalid-login-credentials") e = { code: "gs/bad-current-pw", userMsg: true, message: "كلمة المرور الحالية غير صحيحة." };
+    throw e;
+  });
+}
+function clearPw() { ["e_pw", "p_old", "p_new"].forEach(function (i) { var x = $(i); if (x) x.value = ""; }); }
 function openAccount() {
   openSheet('<div class="sheet-bg" data-close><div class="sheet" role="dialog" aria-modal="true">' + sheetHead("حسابي") +
     '<div class="card"><dl class="kv"><dt>الاسم</dt><dd>' + esc(nameOf(S.uid)) + '</dd><dt>الدخول</dt><dd class="num">' + esc(showLogin(S.user.email)) + "</dd><dt>الصلاحية</dt><dd>" + (isSup() ? "مشرف" : "عامل") + "</dd></dl></div>" +
     (S.persistence === false ? '<p class="banner warn" style="margin-top:12px">الحفظ دون اتصال غير متاح على هذا الجوال: لا تغلق التطبيق قبل رسالة «تم تأكيد الحفظ».</p>' : "") +
     accPrefs() +
     '<details class="fold acc-crash" style="margin-top:14px"><summary><span class="fold-t">سجل الأعطال على هذا الجوال</span>' + (CRASH.length ? '<span class="pill warn">' + CRASH.length + "</span>" : "") + '<span class="fold-i" aria-hidden="true"></span></summary><div class="fold-b">' + crashLogHTML(true) + "</div></details>" +
-    '<form class="fgrid" id="pwForm" style="margin-top:14px" novalidate><label class="f full" for="p_new">تغيير كلمة المرور<input class="in" id="p_new" type="password" dir="ltr" autocomplete="new-password" placeholder="كلمة المرور الجديدة"></label><button class="btn full" type="button" data-act="changePw">حفظ كلمة المرور</button></form>' +
-    (showLogin(S.user.email) !== S.user.email ? "" : '<form class="fgrid" style="margin-top:14px" novalidate><label class="f full" for="e_new">تغيير البريد الإلكتروني<input class="in" id="e_new" type="email" dir="ltr" autocomplete="email" placeholder="البريد الجديد"></label><button class="btn full" type="button" data-act="changeEmail">إرسال رابط التأكيد</button><p class="muted full" style="font-size:12.5px;margin:0">يصل رابط تأكيد إلى البريد الجديد، وبعد فتحه يتغيّر بريد الدخول. سجّل الدخول بعدها بالبريد الجديد.</p></form>') +
+    '<form class="fgrid" id="pwForm" style="margin-top:14px" novalidate><label class="f full" for="p_old">كلمة المرور الحالية<input class="in" id="p_old" type="password" dir="ltr" autocomplete="current-password" placeholder="كلمة المرور الحالية"></label><label class="f full" for="p_new">تغيير كلمة المرور<input class="in" id="p_new" type="password" dir="ltr" autocomplete="new-password" placeholder="كلمة المرور الجديدة"></label><button class="btn full" type="button" data-act="changePw">حفظ كلمة المرور</button></form>' +
+    (showLogin(S.user.email) !== S.user.email ? "" : '<form class="fgrid" style="margin-top:14px" novalidate><label class="f full" for="e_new">تغيير البريد الإلكتروني<input class="in" id="e_new" type="email" dir="ltr" autocomplete="email" placeholder="البريد الجديد"></label><label class="f full" for="e_pw">كلمة المرور الحالية<input class="in" id="e_pw" type="password" dir="ltr" autocomplete="current-password" placeholder="كلمة المرور الحالية"></label><button class="btn full" type="button" data-act="changeEmail">إرسال رابط التأكيد</button><p class="muted full" style="font-size:12.5px;margin:0">يصل رابط تأكيد إلى البريد الجديد. بعد فتحه يطلب التطبيق الدخول بالبريد الجديد.</p></form>') +
     '<div class="f full" style="margin-top:14px"><span>لوحة الأرقام في خانات القياس</span><div class="seg" id="kp_on" role="group"><button type="button" data-v="1" aria-pressed="' + kpOn() + '">لوحة GREEN SIDE الكبيرة</button><button type="button" data-v="0" aria-pressed="' + !kpOn() + '">لوحة الجوال</button></div></div>' +
     (S.installEvt ? '<button class="btn pri block" style="margin-top:14px" type="button" data-act="install">تثبيت التطبيق على الجوال</button>' : '<p class="muted" style="font-size:13px;margin-top:14px">لتثبيت التطبيق: من قائمة المتصفح (⋮) اختر "تثبيت التطبيق".</p>') +
     '<div class="sheet-actions"><button class="btn danger" type="button" data-act="logout">تسجيل الخروج</button></div><p class="muted" style="font-size:12px;text-align:center">GREEN SIDE · الإصدار ' + APP_VERSION + ' · بواسطة <bdi>Hamed</bdi></p></div></div>');
@@ -2801,9 +2858,16 @@ document.addEventListener("click", function (ev) {
       var ne = ($("e_new").value || "").trim().toLowerCase();
       if (!/^[^\s@]+@[^\s@]+\.[a-z]{2,}$/.test(ne)) { toast("اكتب بريداً صحيحاً"); return; }
       if (ne === (S.user.email || "").toLowerCase()) { toast("هذا هو بريدك الحالي"); return; }
+      var ep = $("e_pw") ? $("e_pw").value : "";
+      if (!ep) { toast("اكتب كلمة المرور الحالية"); return; }
       b.disabled = true;
-      S.user.verifyBeforeUpdateEmail(ne).then(function () { toast("أُرسل رابط التأكيد إلى " + ne + " · افتحه ثم سجّل الدخول بالبريد الجديد"); closeSheet(); }).catch(fail); break;
-    case "changePw": var np = $("p_new").value; if (np.length < 6) { toast("كلمة المرور 6 أحرف أو أكثر"); return; } b.disabled = true; S.user.updatePassword(np).then(function () { toast("تم تغيير كلمة المرور"); closeSheet(); }).catch(fail); break;
+      reauth(ep).then(function () { return S.user.verifyBeforeUpdateEmail(ne); }).then(function () { clearPw(); toast("أُرسل رابط التأكيد إلى " + ne + " · افتحه ثم سجّل الدخول بالبريد الجديد"); closeSheet(); }).catch(function (err) { clearPw(); fail(err); }); break;
+    case "changePw":
+      var np = $("p_new").value, op = $("p_old") ? $("p_old").value : "";
+      if (!op) { toast("اكتب كلمة المرور الحالية"); return; }
+      if (np.length < 6) { toast("كلمة المرور 6 أحرف أو أكثر"); return; }
+      b.disabled = true;
+      reauth(op).then(function () { return S.user.updatePassword(np); }).then(function () { clearPw(); toast("تم تغيير كلمة المرور"); closeSheet(); }).catch(function (err) { clearPw(); fail(err); }); break;
     case "close": closeSheet(); break;
     case "cam": openCam(b.getAttribute("data-side") || ""); break;
     case "camClose": camClose(); break;
@@ -2831,7 +2895,7 @@ document.addEventListener("click", function (ev) {
     case "schToggle": if (isSup()) schToggle(b.getAttribute("data-sec"), b.getAttribute("data-type")).catch(fail); break;
     case "schStep": if (isSup()) schStep(b.getAttribute("data-sec"), b.getAttribute("data-type"), +b.getAttribute("data-d")).catch(fail); break;
     case "schOpt": if (isSup()) openSlot(b.getAttribute("data-sec"), b.getAttribute("data-type"), b.getAttribute("data-t")); break;
-    case "soMode": if (SO) { SO.mode = b.getAttribute("data-m"); var su0 = $("so_until"); if (su0) SO.until = su0.value; $("sheetRoot").innerHTML = soHTML(); } break;
+    case "soMode": if (SO) { SO.mode = b.getAttribute("data-m"); var su0 = $("so_until"); if (su0) SO.until = su0.value; $("sheetRoot").innerHTML = soHTML(); noAC($("sheetRoot")); } break;
     case "soSave": if (SO) { var su1 = $("so_until"); if (su1) SO.until = su1.value; soSave().catch(fail); closeSheet(); } break;
     case "soResume": if (SO) { soResume().catch(fail); closeSheet(); } break;
     case "soTime": if (SO) openSchAdd(SO.sec, SO.type, SO.t); break;
@@ -2869,6 +2933,12 @@ document.addEventListener("click", function (ev) {
     case "move": var em = findEntry(id); if (!em) return; var to = secOf(em) === "n" ? "t" : "n"; db.collection("entries").doc(id).update({ sec: to }).then(function () { toast("نُقل التسجيل إلى " + SECS[to].name); }).catch(fail); break;
     case "approve": db.collection("entries").doc(id).update({ review: { s: "ok", by: S.uid, at: Date.now(), c: "" } }).catch(fail); break;
     case "flag": openFlag(id); break;
+    case "unflag": openUnflag(id, !!b.getAttribute("data-ok")); break;
+    case "unflagGo":
+      var eu = findEntry(id), okU = !!b.getAttribute("data-ok");
+      if (!eu || !eu.review || eu.review.s !== "flag") { closeSheet(); toast("لم يعد هذا التسجيل معاداً للتصحيح"); return; }
+      if (Farm.pendingChange(id)) { closeSheet(); toast("العامل أرسل تصحيحاً لهذا التسجيل؛ اعتمده أو ارفضه أولاً"); return; }
+      GSUI.commit(db.collection("entries").doc(id).update({ review: okU ? { s: "ok", by: S.uid, at: Date.now(), c: "" } : firebase.firestore.FieldValue["delete"]() }), b, function () { closeSheet(); toast(okU ? "أُلغي الإرجاع واعتُمد التسجيل" : "أُلغي الإرجاع"); }); break;
     case "saveFlag": var c = $("flagTxt").value.trim(); if (!c) { toast("اكتب الملاحظة"); return; } GSUI.commit(db.collection("entries").doc(id).update({ review: { s: "flag", by: S.uid, at: Date.now(), c: c } }),b,function(){closeSheet();toast("حُفظت ملاحظة المشرف");}); break;
     case "toggleNote": var e2 = findEntry(id); if (e2) db.collection("entries").doc(id).update({ open: !e2.open }).catch(fail); break;
     case "signoff":

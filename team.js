@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.7.0 — «الفريق»: محادثات مثل تطبيقات المراسلة (الفريق + محادثة لكل شخص) والمهام.
+/* GREEN SIDE 3.8.1 — «الفريق»: محادثات مثل تطبيقات المراسلة (الفريق + محادثة لكل شخص) والمهام.
    الرسائل والمهام من مجموعات farmMessages و farmJobs الحالية. غير المقروء يُحفظ على الجهاز،
    وعلامة القراءة ✓✓ تعمل عند نشر قاعدة farmSeen (كل مستخدم يكتب وثيقته فقط). */
 var Team=(()=>{
@@ -147,6 +147,7 @@ function after(){
  if(S.tab!=='chat')return;
  if(T.stick){setTimeout(toBottom,0);setTimeout(toBottom,250);}
  const ta=$('tmInput');if(ta)grow(ta);
+ if(window.noAC)noAC($('view'));
  if(document.visibilityState==='visible')markSeen(T.room);
 }
 /* تحديث الرسائل فقط أثناء الكتابة (بدون إعادة رسم الصفحة كلها) */

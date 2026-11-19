@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.7.0 — تبويب «سجّل»: بطاقات الأنواع (الضغط يفتح النموذج)، كل التسجيلات، سجل النوع، تفاصيل التسجيل،
+/* GREEN SIDE 3.8.1 — تبويب «سجّل»: بطاقات الأنواع (الضغط يفتح النموذج)، كل التسجيلات، سجل النوع، تفاصيل التسجيل،
    وقائمة المراجعة السريعة للمشرف (خارج الحدود أولاً ثم «اعتماد الباقي»).
    يقرأ: تسجيلات اليوم المختار (محمّلة)، ويوماً سابقاً عند الطلب، وسجل نوع واحد لآخر 7 أيام. */
 var Rec=(()=>{
@@ -393,6 +393,7 @@ function detail(){
  else if(isWorker()&&e.by===S.uid&&e.review&&!pend)acts.push('<button type="button" class="btn pri" data-farm="correct" data-id="'+E(e.id)+'">'+I('edit',18)+(e.review.s==='flag'?'صحّح التسجيل':'طلب تصحيح')+'</button>');
  if(isSup()){
   if(!e.review&&!pend)acts.push('<button type="button" class="btn ok" data-act="approve" data-id="'+E(e.id)+'">'+I('check',18,2.4)+'اعتماد</button>');
+  if(e.review&&e.review.s==='flag')acts.push('<button type="button" class="btn ok" data-act="unflag" data-ok="1" data-id="'+E(e.id)+'">'+I('check',18,2.4)+'إلغاء الإرجاع واعتماد</button>','<button type="button" class="btn" data-act="unflag" data-id="'+E(e.id)+'">إلغاء الإرجاع فقط</button>');
   if(!pend)acts.push('<button type="button" class="btn warn" data-act="flag" data-id="'+E(e.id)+'">إعادة للتصحيح</button>');
   else acts.push('<button type="button" class="btn" data-farm="route" data-id="changes">فتح طلب التصحيح</button>');
   if(e.type==='note'&&v.cat!==NOTE_NONE)acts.push('<button type="button" class="btn" data-act="toggleNote" data-id="'+E(e.id)+'">'+(e.open?'تم الحل':'إعادة فتح الملاحظة')+'</button>');

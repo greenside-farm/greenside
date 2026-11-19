@@ -1,4 +1,4 @@
-/* GREEN SIDE 3.8.0 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
+/* GREEN SIDE 3.8.1 — اللوحة الرئيسية (المشرف والعامل) ومركز المزرعة وتخصيص اللوحة.
    يقرأ البيانات المحمّلة فقط (التسجيلات، الإعدادات، الحساسات، المزرعة) ولا يكتب شيئاً في قاعدة البيانات. */
 var Board=(()=>{
 'use strict';
@@ -162,7 +162,8 @@ function attention(sec){
      add('warn',{icon:k==='temp'?'therm':'drop',mk:'clim:'+sec+':'+k,ml:(k==='temp'?'حرارة الجو':'الرطوبة')+' خارج الحدود · '+SECS[sec].name,title:lab+L.name+' '+f(q.v,d)+u,sub:(q.state==='hi'?'فوق الحد '+f(lm[1])+u:'تحت الحد '+f(lm[0])+u)+(q.at?' · '+SENS.api.age(q.at):''),act:'data-bd="tab" data-t="sens"',pri:1});});}
    if(D&&!D.access&&D.water){[['wt','حرارة ماء الخزان ','°',1],['ph','pH الخزان ','',2]].forEach(([k,lab,u,d])=>{const q=D.water[k];if(q&&isBad(q.state))add('warn',{icon:'drop',mk:'water:'+sec+':'+k,ml:lab.trim()+' خارج الحدود · '+SECS[sec].name,title:lab+f(q.v,d)+u,sub:q.label+(q.at?' · '+SENS.api.age(q.at):''),act:'data-bd="tab" data-t="sens"',pri:1});});}
    if(S.dayLoaded){const late=slots(sec).filter(x=>x.state==='late');
-    if(late.length)add(late.length>1?'bad':'warn',{icon:'clock',title:late.length===1?late[0].label+' متأخر':pl(late.length,'','','جولات متأخرة','جولة متأخرة'),sub:late.length===1?(late[0].time?'موعده '+fmtTime(late[0].time)+' · ':'')+'لم يُسجَّل بعد':lateSummary(late),btn:'سجّل',act:'data-act="new" data-type="'+late[0].type+'"',pri:2});}
+    if(late.length){const lt=[],lk=new Set();late.forEach(x=>{if(!lk.has(x.type)){lk.add(x.type);lt.push(x);}});
+     add(late.length>1?'bad':'warn',{icon:'clock',mk:lt.map(x=>'late:'+sec+':'+x.type),ml:lt.map(x=>'تأخر '+x.label+' · '+SECS[sec].name),title:late.length===1?late[0].label+' متأخر':pl(late.length,'','','جولات متأخرة','جولة متأخرة'),sub:late.length===1?(late[0].time?'موعده '+fmtTime(late[0].time)+' · ':'')+'لم يُسجَّل بعد':lateSummary(late),btn:'سجّل',act:'data-act="new" data-type="'+late[0].type+'"',pri:2});}}
    const ch=chores(sec),mt=ch.filter(c=>c.maint);
    /* أكثر من عمل صيانة مستحق: تنبيه واحد يفتح صفحة المعدات */
    if(mt.length>1){const lateM=mt.filter(c=>c.state==='late').length;add(lateM?'bad':'warn',{icon:'wrench',mk:mt.map(c=>c.mk),ml:mt.map(c=>c.ml),title:lateM?'صيانة متأخرة':'صيانة مستحقة اليوم',sub:mt.map(c=>c.label).join('، '),act:'data-farm="route" data-id="equipment"',shared:true,pri:3});}
@@ -174,9 +175,9 @@ function attention(sec){
    else if(bi.state==='charging'&&bm&&bi.h>bm)add('warn',{icon:'batt',mk:'battEnd',ml:'فصل شاحن بطارية المضخة',title:'البطارية على الشاحن منذ '+hN(bi.h),sub:'افصل الشاحن إذا اكتمل الشحن',btn:canAdd()?'انتهى الشحن':'',act:'data-act="battEnd" data-id="'+E(bi.b.id)+'"',shared:true,pri:4});
    if(D&&!D.access&&D.health&&D.health.n&&D.health.late&&!D.health.cached)add('warn',{icon:'radio',mk:'sync',ml:'الحساسات لم تُحدَّث',title:'الحساسات لم تُحدَّث',sub:D.health.lastRun?'آخر مزامنة '+SENS.api.age(D.health.lastRun):'لا توجد مزامنة بعد',act:'data-bd="tab" data-t="sens"',shared:true,pri:5});
    const br=badReadings(rows);
-   if(br.length)add('warn',{icon:'bang',title:pl(br.length,'قراءة يدوية خارج الحدود','قراءتان يدويتان خارج الحدود','قراءات يدوية خارج الحدود','قراءة يدوية خارج الحدود'),sub:br[0],act:'data-rc="list"',pri:5});
+   if(br.length)add('warn',{icon:'bang',mk:'bad:'+sec,ml:'قراءات يدوية خارج الحدود · '+SECS[sec].name,title:pl(br.length,'قراءة يدوية خارج الحدود','قراءتان يدويتان خارج الحدود','قراءات يدوية خارج الحدود','قراءة يدوية خارج الحدود'),sub:br[0],act:'data-rc="list"',pri:5});
    if(window.Shift&&Shift.hasPending())add('warn',{icon:'cloud',title:'تعويض ماء بانتظار الإرسال',sub:'محفوظ على هذا الجهاز · اضغط لإعادة المحاولة',act:'data-shift="retry"',shared:true,pri:6});
-   sprayPlan(sec).phi.forEach(x=>add('info',{icon:'spray',title:'لا تحصد قبل '+DT(x.until),sub:'فترة أمان بعد رش '+(x.e.v.product||''),act:'data-rc="list" data-f="spray"',pri:7}));
+   sprayPlan(sec).phi.forEach(x=>add('info',{icon:'spray',mk:'phi:'+sec+':'+x.e.id,ml:'فترة الأمان بعد رش '+(x.e.v.product||''),title:'لا تحصد قبل '+DT(x.until),sub:'فترة أمان بعد رش '+(x.e.v.product||''),act:'data-rc="list" data-f="spray"',pri:7}));
   }
   Farm.shiftJobs().filter(j=>j.due<=t).forEach(j=>add(j.title.startsWith('إصلاح تسريب')||j.due<t?'bad':'warn',{icon:'tasks',title:j.title,sub:(j.due<t?'متأخرة منذ '+DT(j.due):'موعدها اليوم')+' · '+nameOf(j.assignee),act:'data-tm="tasks"',shared:true,pri:3}));
   if(sup){
@@ -187,7 +188,7 @@ function attention(sec){
    if(isT){const stc=computeStock();['A','B'].forEach(k=>{const o=stc[k];if(o&&o.pct<15)add('warn',{icon:'flask',mk:'stock'+k,ml:'عبوة '+k+' قاربت على النفاد',title:'عبوة '+k+' قاربت على النفاد',sub:'المتبقي نحو '+f(o.pct)+'%',act:'data-bd="tab" data-t="sup"',shared:true,pri:6});});}
   }
   const notes=S.openNotes.filter(e=>secOf(e)===sec);
-  if(notes.length)add('info',{icon:'leaf',title:pl(notes.length,'ملاحظة مفتوحة على النبات','ملاحظتان مفتوحتان','ملاحظات مفتوحة','ملاحظة مفتوحة'),sub:brief(notes[0])||(notes[0].v&&notes[0].v.memo)||'',act:'data-rc="list" data-f="note"',pri:9});
+  if(notes.length)add('info',{icon:'leaf',mk:'notes:'+sec,ml:'ملاحظات النبات المفتوحة · '+SECS[sec].name,title:pl(notes.length,'ملاحظة مفتوحة على النبات','ملاحظتان مفتوحتان','ملاحظات مفتوحة','ملاحظة مفتوحة'),sub:brief(notes[0])||(notes[0].v&&notes[0].v.memo)||'',act:'data-rc="list" data-f="note"',pri:9});
   return out.filter(a=>!muted(a.mk)).sort((a,b)=>RANK[a.sev]-RANK[b.sev]||a.pri-b.pri);
  });
 }
@@ -201,11 +202,11 @@ function alertHTML(a){
  if(!(isSup()&&live()&&a.mk&&(!Array.isArray(a.mk)||a.mk.length)))return h;
  /* المعرّف ثابت (من مفاتيح التنبيه) حتى لا يتغيّر HTML الصفحة في كل رسم */
  const id=[].concat(a.mk).join('|');if(ALM.size>300)ALM.clear();ALM.set(id,a);
- return '<div class="bd-alw">'+h+'<button type="button" class="bd-al-x" data-bd="al-menu" data-id="'+id+'" aria-label="'+E('خيارات التنبيه: '+a.title)+'">'+I('more',20)+'</button></div>';
+ return '<div class="bd-alw">'+h+'<button type="button" class="bd-al-x" data-bd="al-menu" data-id="'+E(id)+'" aria-label="'+E('خيارات التنبيه: '+a.title)+'">'+I('more',20)+'</button></div>';
 }
 /* ---------- نافذة خيارات التنبيه: تأجيل حتى تاريخ، أو إيقاف حتى يُفعَّل ---------- */
 const ALM=new Map();let AM=null;
-const SHARED_K=k=>!/^(ca|sp\d|clim|water):/.test(k);
+const SHARED_K=k=>!/^(ca|sp\d|clim|water|late|bad|notes|phi):/.test(k);
 function amHTML(){
  const a=AM,t=todayStr(),keys=a.keys,until=a.mode==='snooze'?a.until:'',okU=okDay(until)&&until>t;
  const days=[[1,'غداً'],[3,'بعد 3 أيام'],[7,'بعد أسبوع']];
@@ -213,7 +214,7 @@ function amHTML(){
  const custom=a.custom||(okU&&!days.some(d=>addDays(t,d[0])===until));
  const where=keys.every(SHARED_K)?'في القسمين':'في '+SECS[a.sec].name;
  return '<div class="sheet-bg" data-close><div class="sheet al-sh" role="dialog" aria-modal="true" aria-label="خيارات التنبيه">'+sheetHead(a.title,null,'bell')+(a.sub?'<p class="help">'+E(a.sub)+'</p>':'')+
-  (keys.length>1?'<p class="help">يشمل: '+E(a.labels.join('، '))+'</p>':'')+
+  (keys.length>1?'<p class="help">يشمل: '+E(a.labels.join('، '))+'</p>':'')+(keys.some(k=>/^(late|bad):/.test(k))?'<p class="help">'+E('يُخفي التنبيه فقط؛ الجولات والقراءات تبقى في جدول اليوم والتقارير.')+'</p>':'')+
   '<div class="al-opt'+(a.mode==='snooze'?' on':'')+'"><button type="button" class="al-opt-ic" data-bd="am-mode" data-m="snooze" aria-label="تأجيل حتى تاريخ">'+I('clock',20)+'</button><div class="al-opt-t"><b>تأجيل حتى تاريخ</b><small>يختفي التنبيه ويعود تلقائياً صباح اليوم المختار إن بقي مستحقاً.</small>'+
   '<div class="al-days">'+days.map(d=>chip(a.mode==='snooze'&&!custom&&addDays(t,d[0])===until,'data-bd="am-days" data-n="'+d[0]+'"',d[1])).join('')+chip(a.mode==='snooze'&&custom,'data-bd="am-custom"','تاريخ آخر…')+'</div>'+
   (a.mode==='snooze'&&custom?'<label class="al-date" for="am_until">يعود يوم<input class="in" type="date" id="am_until" min="'+addDays(t,1)+'" max="'+addDays(t,365)+'" value="'+E(okU?until:'')+'"></label>':a.mode==='snooze'&&okU?'<div class="al-date">يعود يوم <b style="color:var(--ink)">'+E(DW(until))+'</b></div>':'')+'</div></div>'+
@@ -242,7 +243,7 @@ function unmute(k){
  saveSettings({alertOff:m}).catch(e=>toast(errMsg(e)));toast('عاد تنبيه «'+(o?o.label:'')+'»');
 }
 /* ---------- الإعدادات ← التنبيهات الموقوفة ---------- */
-const MUTE_IC=k=>/^mt:/.test(k)?['wrench','gray']:k==='cal'?['wrench','info']:/^batt/.test(k)?['batt','info']:/^(ca|sp)/.test(k)?['spray','warn']:k==='sync'?['radio','teal']:/^stock/.test(k)?['flask','purple']:/^clim/.test(k)?['therm','warn']:['drop','info'];
+const MUTE_IC=k=>/^mt:/.test(k)?['wrench','gray']:k==='cal'?['wrench','info']:/^batt/.test(k)?['batt','info']:/^(ca|sp)/.test(k)?['spray','warn']:/^late:/.test(k)?['clock','warn']:/^bad:/.test(k)?['bang','warn']:/^notes:/.test(k)?['leaf','info']:/^phi:/.test(k)?['spray','info']:k==='sync'?['radio','teal']:/^stock/.test(k)?['flask','purple']:/^clim/.test(k)?['therm','warn']:['drop','info'];
 function mutedPage(){
  const L=mutedList();
  let h='<header class="bd-page"><h1>التنبيهات الموقوفة</h1><p>ما يوقفه المشرف لا يظهر لأي عضو في الفريق</p></header>';
@@ -347,7 +348,7 @@ function timelineCard(sec,compact){
  if(!S.dayLoaded)return card('timeline',head('calok',title)+'<div class="bd-skel"></div><p class="bd-empty">جارٍ تحميل سجل اليوم…</p>');
  const items=dayItems(sec),tk=tasksFor(sec,S.entries),rounds=items.filter(x=>x.kind!=='chore'),done=tk.need?tk.done:items.filter(x=>x.state==='done').length,n=tk.need||items.length;
  if(!items.length)return card('timeline',head('calok',title)+'<p class="bd-empty">لا جولات محددة لهذا القسم. حدّد مواعيد الجولات من الإعدادات.</p>');
- const F=foldDone(items),fold=F.folded.length?'<details class="tl-fold"><summary><span class="tl-m done">'+I('check',13,3.2)+'</span><span>'+E(pl(F.folded.length,'جولة منجزة','جولتان منجزتان','جولات منجزة','جولة منجزة')+' حتى '+fmtTime(F.folded[F.folded.length-1].time))+'</span><b>عرض</b></summary>'+timelineHTML(F.folded,true)+'</details>':'';
+ const F=foldDone(items),fold=F.folded.length?'<details class="tl-fold" data-keep="tl-fold-'+sec+'"><summary><span class="tl-m done">'+I('check',13,3.2)+'</span><span>'+E(pl(F.folded.length,'جولة منجزة','جولتان منجزتان','جولات منجزة','جولة منجزة')+' حتى '+fmtTime(F.folded[F.folded.length-1].time))+'</span><b>عرض</b></summary>'+timelineHTML(F.folded,true)+'</details>':'';
  return card('timeline',head('calok',title,'','<span class="bd-side"><b>'+done+'</b> من '+n+'</span>')+'<div class="bd-segs" role="img" aria-label="'+E('أُنجز '+done+' من '+n)+'">'+(rounds.length?rounds:items).map(x=>'<i class="'+x.state+'"></i>').join('')+'</div><div class="bd-tl">'+fold+timelineHTML(F.items)+'</div>');
 }
 function waterCard(sec){
@@ -561,7 +562,7 @@ function hub(){
  const ph=secEntries(S.entries,S.sec).filter(e=>e.type==='photo').sort((a,b)=>String(b.time||'').localeCompare(String(a.time||'')));
  tiles.push({id:'gallery',icon:'image',tone:'teal',title:'صور النمو',sub:ph.length?'آخر صورة '+(live()?'اليوم ':'')+fmtTime(ph[0].time)+' · حسب التاريخ والدفعة':(live()?'لم تُصوَّر اليوم بعد':'لا صور في هذا اليوم')+' · كل الصور مرتبة',stat:ph.length?pl(ph.length,'صورة اليوم','صورتان اليوم','صور اليوم','صورة اليوم'):'',main:'data-rc="gallery"',mainLabel:'معرض صور النمو',acts:act('المعرض','data-rc="gallery"','grid',true)});
  if(sup){const low=['A','B'].filter(k=>stc[k]).map(k=>({k,o:stc[k]})).sort((a,b)=>a.o.pct-b.o.pct)[0];
-  tiles.push({id:'solution',icon:'flask',tone:'purple',title:'المحلول والعبوات',sub:low?'عبوة '+low.k+' متبقٍ نحو '+f(low.o.pct)+'%':'سجّل وصفة العبوات لمتابعة المتبقي',warn:!!low&&low.o.pct<25,stat:low?'عبوة '+low.k+' · '+f(low.o.pct)+'%':'',statC:low&&low.o.pct<25?'warn':'',main:'data-bd="tab" data-t="sup"',mainLabel:'العبوات والخلطة',acts:act('وصفة','data-act="newRecipe"','',true)+act('العبوات','data-bd="tab" data-t="sup"')});}
+  tiles.push({id:'solution',icon:'flask',tone:'purple',title:'المحلول والعبوات',sub:low?'عبوة '+low.k+' متبقٍ نحو '+f(low.o.pct)+'%':'سجّل وصفة العبوات لمتابعة المتبقي',warn:!!low&&low.o.pct<25,stat:low?'عبوة '+low.k+' · '+f(low.o.pct)+'%':'',statC:low&&low.o.pct<25?'warn':'',main:'data-bd="tab" data-t="sup" data-sub="sol"',mainLabel:'العبوات والخلطة',acts:act('وصفة','data-act="newRecipe"','',true)+act('العبوات','data-bd="tab" data-t="sup" data-sub="sol"')});}
  const hs=D&&!D.access&&D.health,sIss=hs?hs.stale.length+hs.lowBatt.length+(hs.late?1:0):0;
  tiles.push({id:'sensors',icon:'radio',tone:'teal',title:'المراقبة والحساسات',sub:!hs?'الحساسات غير متصلة الآن':!hs.n?'لا حساسات في هذا القسم':sIss?pl(sIss,'ملاحظة على الحساسات','ملاحظتان على الحساسات','ملاحظات على الحساسات','ملاحظة على الحساسات'):'كل الحساسات تعمل',warn:sIss>0,stat:hs&&hs.n?pl(hs.n,'حساس واحد','حساسان','حساسات','حساساً'):'',main:'data-bd="tab" data-t="sens"',mainLabel:'فتح المراقبة',acts:act('المراقبة','data-bd="tab" data-t="sens"','radio',true)+(sup?act('التقارير','data-bd="tab" data-t="rep"','chart'):'')});
  if(owner)tiles.push({id:'finance',icon:'coins',tone:'gold',title:'التكاليف والمبيعات',sub:'الهامش وتكلفة الكيلو لكل دفعة',stat:'للمالك',main:'data-farm="route" data-id="finance"',mainLabel:'التكاليف والمبيعات',acts:act('تكلفة','data-farm="cost"','',true)+act('مبيعات','data-farm="sale"','',true)});
@@ -586,7 +587,7 @@ document.addEventListener('click',ev=>{
  const b=ev.target.closest&&ev.target.closest('[data-bd]');if(!b)return;
  ev.preventDefault();const a=b.dataset.bd,id=b.dataset.id,inSheet=!!b.closest('#sheetRoot');
  switch(a){
-  case 'tab':if(inSheet&&NAV.sheet)closeSheet();setTab(b.dataset.t);break;
+  case 'tab':if(inSheet&&NAV.sheet)closeSheet();if(b.dataset.sub){SUB.sup=b.dataset.sub;lsSet('gs_sub_sup',b.dataset.sub);}setTab(b.dataset.t);break;
   case 'queue':if(inSheet&&NAV.sheet)closeSheet();if(b.dataset.k==='pending'&&isSup())setTab('review');else if(window.Rec)Rec.openList(b.dataset.k==='fix'?'fix':'all');else GSUI.reviewQueue(b.dataset.k);break;
   case 'alerts':openAlerts();break;
   case 'al-menu':{const al=ALM.get(id);if(al)openMute(al);break;}

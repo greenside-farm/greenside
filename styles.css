@@ -1103,6 +1103,9 @@ body.on-home .top .who{background:rgba(255,255,255,.12);border:2px solid rgba(25
 /* تبويبات الفريق والصفحات الفرعية بنفس الألوان */
 .subtabs{background:var(--surface-2);border-radius:14px}
 @media (prefers-reduced-motion:reduce){.bd-skel{animation:none}}
+/* 3.8.1: الهيكل العظمي بارتفاع قريب من المحتوى حتى لا تقفز الصفحة عند اكتمال التحميل */
+[data-card="climate"] .bd-skel{min-height:150px}
+[data-card="timeline"] .bd-skel{min-height:120px}
 @media print{.bd-band,.bd-end,.tabs,.backbar{display:none!important}}
 
 /* ===================== 3.1.0 — «سجّل»: الأنواع، كل التسجيلات، سجل النوع، التفاصيل، المراجعة، النموذج ===================== */
